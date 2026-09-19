@@ -11,7 +11,11 @@ public final class ComfyRuntime {
 
     public static void ensureRunning(Path projectRoot,NewsConfig cfg)throws Exception{
         ComfyImageGenerator probe=new ComfyImageGenerator(projectRoot,cfg.get("comfyUrl","http://127.0.0.1:8188"),cfg.get("qwenUrl","http://127.0.0.1:8765"));
-        if(probe.reachable())return;
+        if(probe.reachable()){
+            System.out.println("[ComfyUI] Reusing persistent server at "+cfg.get("comfyUrl","http://127.0.0.1:8188"));
+            return;
+        }
+        System.out.println("[ComfyUI] Backend not reachable; starting configured persistent server");
         if(!cfg.getBool("comfyAutoStart",true))throw new IllegalStateException("ComfyUI is not reachable and comfyAutoStart=false");
 
         if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("win"))
@@ -29,7 +33,7 @@ public final class ComfyRuntime {
         cmd.add(python.toString());cmd.add("-s");cmd.add(main.toString());cmd.add("--windows-standalone-build");
         if(cfg.getBool("comfyDisableDynamicVram",true))cmd.add("--disable-dynamic-vram");
 
-        System.out.println("Starting ComfyUI: "+String.join(" ",cmd));
+        System.out.println("[ComfyUI] Starting: "+String.join(" ",cmd));
         Process p=new ProcessBuilder(cmd)
                 .directory(root.toFile())
                 .redirectErrorStream(true)
@@ -40,7 +44,7 @@ public final class ComfyRuntime {
         long deadline=System.nanoTime()+Duration.ofSeconds(seconds).toNanos();
         while(System.nanoTime()<deadline){
             if(probe.reachable()){
-                System.out.println("ComfyUI READY at "+cfg.get("comfyUrl","http://127.0.0.1:8188")+" pid="+p.pid());
+                System.out.println("[ComfyUI] READY at "+cfg.get("comfyUrl","http://127.0.0.1:8188")+" pid="+p.pid()+"; server will remain running");
                 return;
             }
             if(!p.isAlive())throw new IllegalStateException("ComfyUI exited during startup with code "+p.exitValue()+". See "+log);
