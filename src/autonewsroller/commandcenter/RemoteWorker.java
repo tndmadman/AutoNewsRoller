@@ -53,7 +53,9 @@ public final class RemoteWorker {
 
     private void runJob(Map<String,Object>job){
         String jobId=String.valueOf(job.get("jobId"));
-        currentJob=jobId;currentTopic=String.valueOf(job.getOrDefault("topic",""));state="PRODUCING";
+        String jobType=String.valueOf(job.getOrDefault("jobType","VIDEO")).toUpperCase(Locale.ROOT);
+        currentJob=jobId;currentTopic=String.valueOf(job.getOrDefault("topic",""));state="POLITICAL_ANALYSIS".equals(jobType)?"ANALYZING_BIAS":"PRODUCING";
+        if("POLITICAL_ANALYSIS".equals(jobType)){runPoliticalAnalysis(job);return;}
         try{
             NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
             Map<String,Object>settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
@@ -84,6 +86,23 @@ public final class RemoteWorker {
         }catch(Exception e){
             e.printStackTrace();
             try{post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));}catch(Exception ignored){}
+        }finally{
+            state="IDLE";currentJob="";currentTopic="";
+        }
+    }
+
+    private void runPoliticalAnalysis(Map<String,Object>job){
+        String jobId=String.valueOf(job.get("jobId"));
+        try{
+            NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
+            System.out.println("Analyzing political framing: "+currentTopic+" | articles="+candidate.cluster().articles.size());
+            PoliticalFramingAnalyzer analyzer=new PoliticalFramingAnalyzer(root,cfg);
+            Map<String,Object>result=analyzer.analyze(candidate.cluster());
+            post("/api/jobs/"+enc(jobId)+"/bias-complete",Map.of("workerId",workerId,"result",result));
+            System.out.println("Political framing complete: "+currentTopic+" -> "+result.get("overallClassification")+" confidence="+result.get("overallConfidence"));
+        }catch(Exception e){
+            e.printStackTrace();
+            try{post("/api/jobs/"+enc(jobId)+"/bias-fail",Map.of("workerId",workerId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));}catch(Exception ignored){}
         }finally{
             state="IDLE";currentJob="";currentTopic="";
         }
