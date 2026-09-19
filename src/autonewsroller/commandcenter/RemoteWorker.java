@@ -59,12 +59,16 @@ public final class RemoteWorker {
             Map<String,Object>settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
             int duration=settings.get("duration") instanceof Number n?n.intValue():cfg.duration();
             String encoder=String.valueOf(settings.getOrDefault("encoder",cfg.get("videoEncoder","auto")));
-            boolean useComfy=bool(settings.get("useComfy"));
+            boolean controllerComfy=settings.containsKey("useComfy")?bool(settings.get("useComfy")):true;
+            boolean useComfy=cfg.getBool("commandCenterUseComfy",true)||controllerComfy;
+            boolean requireComfy=cfg.getBool("commandCenterRequireComfy",true)||(settings.containsKey("requireComfy")&&bool(settings.get("requireComfy")));
+            int comfyImages=settings.get("comfyImages") instanceof Number n?Math.max(1,n.intValue()):cfg.getInt("commandCenterComfyImages",3);
             boolean dryRun=bool(settings.get("dryRun"));
+            System.out.println("Claimed job: "+currentTopic+" | comfy="+useComfy+" required="+requireComfy+" images="+comfyImages+" | encoder="+encoder);
             String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
             Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+stamp);
             NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,event->progressSafe(jobId,event));
-            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,dryRun);
+            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,dryRun);
             if(!dryRun&&output.toString().toLowerCase(Locale.ROOT).endsWith(".mp4")){
                 Map<String,Object>upload=uploadVideo(jobId,output);
                 Map<String,Object>complete=new LinkedHashMap<>();
