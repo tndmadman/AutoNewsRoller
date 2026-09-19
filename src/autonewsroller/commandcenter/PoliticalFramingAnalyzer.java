@@ -68,12 +68,14 @@ Return one strict JSON object:
   "politicalRelevance": 0.0-1.0,
   "overallClassification": "left"|"center"|"right"|"mixed"|"uncertain"|"not_political",
   "overallConfidence": 0.0-1.0,
+  "overallWeights": {"left":0.0-1.0,"center":0.0-1.0,"right":0.0-1.0},
   "summary": "brief description of observable framing, or why it is uncertain",
   "articles": [
     {
       "id": "exact supplied article id",
       "classification": "left"|"center"|"right"|"mixed"|"uncertain"|"not_political",
       "confidence": 0.0-1.0,
+      "weights": {"left":0.0-1.0,"center":0.0-1.0,"right":0.0-1.0},
       "rationale": "brief observable framing explanation",
       "signals": ["short textual/framing features; no unsupported motive claims"]
     }
@@ -84,6 +86,7 @@ Use "center" for substantially neutral/balanced political framing, not as a syno
 Use "mixed" when meaningful left- and right-associated framing both appear.
 Use "uncertain" when evidence is too weak or ambiguous.
 Use "not_political" when the text is not meaningfully political.
+The three weights are heuristic framing weights, not probabilities of truth, and should sum approximately to 1.0.
 Confidence must reflect the amount and clarity of supplied evidence.
 """;
 
@@ -93,8 +96,11 @@ Confidence must reflect the amount and clarity of supplied evidence.
         result.put("model",model);result.put("analyzedAt",Instant.now().toString());
         result.put("textBasis","RSS/article headline, description, and body text available to AutoNewsRoller at analysis time");
         result.put("politicalRelevance",clamp(number(parsed.get("politicalRelevance"))));
-        result.put("overallClassification",normalize(parsed.get("overallClassification")));
-        result.put("overallConfidence",clamp(number(parsed.get("overallConfidence"))));
+        String overallClassification=normalize(parsed.get("overallClassification"));
+        double overallConfidence=clamp(number(parsed.get("overallConfidence")));
+        result.put("overallClassification",overallClassification);
+        result.put("overallConfidence",overallConfidence);
+        result.put("overallWeights",weights(parsed.get("overallWeights"),overallClassification,overallConfidence));
         result.put("summary",limit(String.valueOf(parsed.getOrDefault("summary","")),700));
 
         Map<String,Article>byId=new LinkedHashMap<>();for(Article a:cluster.articles)byId.put(a.id(),a);
@@ -110,7 +116,9 @@ Confidence must reflect the amount and clarity of supplied evidence.
                 String classification=normalize(x.get("classification"));
                 Map<String,Object>clean=new LinkedHashMap<>();
                 clean.put("id",id);clean.put("publisher",a.publisher());clean.put("title",a.title());
-                clean.put("classification",classification);clean.put("confidence",clamp(number(x.get("confidence"))));
+                double confidence=clamp(number(x.get("confidence")));
+                clean.put("classification",classification);clean.put("confidence",confidence);
+                clean.put("weights",weights(x.get("weights"),classification,confidence));
                 clean.put("rationale",limit(String.valueOf(x.getOrDefault("rationale","")),500));
                 clean.put("signals",cleanSignals(x.get("signals")));
                 articleResults.add(clean);
@@ -123,6 +131,29 @@ Confidence must reflect the amount and clarity of supplied evidence.
         result.put("left",left);result.put("center",center);result.put("right",right);result.put("mixed",mixed);result.put("uncertain",uncertain);result.put("notPolitical",notPolitical);
         return result;
     }
+
+    private static Map<String,Object>weights(Object raw,String classification,double confidence){
+        double left=0,center=0,right=0;
+        if(raw instanceof Map<?,?>m){
+            Map<String,Object>x=Json.object(m);left=clamp(number(x.get("left")));center=clamp(number(x.get("center")));right=clamp(number(x.get("right")));
+        }
+        double sum=left+center+right;
+        if(sum<0.05){
+            double strong=0.5+0.5*clamp(confidence),rest=(1.0-strong)/2.0;
+            switch(classification){
+                case "left"->{left=strong;center=rest;right=rest;}
+                case "right"->{right=strong;center=rest;left=rest;}
+                case "center"->{center=strong;left=rest;right=rest;}
+                case "mixed"->{left=0.4;center=0.2;right=0.4;}
+                default->{left=1.0/3.0;center=1.0/3.0;right=1.0/3.0;}
+            }
+            sum=left+center+right;
+        }
+        Map<String,Object>out=new LinkedHashMap<>();
+        out.put("left",round(left/sum));out.put("center",round(center/sum));out.put("right",round(right/sum));
+        return out;
+    }
+    private static double round(double x){return Math.round(x*1000.0)/1000.0;}
 
     private static List<String>cleanSignals(Object raw){
         List<String>out=new ArrayList<>();
