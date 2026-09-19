@@ -595,3 +595,71 @@ The cross-platform workflow includes:
 - dashboard HTML fetch check.
 
 This verifies the controller can actually start headlessly on Linux rather than only compiling there.
+
+
+## Political source baseline and article framing
+
+The Command Center now separates two different measurements.
+
+### Publisher baseline
+
+`config/source_bias.json` contains attributed publisher-level political-bias metadata.
+
+The bundled baseline uses AllSides Media Bias Ratings for supported publishers and stores:
+
+- the dashboard bucket: left, center, right, or unknown;
+- the provider's original classification such as Lean Left or Right;
+- the provider's confidence label when available;
+- a direct source-rating URL;
+- an as-of date.
+
+The three dashboard bars collapse Lean Left into left and Lean Right into right only for visualization. The original provider label remains visible on the story card.
+
+A publisher baseline is not treated as a classification of every article from that publisher.
+
+### Article framing
+
+Political stories are automatically queued for article-level framing analysis.
+
+The controller remains lightweight: it does not run Ollama itself. When no video is waiting, a connected worker claims a `POLITICAL_ANALYSIS` job and uses its local Ollama model.
+
+The analyzer examines only supplied headline/description/body text and is instructed not to use publisher identity as evidence.
+
+Per story it returns:
+
+- political relevance;
+- overall classification: left, center, right, mixed, uncertain, or not political;
+- confidence;
+- a short framing summary;
+- per-article classification and confidence;
+- short observable framing signals.
+
+Center is a framing category, not a truth or credibility score.
+
+The UI shows publisher baseline and article framing as separate panels.
+
+Video jobs always take priority over framing-analysis jobs.
+
+### Manual analysis
+
+Any story can be analyzed or reanalyzed from its card with:
+
+    ANALYZE FRAMING
+
+API:
+
+    POST /api/stories/{storyId}/analyze-bias
+
+Worker result endpoints:
+
+    POST /api/jobs/{storyId}/bias-complete
+    POST /api/jobs/{storyId}/bias-fail
+
+### Worker-side model settings
+
+Defaults:
+
+    politicalAnalysisModel=llama3.1:8b
+    politicalAnalysisOllamaUrl=http://127.0.0.1:11434/api/generate
+
+These are worker-side settings. A headless controller does not require Ollama merely to host the dashboard or scan RSS feeds.
