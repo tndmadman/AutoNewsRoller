@@ -42,7 +42,8 @@ public final class NewsPipeline {
             try{
                 List<Article>entries=new RssSource(
                         sc,
-                        cfg.getInt("articleFetchTimeout",30),
+                        cfg.getInt("feedFetchTimeout",12),
+                        cfg.getInt("httpRetries",2),
                         cfg.get("userAgent","AutoNewsRoller/0.1"),
                         root.resolve("data/feed_cache.json")
                 ).discover();
