@@ -91,6 +91,7 @@ Confidence must reflect the amount and clarity of supplied evidence.
         Map<String,Object>parsed=Json.object(Json.parse(raw));
         Map<String,Object>result=new LinkedHashMap<>();
         result.put("model",model);result.put("analyzedAt",Instant.now().toString());
+        result.put("textBasis","RSS/article headline, description, and body text available to AutoNewsRoller at analysis time");
         result.put("politicalRelevance",clamp(number(parsed.get("politicalRelevance"))));
         result.put("overallClassification",normalize(parsed.get("overallClassification")));
         result.put("overallConfidence",clamp(number(parsed.get("overallConfidence"))));
@@ -116,7 +117,9 @@ Confidence must reflect the amount and clarity of supplied evidence.
                 switch(classification){case "left"->left++;case "center"->center++;case "right"->right++;case "mixed"->mixed++;case "not_political"->notPolitical++;default->uncertain++;}
             }
         }
+        if(articleResults.isEmpty()&&!cluster.articles.isEmpty())throw new IllegalArgumentException("Ollama framing analysis returned no recognized article results");
         result.put("articles",articleResults);
+        result.put("articlesAnalyzed",articleResults.size());
         result.put("left",left);result.put("center",center);result.put("right",right);result.put("mixed",mixed);result.put("uncertain",uncertain);result.put("notPolitical",notPolitical);
         return result;
     }
