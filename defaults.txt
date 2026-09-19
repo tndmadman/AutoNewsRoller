@@ -32,3 +32,12 @@ imageHeight=1344
 imageSteps=24
 imageCfg=5.0
 imageNegative=text, watermark, logo, captions, low quality, distorted, deformed
+
+commandCenterHost=127.0.0.1
+commandCenterPort=8787
+commandCenterScanMinutes=10
+commandCenterAutoQueue=true
+commandCenterAutoThreshold=0.68
+commandCenterMaxQueued=12
+commandCenterUseComfy=false
+commandCenterControllerUrl=http://127.0.0.1:8787
