@@ -21,14 +21,15 @@ public final class CommandCenterServer {
     private final NewsConfig cfg;
     private final String host,token;
     private final int requestedPort,scanMinutes;
+    private final boolean scanOnStart;
     private final CommandCenterStore store;
     private final ScheduledExecutorService scheduler=Executors.newScheduledThreadPool(2);
     private final CopyOnWriteArrayList<BlockingQueue<String>>subscribers=new CopyOnWriteArrayList<>();
     private final AtomicBoolean scanInFlight=new AtomicBoolean();
     private HttpServer server;
 
-    public CommandCenterServer(Path root,NewsConfig cfg,String host,int port,int scanMinutes,boolean autoQueue,double autoThreshold,int maxQueued,String token){
-        this.root=root;this.cfg=cfg;this.host=host;this.requestedPort=port;this.scanMinutes=Math.max(1,scanMinutes);this.token=token==null?"":token.trim();
+    public CommandCenterServer(Path root,NewsConfig cfg,String host,int port,int scanMinutes,boolean autoQueue,double autoThreshold,int maxQueued,String token,boolean scanOnStart){
+        this.root=root;this.cfg=cfg;this.host=host;this.requestedPort=port;this.scanMinutes=Math.max(1,scanMinutes);this.token=token==null?"":token.trim();this.scanOnStart=scanOnStart;
         BiasRegistry bias=BiasRegistry.load(root.resolve("config/source_bias.json"));
         this.store=new CommandCenterStore(root.resolve("data/command_center_state.json"),bias,autoQueue,autoThreshold,maxQueued,this::broadcast);
     }
@@ -50,7 +51,7 @@ public final class CommandCenterServer {
         int actual=server.getAddress().getPort();
         System.out.println("AutoNewsRoller Command Center listening on http://"+displayHost()+":"+actual);
         if(!isLoopbackHost(host)&&token.isBlank())System.err.println("WARNING: command center is listening beyond localhost without an API token. Set AUTONEWS_TOKEN or --token.");
-        scheduler.scheduleWithFixedDelay(this::scanSafe,0,scanMinutes,TimeUnit.MINUTES);
+        scheduler.scheduleWithFixedDelay(this::scanSafe,scanOnStart?0:scanMinutes,scanMinutes,TimeUnit.MINUTES);
         return actual;
     }
 
