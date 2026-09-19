@@ -13,6 +13,7 @@ The detailed project knowledge is maintained under docs/:
 - [Architecture and data flow](docs/ARCHITECTURE_AND_DATA_FLOW.md)
 - [Configuration reference](docs/CONFIGURATION_REFERENCE.md)
 - [Windows operations](docs/WINDOWS_OPERATIONS.md)
+- [Command Center](docs/COMMAND_CENTER.md)
 - [News sources, polling, bot behavior, and content use](docs/NEWS_SOURCES_AND_CONTENT_USE.md)
 - [TTS, GPU, ComfyUI, captions, and video](docs/TTS_GPU_VISUALS_VIDEO.md)
 - [Output, audit, provenance, and history](docs/OUTPUT_AUDIT_HISTORY.md)
@@ -122,6 +123,17 @@ java -cp build\classes autonewsroller.Main --dry-run --fixture --batch-target 1 
 ```
 
 ## Watch mode
+
+### Command Center watch mode
+
+`watch_news_windows.bat` now launches the local Command Center, a local GPU worker, and the browser dashboard. The first argument is the RSS scan interval in minutes.
+
+```bat
+watch_news_windows.bat 10
+```
+
+For an always-on headless Linux controller with a separate Windows GPU worker, see [Command Center](docs/COMMAND_CENTER.md).
+
 
 Basic polling mode is available:
 
