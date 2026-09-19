@@ -25,9 +25,9 @@ jobs:
           cat "${parts[@]}" | base64 -d > /tmp/autonewsroller.tar.xz
           echo "b8694c57647c79e19ac33e14287115b91328872050e7a04600063679ea36e89b  /tmp/autonewsroller.tar.xz" | sha256sum -c -
           tar -xJf /tmp/autonewsroller.tar.xz -C .
+          rm -f .github/workflows/windows-validation.yml
           rm -f .bootstrap/project.tar.xz.b64.part*
           rmdir .bootstrap 2>/dev/null || true
-          rm -f .github/workflows/bootstrap-project.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
