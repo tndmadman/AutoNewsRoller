@@ -269,58 +269,22 @@ It is a production-priority score, not a factual-truth probability.
 
 Verification remains a separate gate.
 
-## Political source-mix display
+## Political source baseline
 
-The dashboard supports:
+The dashboard's publisher-level LEFT / CENTER / RIGHT / UNKNOWN bars use attributed external metadata from `config/source_bias.json`.
 
-- LEFT
-- CENTER
-- RIGHT
-- UNKNOWN
+The bundled file currently identifies AllSides as the provider and stores an as-of date, provider URLs, original provider labels, and confidence metadata when available.
 
-bars for the publishers in a story.
+For visualization only:
 
-AutoNewsRoller does not invent these political labels.
+- Left and Lean Left map into the left bar;
+- Center maps into center;
+- Lean Right and Right map into the right bar;
+- unrated or unsupported publishers remain unknown.
 
-The repository intentionally ships with:
+The original provider label remains visible on the card. Publisher baseline and article-level framing are intentionally separate measurements.
 
-    config/source_bias.json
-
-set to provider=unconfigured and no publisher classifications.
-
-This prevents the software from presenting unsupported political judgments as objective measurements.
-
-To use the display, populate the file with a named external classification source and an as-of date.
-
-Example structure using placeholder names:
-
-    {
-      "provider": "Name of classification dataset",
-      "asOf": "2026-09-01",
-      "note": "How these labels were obtained.",
-      "sources": {
-        "Example Publisher A": {
-          "classification": "left"
-        },
-        "Example Publisher B": {
-          "classification": "center"
-        },
-        "Example Publisher C": {
-          "classification": "right"
-        }
-      }
-    }
-
-Supported classifications are:
-
-- left
-- center
-- right
-- unknown
-
-Anything else becomes unknown.
-
-The UI calls this a source mix, not a truth score.
+See the later "Political source baseline and article framing" section for the worker-side Ollama analysis flow.
 
 ## Feed radar
 
