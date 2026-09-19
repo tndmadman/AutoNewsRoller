@@ -29,6 +29,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dashboard JavaScript syntax
+        run: node --check web/command-center/app.js
       - name: Compile and self-test
         shell: bash
         run: |
