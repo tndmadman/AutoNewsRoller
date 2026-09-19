@@ -20,12 +20,18 @@ public final class RssSource implements NewsSource {
     private final SourceConfig cfg;
     private final HttpClient client;
     private final int timeoutSeconds;
+    private final int maxAttempts;
     private final String userAgent;
     private final FeedCache cache;
 
     public RssSource(SourceConfig cfg,int timeoutSeconds,String userAgent,Path cachePath){
+        this(cfg,timeoutSeconds,3,userAgent,cachePath);
+    }
+
+    public RssSource(SourceConfig cfg,int timeoutSeconds,int maxAttempts,String userAgent,Path cachePath){
         this.cfg=cfg;
         this.timeoutSeconds=Math.max(3,timeoutSeconds);
+        this.maxAttempts=Math.max(1,maxAttempts);
         this.userAgent=userAgent;
         this.client=HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(this.timeoutSeconds))
@@ -39,7 +45,7 @@ public final class RssSource implements NewsSource {
         byte[] cachedBody=cache.body(cfg.url());
         Exception last=null;
 
-        for(int attempt=1;attempt<=3;attempt++){
+        for(int attempt=1;attempt<=maxAttempts;attempt++){
             try{
                 HttpResponse<byte[]> r=client.send(request(validators,true),HttpResponse.BodyHandlers.ofByteArray());
 
@@ -79,7 +85,7 @@ public final class RssSource implements NewsSource {
                 }
             }
 
-            if(attempt<3)Thread.sleep(250L*(1L<<(attempt-1)));
+            if(attempt<maxAttempts)Thread.sleep(250L*(1L<<(attempt-1)));
         }
 
         // If a transient request fails but we have a prior feed snapshot, keep the
