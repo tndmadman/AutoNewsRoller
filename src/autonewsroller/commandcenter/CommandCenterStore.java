@@ -163,7 +163,7 @@ public final class CommandCenterStore {
     }
 
     public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes){
-        Map<String,Object>m=requireStory(jobId);m.put("serverVideo",path.toString());m.put("videoFilename",filename);m.put("videoBytes",bytes);m.put("stage","AUDIT");m.put("progress",97);
+        Map<String,Object>m=requireStory(jobId);m.put("serverVideo",path.toString());m.put("videoFilename",filename);m.put("videoBytes",bytes);m.put("stage","UPLOAD");m.put("progress",99);
         emit("story",publicStory(m));
     }
 
