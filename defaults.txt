@@ -24,6 +24,7 @@ videoFps=30
 videoMinimumDurationSeconds=60.5
 videoTargetAudioMinSeconds=65
 videoTargetAudioMaxSeconds=72
+narrationDurationRetries=3
 videoSourceTailSeconds=2.5
 videoMinStoryScenes=7
 videoMaxStoryScenes=9
