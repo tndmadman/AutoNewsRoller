@@ -19,7 +19,7 @@
     "CBS News": {
       "classification": "left",
       "originalClassification": "Lean Left",
-      "confidence": "provider-rated",
+      "confidence": "high",
       "url": "https://www.allsides.com/news-source/cbs-news-online-media-bias"
     },
     "Fox News": {
@@ -31,7 +31,7 @@
     "ABC News": {
       "classification": "left",
       "originalClassification": "Lean Left",
-      "confidence": "provider-rated",
+      "confidence": "high",
       "url": "https://www.allsides.com/news-source/abc-news-media-bias"
     },
     "NPR": {
