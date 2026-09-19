@@ -1,0 +1,2 @@
+package autonewsroller.orchestration;
+public enum PipelineStage { DISCOVER,NORMALIZE,CLUSTER,VERIFY,RANK,SCRIPT,TTS,VISUALS,RENDER,AUDIT,APPROVED,REJECTED }

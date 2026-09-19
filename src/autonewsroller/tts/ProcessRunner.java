@@ -1,0 +1,4 @@
+package autonewsroller.tts;
+
+import java.io.*;import java.nio.charset.StandardCharsets;import java.util.concurrent.TimeUnit;
+final class ProcessRunner {private ProcessRunner(){}static String run(ProcessBuilder b,long timeout)throws Exception{b.redirectErrorStream(true);Process p=b.start();StringBuilder out=new StringBuilder();Thread t=new Thread(()->{try(BufferedReader r=new BufferedReader(new InputStreamReader(p.getInputStream(),StandardCharsets.UTF_8))){for(String l;(l=r.readLine())!=null;)out.append(l).append('\n');}catch(IOException ignored){}});t.start();if(!p.waitFor(timeout,TimeUnit.SECONDS)){p.destroyForcibly();throw new IOException("process timed out");}t.join(1000);if(p.exitValue()!=0)throw new IOException("process failed with exit "+p.exitValue()+": "+out);return out.toString();}}

@@ -1,0 +1,21 @@
+name: Windows validation
+on:
+  push:
+    branches: [main, feature/news-video-pipeline]
+  pull_request:
+    branches: [main]
+jobs:
+  self-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Self test
+        shell: cmd
+        run: batch_create_news_videos_windows.bat --self-test
