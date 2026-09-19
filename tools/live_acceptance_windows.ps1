@@ -145,7 +145,7 @@ if ($timings.Count -lt 5) { $failures.Add("Only $($timings.Count) Comfy image ti
 $newComfyLines = @()
 if (Test-Path $comfyLog) { $newComfyLines = @(Get-Content $comfyLog | Select-Object -Skip $comfyStartLines) }
 $clipLoads = @($newComfyLines | Where-Object { $_ -match "Requested to load SDXLClipModel" }).Count
-$sdxlLoads = @($newComfyLines | Where-Object { $_ -match "^Requested to load SDXL$" }).Count
+$sdxlLoads = @($newComfyLines | Where-Object { $_ -match "Requested to load SDXL(?!ClipModel)" }).Count
 $vaeLoads = @($newComfyLines | Where-Object { $_ -match "Requested to load AutoencoderKL" }).Count
 if ($clipLoads -gt 1 -or $sdxlLoads -gt 1 -or $vaeLoads -gt 1) {
   $failures.Add("Comfy model reloads exceeded one cold load: CLIP=$clipLoads SDXL=$sdxlLoads VAE=$vaeLoads")
@@ -164,6 +164,7 @@ $report = [ordered]@{
   comfy = [ordered]@{
     imageTimingsSeconds = $timings
     firstImageSeconds = $cold
+    coldStartObserved = ($clipLoads -gt 0 -or $sdxlLoads -gt 0 -or $vaeLoads -gt 0)
     subsequentAverageSeconds = $warmAvg
     newLogModelLoads = [ordered]@{
       SDXLClipModel = $clipLoads
