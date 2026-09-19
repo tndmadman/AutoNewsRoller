@@ -17,6 +17,7 @@ public final class CommandCenterStore {
     private final boolean autoQueue;
     private final double autoThreshold;
     private final int maxQueued;
+    private final int leaseSeconds;
     private final Consumer<Map<String,Object>>eventSink;
     private final Map<String,Map<String,Object>>stories=new LinkedHashMap<>();
     private final Map<String,Map<String,Object>>feeds=new LinkedHashMap<>();
@@ -26,7 +27,10 @@ public final class CommandCenterStore {
     private boolean scanning;
 
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink){
-        this.statePath=statePath;this.bias=bias;this.autoQueue=autoQueue;this.autoThreshold=autoThreshold;this.maxQueued=Math.max(1,maxQueued);this.eventSink=eventSink;
+        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,75);
+    }
+    public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink,int leaseSeconds){
+        this.statePath=statePath;this.bias=bias;this.autoQueue=autoQueue;this.autoThreshold=autoThreshold;this.maxQueued=Math.max(1,maxQueued);this.eventSink=eventSink;this.leaseSeconds=Math.max(30,leaseSeconds);
         load();
     }
 
@@ -125,7 +129,7 @@ public final class CommandCenterStore {
         switch(a){
             case "MAKE","QUEUE"->{
                 if(!Boolean.TRUE.equals(m.get("verified")))throw new IllegalStateException("Story is not verified yet. Use HOLD while waiting for confirmation.");
-                m.put("decision","MAKE");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");
+                m.put("decision","MAKE");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);
             }
             case "HOLD"->{m.put("decision","HOLD");m.put("status","HOLD");m.put("stage","HOLD");m.put("progress",10);}
             case "SKIP","NOT_WORTH","NOT-WORTH"->{m.put("decision","SKIP");m.put("status","SKIPPED");m.put("stage","SKIPPED");m.put("progress",0);}
@@ -141,31 +145,45 @@ public final class CommandCenterStore {
     }
 
     public synchronized Map<String,Object> claim(String workerId,Map<String,Object>settings){
+        recoverExpiredLeases(true);
         Optional<Map<String,Object>>best=stories.values().stream()
                 .filter(x->"QUEUED".equals(String.valueOf(x.get("status"))))
                 .sorted(Comparator.comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed())
                 .findFirst();
         if(best.isEmpty())return null;
         Map<String,Object>m=best.get();
-        m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",Instant.now().toString());m.put("stage","VERIFY");m.put("progress",18);m.remove("error");
+        m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",Instant.now().toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");
+        m.put("claimCount",integer(m.get("claimCount"))+1);renewLease(m);
         persistQuiet();emit("story",publicStory(m));
-        Map<String,Object>job=new LinkedHashMap<>();job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));return job;
+        Map<String,Object>job=new LinkedHashMap<>();job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);return job;
     }
 
     public synchronized void progress(String jobId,WorkerState state){
         Map<String,Object>m=stories.get(jobId);if(m==null)return;
         String detail=state.detail()==null?"":state.detail();
-        m.put("stage",state.stage().name());m.put("detail",detail);m.put("progress",Math.max(number(m.get("progress")),stageProgress(state.stage().name())));m.put("updatedAt",Instant.now().toString());
+        m.put("stage",state.stage().name());m.put("detail",detail);m.put("progress",Math.max(number(m.get("progress")),stageProgress(state.stage().name())));m.put("updatedAt",Instant.now().toString());renewLease(m);
         if(detail.startsWith("KOKORO USED")){m.put("ttsEngine","Kokoro");m.put("ttsVoice",valueAfter(detail,"voice="));}
         else if(detail.startsWith("QWEN3 FALLBACK USED")){m.put("ttsEngine","Qwen3 fallback");m.put("ttsVoice",valueAfter(detail,"voice="));}
         else if(detail.startsWith("KOKORO FAILED"))m.put("kokoroFailure",detail);
         if(detail.startsWith("COMFYUI USED")){m.put("visualMode","ComfyUI + procedural cards");m.put("comfyCheckpoint",valueAfter(detail,"checkpoint="," image="));}
-        else if(detail.startsWith("COMFYUI FALLBACK")||detail.startsWith("COMFYUI SKIPPED")){m.put("visualMode","Procedural cards");m.put("comfyStatus",detail);}
-        emit("story",publicStory(m));
+        else if(detail.startsWith("COMFYUI FALLBACK")||detail.startsWith("COMFYUI SKIPPED")||detail.startsWith("COMFYUI FAILED")){m.put("visualMode","ComfyUI failed");m.put("comfyStatus",detail);}
+        persistQuiet();emit("story",publicStory(m));
     }
 
     public synchronized void heartbeat(String workerId,Map<String,Object>payload){
-        Map<String,Object>m=new LinkedHashMap<>(payload);m.put("id",workerId);m.put("lastSeen",Instant.now().toString());workers.put(workerId,m);emit("worker",publicCopy(m));
+        Map<String,Object>m=new LinkedHashMap<>(payload);m.put("id",workerId);m.put("lastSeen",Instant.now().toString());workers.put(workerId,m);
+        String currentJob=String.valueOf(payload.getOrDefault("currentJob",""));
+        if(!currentJob.isBlank()){
+            Map<String,Object>story=stories.get(currentJob);
+            if(story!=null&&"PRODUCING".equals(String.valueOf(story.get("status")))&&workerId.equals(String.valueOf(story.get("assignedWorker")))){
+                renewLease(story);
+            }
+        }
+        persistQuiet();emit("worker",publicCopy(m));
+    }
+
+    public synchronized void maintenance(){
+        if(recoverExpiredLeases(true)>0)persistQuiet();
     }
 
     public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes){
@@ -174,7 +192,7 @@ public final class CommandCenterStore {
     }
 
     public synchronized void complete(String jobId,Map<String,Object>metadata){
-        Map<String,Object>m=requireStory(jobId);m.put("status","COMPLETE");m.put("stage","COMPLETE");m.put("progress",100);m.put("completedAt",Instant.now().toString());m.put("result",new LinkedHashMap<>(metadata));m.remove("error");
+        Map<String,Object>m=requireStory(jobId);m.put("status","COMPLETE");m.put("stage","COMPLETE");m.put("progress",100);clearLease(m);m.put("completedAt",Instant.now().toString());m.put("result",new LinkedHashMap<>(metadata));m.remove("error");
         Object sidecarObj=metadata.get("sidecar");
         if(sidecarObj instanceof Map<?,?>){
             Map<String,Object>sidecar=Json.object(sidecarObj);
@@ -200,7 +218,7 @@ public final class CommandCenterStore {
     }
 
     public synchronized void fail(String jobId,String error){
-        Map<String,Object>m=stories.get(jobId);if(m==null)return;m.put("status","FAILED");m.put("stage","FAILED");m.put("error",safe(error));m.put("progress",0);m.put("updatedAt",Instant.now().toString());persistQuiet();emit("story",publicStory(m));
+        Map<String,Object>m=stories.get(jobId);if(m==null)return;m.put("status","FAILED");m.put("stage","FAILED");m.put("error",safe(error));clearLease(m);m.put("progress",0);m.put("updatedAt",Instant.now().toString());persistQuiet();emit("story",publicStory(m));
     }
 
     public synchronized Map<String,Object> storyDetail(String id){
@@ -228,6 +246,24 @@ public final class CommandCenterStore {
     private static boolean terminalOrManual(String s){return Set.of("HOLD","SKIPPED","QUEUED","PRODUCING","COMPLETE","COMPLETE_HISTORY","FAILED").contains(s);}
     private static int stageProgress(String s){return switch(s){case "VERIFY"->20;case "SCRIPT"->34;case "TTS"->52;case "VISUALS"->68;case "RENDER"->84;case "AUDIT"->96;case "APPROVED"->99;case "REJECTED"->0;default->25;};}
     private static double number(Object x){return x instanceof Number n?n.doubleValue():0;}
+    private static int integer(Object x){return x instanceof Number n?n.intValue():0;}
+    private void renewLease(Map<String,Object>m){if("PRODUCING".equals(String.valueOf(m.get("status"))))m.put("leaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());}
+    private static void clearLease(Map<String,Object>m){m.remove("leaseUntil");}
+    private int recoverExpiredLeases(boolean announce){
+        int recovered=0;Instant now=Instant.now();
+        for(Map<String,Object>m:stories.values()){
+            if(!"PRODUCING".equals(String.valueOf(m.get("status"))))continue;
+            boolean expired=true;Object raw=m.get("leaseUntil");
+            if(raw!=null)try{expired=!Instant.parse(String.valueOf(raw)).isAfter(now);}catch(Exception ignored){}
+            if(!expired)continue;
+            String previous=String.valueOf(m.getOrDefault("assignedWorker","unknown"));
+            m.put("lastAssignedWorker",previous);m.remove("assignedWorker");m.remove("jobStartedAt");m.remove("leaseUntil");
+            m.put("status","QUEUED");m.put("stage","QUEUED");m.put("progress",15);m.put("queuedAt",now.toString());
+            m.put("detail","Worker lease expired; automatically requeued");m.put("leaseRecoveries",integer(m.get("leaseRecoveries"))+1);
+            recovered++;if(announce)emit("story",publicStory(m));
+        }
+        return recovered;
+    }
     private static String valueAfter(String text,String marker){int i=text.indexOf(marker);return i<0?"":text.substring(i+marker.length()).trim();}
     private static String valueAfter(String text,String marker,String until){int i=text.indexOf(marker);if(i<0)return "";String tail=text.substring(i+marker.length());int j=tail.indexOf(until);return (j<0?tail:tail.substring(0,j)).trim();}
     private static String safe(String x){return x==null?"":x.length()>1000?x.substring(0,1000):x;}
@@ -245,6 +281,7 @@ public final class CommandCenterStore {
         try{
             Map<String,Object>root=Json.object(Json.read(statePath));copyMap(root.get("stories"),stories);copyMap(root.get("feeds"),feeds);copyMap(root.get("videos"),videos);
             Object scan=root.get("lastScan");if(scan instanceof Map<?,?>)lastScan=new LinkedHashMap<>(Json.object(scan));
+            if(recoverExpiredLeases(false)>0)persistQuiet();
         }catch(Exception e){System.err.println("Command center state load failed: "+e.getMessage());}
     }
 

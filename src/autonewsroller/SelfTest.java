@@ -30,6 +30,7 @@ public final class SelfTest {
         testClusterAndVerify(a);
         testCommandCenterQueue(a);
         testCommandCenterMediaReporting(root,a);
+        testCommandCenterLeaseRecovery(a);
         testAuthoritative(root);
         testMalformed(root);
         testScriptValidation(a);
@@ -152,7 +153,7 @@ public final class SelfTest {
 
     private void testCommandCenterMediaReporting(Path root,List<Article>a)throws Exception{
         NewsConfig cfg=NewsConfig.load(root);
-        ok(cfg.getBool("commandCenterUseComfy",false)&&cfg.getBool("comfyAutoPickCheckpoint",false),"command center enables ComfyUI and checkpoint auto-pick by default");
+        ok(cfg.getBool("commandCenterUseComfy",false)&&cfg.getBool("commandCenterRequireComfy",false)&&cfg.getInt("commandCenterComfyImages",0)>=3&&cfg.getBool("comfyAutoPickCheckpoint",false),"command center requires multiple ComfyUI images by default");
 
         List<Article>fresh=a.stream().filter(x->!x.title().contains("Old archive")).toList();
         StoryCluster cluster=new StoryClusterer().cluster(fresh).stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
@@ -171,6 +172,27 @@ public final class SelfTest {
         store.complete(cluster.id,Map.of("sidecar",sidecar));
         Map<String,Object>story=store.storyDetail(cluster.id);
         ok("Kokoro".equals(story.get("ttsEngine"))&&((Number)story.get("comfyImages")).intValue()==1&&"test.safetensors".equals(story.get("comfyCheckpoint")),"command center retains actual TTS and ComfyUI results");
+    }
+
+    private void testCommandCenterLeaseRecovery(List<Article>a)throws Exception{
+        List<Article>fresh=a.stream().filter(x->!x.title().contains("Old archive")).toList();
+        StoryCluster cluster=new StoryClusterer().cluster(fresh).stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
+        VerificationResult verified=new SourceVerifier().verify(cluster,2);
+        NewsPipeline.DiscoveryItem item=new NewsPipeline.DiscoveryItem(cluster,verified.factPackage(),true,verified.reason(),0.91,false);
+        NewsPipeline.DiscoveryResult result=new NewsPipeline.DiscoveryResult(List.of(item),3,3,0,fresh.size(),fresh.size(),fresh.size(),fresh.size(),Instant.now());
+        Path dir=Files.createTempDirectory("autonews-command-lease-");
+        Path state=dir.resolve("state.json");
+        CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null,75);
+        store.applyDiscovery(result);
+        store.claim("dead-worker",Map.of("duration",60));
+        Map<String,Object>root=Json.object(Json.read(state));
+        Map<String,Object>stories=Json.object(root.get("stories"));
+        Map<String,Object>story=Json.object(stories.get(cluster.id));
+        story.remove("leaseUntil");
+        Json.write(state,root);
+        CommandCenterStore recovered=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null,75);
+        Map<String,Object>after=recovered.storyDetail(cluster.id);
+        ok("QUEUED".equals(after.get("status"))&&((Number)after.get("leaseRecoveries")).intValue()>=1,"command center recovers stranded producing job");
     }
 
     private void testAuthoritative(Path root)throws Exception{

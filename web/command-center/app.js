@@ -91,12 +91,14 @@ function storyCard(s){
   const voice=esc(s.ttsVoice||"");
   const visual=esc(s.visualMode||((s.stage==="VISUALS"&&s.detail)?s.detail:"pending"));
   const checkpoint=esc(s.comfyCheckpoint||"");
-  const liveDetail=s.detail?`<div class="liveDetail">${esc(s.detail)}</div>`:"";
+  const liveMessage=s.error||s.comfyStatus||s.detail||"";
+  const liveDetail=liveMessage?`<div class="liveDetail">${esc(liveMessage)}</div>`:"";
   const productionFacts=(status==="PRODUCING"||status==="COMPLETE"||status==="FAILED")
     ?`<div class="productionFacts">
         <span><b>TTS</b> ${engine}${voice?" // "+voice:""}</span>
         <span><b>VISUALS</b> ${visual}${checkpoint?" // "+checkpoint:""}</span>
         ${s.comfyImages!=null?`<span><b>COMFY</b> ${num(s.comfyImages)} generated image(s)</span>`:""}
+        ${num(s.leaseRecoveries)>0?`<span><b>RECOVERED</b> ${num(s.leaseRecoveries)} worker lease(s)</span>`:""}
       </div>`:"";
   return `<article class="storyCard${cls}">
     <div class="storyTop">
