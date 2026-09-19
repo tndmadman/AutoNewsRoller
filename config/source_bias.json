@@ -1,0 +1,6 @@
+{
+  "provider": "unconfigured",
+  "asOf": "",
+  "note": "Optional external source classifications for the dashboard source-mix display. AutoNewsRoller does not invent political labels. Add labels only with a named source and date.",
+  "sources": {}
+}
