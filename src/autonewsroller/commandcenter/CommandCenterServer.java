@@ -118,6 +118,9 @@ public final class CommandCenterServer {
             if(p.length>=2&&"action".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>body=bodyObject(x);String action=String.valueOf(body.getOrDefault("action",""));json(x,200,store.action(id,action));return;
             }
+            if(p.length>=2&&"analyze-bias".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
+                json(x,202,store.queuePoliticalAnalysis(id));return;
+            }
             method(x);
         }catch(IllegalStateException e){json(x,409,Map.of("error",safe(e.getMessage())));}
         catch(IllegalArgumentException e){json(x,400,Map.of("error",safe(e.getMessage())));}
@@ -183,6 +186,17 @@ public final class CommandCenterServer {
                 case "fail"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
                     Map<String,Object>b=bodyObject(x);store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")));json(x,200,Map.of("ok",true));
+                }
+                case "bias-complete"->{
+                    if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+                    Map<String,Object>b=bodyObject(x);
+                    Map<String,Object>result=b.get("result") instanceof Map<?,?>?Json.object(b.get("result")):b;
+                    store.politicalAnalysisComplete(id,result,String.valueOf(b.getOrDefault("workerId","")));
+                    json(x,200,Map.of("ok",true));
+                }
+                case "bias-fail"->{
+                    if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+                    Map<String,Object>b=bodyObject(x);store.politicalAnalysisFail(id,String.valueOf(b.getOrDefault("error","analysis failure")));json(x,200,Map.of("ok",true));
                 }
                 default->json(x,404,Map.of("error","unknown job operation"));
             }

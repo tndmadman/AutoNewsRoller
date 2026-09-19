@@ -17,6 +17,7 @@ function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&l
 function pct(v){return Math.max(0,Math.min(100,Number(v)||0))}
 function age(t){if(!t)return "";const d=(Date.now()-Date.parse(t))/60000;if(d<60)return Math.max(0,Math.round(d))+"m";if(d<1440)return Math.round(d/60)+"h";return Math.round(d/1440)+"d"}
 function num(v,d=0){return Number.isFinite(Number(v))?Number(v):d}
+function safeHttpUrl(v){try{const u=new URL(String(v||""));return (u.protocol==="https:"||u.protocol==="http:")?u.href:""}catch{return ""}}
 function toast(msg,error=false){const t=$("#toast");t.textContent=msg;t.className="toast show"+(error?" error":"");clearTimeout(t._timer);t._timer=setTimeout(()=>t.className="toast",3500)}
 
 async function loadState(){
@@ -100,6 +101,33 @@ function storyCard(s){
   const checkpoint=esc(s.comfyCheckpoint||"");
   const liveMessage=s.error||s.comfyStatus||s.detail||"";
   const liveDetail=liveMessage?`<div class="liveDetail">${esc(liveMessage)}</div>`:"";
+  const sourceDetails=mix.publisherDetails||{};
+  const baselineDetails=Object.entries(sourceDetails).map(([publisher,d])=>{
+    const href=safeHttpUrl(d&&d.url);
+    const label=(d&&d.originalClassification)||((d&&d.bucket)||"unknown");
+    const confidence=d&&d.confidence?(" // "+d.confidence):"";
+    const inner=`${esc(publisher)}: ${esc(label)}${esc(confidence)}`;
+    return href?`<a class="biasSourceChip" href="${href}" target="_blank" rel="noopener">${inner}</a>`:`<span class="biasSourceChip">${inner}</span>`;
+  }).join("");
+  const framing=s.framingAnalysis||{};
+  const framingStatus=String(s.biasAnalysisStatus||"");
+  const framingWeights=framing.overallWeights||{};
+  const framingBar=k=>Math.round(num(framingWeights[k])*100);
+  const framingArticles=Array.isArray(framing.articles)?framing.articles:[];
+  const framingRows=framingArticles.slice(0,6).map(a=>`<div class="framingRow"><span>${esc(a.publisher||"source")}</span><b class="frame-${esc(a.classification||"uncertain")}">${esc(String(a.classification||"uncertain").replace("_"," ").toUpperCase())}</b><small>${Math.round(num(a.confidence)*100)}%</small></div>`).join("");
+  const analysisButton=(framingStatus==="QUEUED"||framingStatus==="ANALYZING")
+    ?`<button class="btn ghost" disabled>${framingStatus==="ANALYZING"?"ANALYZING…":"ANALYSIS QUEUED"}</button>`
+    :`<button class="btn ghost" onclick="analyzeBias('${esc(s.id)}')">${framingStatus==="COMPLETE"?"↻ REANALYZE FRAMING":"◎ ANALYZE FRAMING"}</button>`;
+  const framingPanel=framingStatus==="COMPLETE"
+    ?`<div class="framingPanel">
+        <div class="mixTitle"><span>ARTICLE FRAMING // LOCAL OLLAMA</span><span>${esc(String(framing.overallClassification||"uncertain").replace("_"," ").toUpperCase())} // ${Math.round(num(framing.overallConfidence)*100)}%</span></div>
+        <div class="triBias"><div class="tri left" style="--v:${framingBar("left")}%"><span>LEFT WEIGHT</span><b>${framingBar("left")}%</b></div><div class="tri center" style="--v:${framingBar("center")}%"><span>CENTER WEIGHT</span><b>${framingBar("center")}%</b></div><div class="tri right" style="--v:${framingBar("right")}%"><span>RIGHT WEIGHT</span><b>${framingBar("right")}%</b></div></div>
+        <div class="framingSummary">${esc(framing.summary||"")}</div>
+        ${framingRows}
+        <div class="framingMeta">HEURISTIC WEIGHTS, NOT TRUTH PROBABILITIES // MIXED ${num(framing.mixed)} // UNCERTAIN ${num(framing.uncertain)} // NOT POLITICAL ${num(framing.notPolitical)} // MODEL ${esc(framing.model||"")}</div>
+        ${analysisButton}
+      </div>`
+    :`<div class="framingPanel pending"><div class="mixTitle"><span>ARTICLE FRAMING // LOCAL OLLAMA</span><span>${esc(framingStatus||"NOT ANALYZED")}</span></div><div class="framingSummary">${framingStatus==="FAILED"?esc(s.biasAnalysisError||"Analysis failed."):s.politicalCandidate?"Queued automatically for idle-worker analysis.":"This story was not automatically flagged as political; you can still analyze it manually."}</div>${analysisButton}</div>`;
   const productionFacts=(status==="PRODUCING"||status==="COMPLETE"||status==="FAILED")
     ?`<div class="productionFacts">
         <span><b>TTS</b> ${engine}${voice?" // "+voice:""}</span>
@@ -122,11 +150,13 @@ function storyCard(s){
     <div class="progressWrap"><div class="progressText"><span>${esc(s.stage||status)}</span><span>${Math.round(num(s.progress))}%</span></div><div class="progress"><i style="width:${pct(s.progress)}%"></i></div></div>
     ${liveDetail}
     ${productionFacts}
-    <div class="mix" title="${esc(mix.note||"Configured external source classifications only")}">
-      <div class="mixTitle"><span>POLITICAL SOURCE MIX</span><span>${esc(mix.provider||"unconfigured")}${mix.asOf?" // "+esc(mix.asOf):""}</span></div>
+    <div class="mix" title="${esc(mix.note||"External publisher baseline classifications")}">
+      <div class="mixTitle"><span>PUBLISHER BASELINE</span><span>${esc(mix.provider||"unconfigured")}${mix.asOf?" // "+esc(mix.asOf):""}</span></div>
       <div class="mixBars"><div class="mixBar left"><i style="width:${bar("left")}%"></i></div><div class="mixBar center"><i style="width:${bar("center")}%"></i></div><div class="mixBar right"><i style="width:${bar("right")}%"></i></div><div class="mixBar unknown"><i style="width:${bar("unknown")}%"></i></div></div>
       <div class="mixLabels"><span>LEFT ${num(mix.left)}</span><span>CENTER ${num(mix.center)}</span><span>RIGHT ${num(mix.right)}</span><span>UNKNOWN ${num(mix.unknown)}</span></div>
+      <div class="biasSourceDetails">${baselineDetails||'<span class="biasSourceChip">NO ATTRIBUTED RATING</span>'}</div>
     </div>
+    ${framingPanel}
     <div class="storyActions">
       <button class="btn good" onclick="storyAction('${esc(s.id)}','WORTH')" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
       <button class="btn primary" onclick="storyAction('${esc(s.id)}','MAKE')" ${makeDisabled?"disabled":""}>▶ MAKE VIDEO</button>
@@ -160,6 +190,14 @@ async function storyAction(id,action){
   }catch(e){toast(e.message,true)}
 }
 window.storyAction=storyAction;
+async function analyzeBias(id){
+  try{
+    await api("/api/stories/"+encodeURIComponent(id)+"/analyze-bias",{method:"POST"});
+    toast("Political framing analysis queued for an idle worker.");
+    await loadState();
+  }catch(e){toast(e.message,true)}
+}
+window.analyzeBias=analyzeBias;
 
 $("#scanBtn").onclick=async()=>{try{await api("/api/scan",{method:"POST"});toast("Full RSS scan started.")}catch(e){toast(e.message,true)}};
 $("#authBtn").onclick=authPrompt;

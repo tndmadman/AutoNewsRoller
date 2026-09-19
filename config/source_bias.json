@@ -1,6 +1,98 @@
 {
-  "provider": "unconfigured",
-  "asOf": "",
-  "note": "Optional external source classifications for the dashboard source-mix display. AutoNewsRoller does not invent political labels. Add labels only with a named source and date.",
-  "sources": {}
+  "provider": "AllSides Media Bias Ratings",
+  "asOf": "2026-09-19",
+  "providerUrl": "https://www.allsides.com/media-bias/media-bias-ratings",
+  "note": "Publisher baseline labels are attributed to AllSides and refer to its ratings for the cited online source pages. AutoNewsRoller preserves the provider's original label and collapses Left/Lean Left into left, Center into center, and Lean Right/Right into right for the three-bar dashboard. A publisher baseline is not a verdict on any individual article.",
+  "sources": {
+    "BBC News": {
+      "classification": "center",
+      "originalClassification": "Center",
+      "confidence": "medium",
+      "url": "https://www.allsides.com/news-source/bbc-news-media-bias"
+    },
+    "The Guardian": {
+      "classification": "left",
+      "originalClassification": "Left",
+      "confidence": "low",
+      "url": "https://www.allsides.com/news-source/guardian-media-bias"
+    },
+    "CBS News": {
+      "classification": "left",
+      "originalClassification": "Lean Left",
+      "confidence": "high",
+      "url": "https://www.allsides.com/news-source/cbs-news-online-media-bias"
+    },
+    "Fox News": {
+      "classification": "right",
+      "originalClassification": "Right",
+      "confidence": "medium",
+      "url": "https://www.allsides.com/news-source/fox-news-media-bias"
+    },
+    "ABC News": {
+      "classification": "left",
+      "originalClassification": "Lean Left",
+      "confidence": "high",
+      "url": "https://www.allsides.com/news-source/abc-news-media-bias"
+    },
+    "NPR": {
+      "classification": "left",
+      "originalClassification": "Lean Left",
+      "confidence": "medium",
+      "url": "https://www.allsides.com/news-source/npr-media-bias"
+    },
+    "The New York Times": {
+      "classification": "left",
+      "originalClassification": "Lean Left",
+      "confidence": "high",
+      "url": "https://www.allsides.com/news-source/new-york-times-news-media-bias"
+    },
+    "Global News": {
+      "classification": "left",
+      "originalClassification": "Lean Left",
+      "confidence": "low",
+      "url": "https://www.allsides.com/news-source/global-news-media-bias"
+    },
+    "Ars Technica": {
+      "classification": "center",
+      "originalClassification": "Center",
+      "confidence": "low",
+      "url": "https://www.allsides.com/news-source/ars-technica-media-bias"
+    },
+    "TechCrunch": {
+      "classification": "center",
+      "originalClassification": "Center",
+      "confidence": "low",
+      "url": "https://www.allsides.com/news-source/techcrunch-media-bias"
+    },
+    "The Verge": {
+      "classification": "left",
+      "originalClassification": "Lean Left",
+      "confidence": "low",
+      "url": "https://www.allsides.com/news-source/verge-media-bias"
+    },
+    "WIRED": {
+      "classification": "left",
+      "originalClassification": "Left",
+      "confidence": "medium",
+      "url": "https://www.allsides.com/news-source/wired-media-bias"
+    },
+    "ESPN": {
+      "classification": "left",
+      "originalClassification": "Lean Left",
+      "confidence": "low",
+      "url": "https://www.allsides.com/news-source/espncom-media-bias"
+    },
+    "CNBC": {
+      "classification": "left",
+      "originalClassification": "Lean Left",
+      "confidence": "medium",
+      "url": "https://www.allsides.com/news-source/cnbc-media-bias"
+    },
+    "MarketWatch": {
+      "classification": "center",
+      "originalClassification": "Center",
+      "confidence": "medium",
+      "url": "https://www.allsides.com/news-source/marketwatch-media-bias"
+    }
+  }
 }

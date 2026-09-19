@@ -269,58 +269,22 @@ It is a production-priority score, not a factual-truth probability.
 
 Verification remains a separate gate.
 
-## Political source-mix display
+## Political source baseline
 
-The dashboard supports:
+The dashboard's publisher-level LEFT / CENTER / RIGHT / UNKNOWN bars use attributed external metadata from `config/source_bias.json`.
 
-- LEFT
-- CENTER
-- RIGHT
-- UNKNOWN
+The bundled file currently identifies AllSides as the provider and stores an as-of date, provider URLs, original provider labels, and confidence metadata when available.
 
-bars for the publishers in a story.
+For visualization only:
 
-AutoNewsRoller does not invent these political labels.
+- Left and Lean Left map into the left bar;
+- Center maps into center;
+- Lean Right and Right map into the right bar;
+- unrated or unsupported publishers remain unknown.
 
-The repository intentionally ships with:
+The original provider label remains visible on the card. Publisher baseline and article-level framing are intentionally separate measurements.
 
-    config/source_bias.json
-
-set to provider=unconfigured and no publisher classifications.
-
-This prevents the software from presenting unsupported political judgments as objective measurements.
-
-To use the display, populate the file with a named external classification source and an as-of date.
-
-Example structure using placeholder names:
-
-    {
-      "provider": "Name of classification dataset",
-      "asOf": "2026-09-01",
-      "note": "How these labels were obtained.",
-      "sources": {
-        "Example Publisher A": {
-          "classification": "left"
-        },
-        "Example Publisher B": {
-          "classification": "center"
-        },
-        "Example Publisher C": {
-          "classification": "right"
-        }
-      }
-    }
-
-Supported classifications are:
-
-- left
-- center
-- right
-- unknown
-
-Anything else becomes unknown.
-
-The UI calls this a source mix, not a truth score.
+See the later "Political source baseline and article framing" section for the worker-side Ollama analysis flow.
 
 ## Feed radar
 
@@ -595,3 +559,71 @@ The cross-platform workflow includes:
 - dashboard HTML fetch check.
 
 This verifies the controller can actually start headlessly on Linux rather than only compiling there.
+
+
+## Political source baseline and article framing
+
+The Command Center now separates two different measurements.
+
+### Publisher baseline
+
+`config/source_bias.json` contains attributed publisher-level political-bias metadata.
+
+The bundled baseline uses AllSides Media Bias Ratings for supported publishers and stores:
+
+- the dashboard bucket: left, center, right, or unknown;
+- the provider's original classification such as Lean Left or Right;
+- the provider's confidence label when available;
+- a direct source-rating URL;
+- an as-of date.
+
+The three dashboard bars collapse Lean Left into left and Lean Right into right only for visualization. The original provider label remains visible on the story card.
+
+A publisher baseline is not treated as a classification of every article from that publisher.
+
+### Article framing
+
+Political stories are automatically queued for article-level framing analysis.
+
+The controller remains lightweight: it does not run Ollama itself. When no video is waiting, a connected worker claims a `POLITICAL_ANALYSIS` job and uses its local Ollama model.
+
+The analyzer examines only supplied headline/description/body text and is instructed not to use publisher identity as evidence.
+
+Per story it returns:
+
+- political relevance;
+- overall classification: left, center, right, mixed, uncertain, or not political;
+- confidence;
+- a short framing summary;
+- per-article classification and confidence;
+- short observable framing signals.
+
+Center is a framing category, not a truth or credibility score.
+
+The UI shows publisher baseline and article framing as separate panels.
+
+Video jobs always take priority over framing-analysis jobs.
+
+### Manual analysis
+
+Any story can be analyzed or reanalyzed from its card with:
+
+    ANALYZE FRAMING
+
+API:
+
+    POST /api/stories/{storyId}/analyze-bias
+
+Worker result endpoints:
+
+    POST /api/jobs/{storyId}/bias-complete
+    POST /api/jobs/{storyId}/bias-fail
+
+### Worker-side model settings
+
+Defaults:
+
+    politicalAnalysisModel=llama3.1:8b
+    politicalAnalysisOllamaUrl=http://127.0.0.1:11434/api/generate
+
+These are worker-side settings. A headless controller does not require Ollama merely to host the dashboard or scan RSS feeds.

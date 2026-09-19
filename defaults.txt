@@ -50,3 +50,6 @@ commandCenterRequireComfy=true
 commandCenterComfyImages=3
 commandCenterJobLeaseSeconds=75
 commandCenterControllerUrl=http://127.0.0.1:8787
+
+politicalAnalysisModel=llama3.1:8b
+politicalAnalysisOllamaUrl=http://127.0.0.1:11434/api/generate

@@ -31,6 +31,8 @@ public final class SelfTest {
         testCommandCenterQueue(a);
         testCommandCenterMediaReporting(root,a);
         testCommandCenterLeaseRecovery(a);
+        testPublisherBiasRegistry(root);
+        testPoliticalAnalysisQueue(a);
         testAuthoritative(root);
         testMalformed(root);
         testScriptValidation(a);
@@ -216,6 +218,46 @@ public final class SelfTest {
         CommandCenterStore recovered=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null,75);
         Map<String,Object>after=recovered.storyDetail(cluster.id);
         ok("QUEUED".equals(after.get("status"))&&((Number)after.get("leaseRecoveries")).intValue()>=1,"command center recovers stranded producing job");
+    }
+
+    private void testPublisherBiasRegistry(Path root)throws Exception{
+        BiasRegistry registry=BiasRegistry.load(root.resolve("config/source_bias.json"));
+        Map<String,Object>mix=registry.mix(List.of("BBC News","Fox News","The Guardian"));
+        ok(((Number)mix.get("left")).intValue()==1&&((Number)mix.get("center")).intValue()==1&&((Number)mix.get("right")).intValue()==1,"attributed publisher bias buckets load");
+        Map<String,Object>details=Json.object(mix.get("publisherDetails"));
+        Map<String,Object>fox=Json.object(details.get("Fox News"));
+        ok("Right".equals(fox.get("originalClassification"))&&String.valueOf(fox.get("url")).contains("allsides.com"),"publisher bias preserves provider label and citation URL");
+    }
+
+    private void testPoliticalAnalysisQueue(List<Article>a)throws Exception{
+        Article base=a.stream().filter(x->!x.title().contains("Old archive")).findFirst().orElseThrow();
+        Article political=new Article(
+                "political-analysis-fixture","Fixture Politics",
+                "Senate election bill sparks debate over voting rules",
+                base.url(),base.canonicalUrl(),Instant.now(),Instant.now(),"","politics",
+                "Lawmakers from both parties debated an election bill and voting policy.", "", "en",1,false
+        );
+        StoryCluster cluster=new StoryCluster("political-analysis-story",political.title(),List.of(political),Set.of("Senate"),"political-analysis-fingerprint");
+        ok(PoliticalFramingAnalyzer.likelyPolitical(cluster),"political framing heuristic identifies political story");
+
+        VerificationResult vr=new SourceVerifier().verify(cluster,2);
+        NewsPipeline.DiscoveryItem item=new NewsPipeline.DiscoveryItem(cluster,vr.factPackage(),false,vr.reason(),0.55,false);
+        NewsPipeline.DiscoveryResult result=new NewsPipeline.DiscoveryResult(List.of(item),1,1,0,1,1,1,1,Instant.now());
+        Path dir=Files.createTempDirectory("autonews-bias-queue-");
+        CommandCenterStore store=new CommandCenterStore(dir.resolve("state.json"),BiasRegistry.load(dir.resolve("bias.json")),false,0.68,12,null,75,0.74,0.82);
+        store.applyDiscovery(result);
+        Map<String,Object>story=store.storyDetail(cluster.id);
+        ok("QUEUED".equals(story.get("biasAnalysisStatus")),"political story queues framing analysis");
+
+        Map<String,Object>job=store.claim("analysis-worker",Map.of());
+        ok("POLITICAL_ANALYSIS".equals(job.get("jobType"))&&cluster.id.equals(job.get("jobId")),"idle worker claims political framing job");
+
+        Map<String,Object>analysis=new LinkedHashMap<>();
+        analysis.put("overallClassification","center");analysis.put("overallConfidence",0.72);analysis.put("politicalRelevance",0.96);
+        analysis.put("summary","Fixture neutral framing.");analysis.put("articles",List.of());analysis.put("left",0);analysis.put("center",1);analysis.put("right",0);analysis.put("mixed",0);analysis.put("uncertain",0);analysis.put("notPolitical",0);analysis.put("model","fixture");
+        store.politicalAnalysisComplete(cluster.id,analysis,"analysis-worker");
+        Map<String,Object>done=store.storyDetail(cluster.id);
+        ok("COMPLETE".equals(done.get("biasAnalysisStatus"))&&Json.object(done.get("framingAnalysis")).get("overallClassification").equals("center"),"political framing result persists in command center state");
     }
 
     private void testAuthoritative(Path root)throws Exception{

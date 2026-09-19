@@ -5,6 +5,7 @@ import autonewsroller.model.Article;
 import autonewsroller.orchestration.NewsPipeline;
 import autonewsroller.orchestration.WorkerState;
 import autonewsroller.util.Json;
+import autonewsroller.util.Hashing;
 
 import java.nio.file.*;
 import java.time.*;
@@ -105,6 +106,21 @@ public final class CommandCenterStore {
             m.put("latestPublishedAt",item.cluster().articles.stream().map(Article::publishedAt).filter(Objects::nonNull).max(Comparator.naturalOrder()).map(Instant::toString).orElse(""));
             m.put("candidate",item.candidate().toMap());
             m.put("sourceMix",bias.mix(item.cluster().publishers()));
+            boolean politicalCandidate=PoliticalFramingAnalyzer.likelyPolitical(item.cluster());
+            m.put("politicalCandidate",politicalCandidate);
+            String framingInputHash=Hashing.sha256(item.cluster().articles.stream().map(Article::id).sorted().reduce("",(a,b)->a+"|"+b));
+            m.put("biasAnalysisInputHash",framingInputHash);
+            String analyzedInputHash=String.valueOf(m.getOrDefault("framingInputHash",""));
+            if(politicalCandidate&&!framingInputHash.equals(analyzedInputHash)){
+                String biasStatus=String.valueOf(m.getOrDefault("biasAnalysisStatus",""));
+                if(!"ANALYZING".equals(biasStatus)){
+                    m.put("biasAnalysisStatus","QUEUED");
+                    m.put("biasAnalysisQueuedAt",Instant.now().toString());
+                    m.remove("biasAnalysisError");
+                }
+            }else if(!politicalCandidate&&!m.containsKey("framingAnalysis")){
+                m.put("biasAnalysisStatus","NOT_POLITICAL");
+            }
             m.put("decision",decision);
             m.put("lastSeen",Instant.now().toString());
 
@@ -210,16 +226,36 @@ public final class CommandCenterStore {
 
     public synchronized Map<String,Object> claim(String workerId,Map<String,Object>settings){
         recoverExpiredLeases(true);
-        Optional<Map<String,Object>>best=stories.values().stream()
+        recoverExpiredBiasLeases(true);
+
+        Optional<Map<String,Object>>bestVideo=stories.values().stream()
                 .filter(x->"QUEUED".equals(String.valueOf(x.get("status"))))
                 .sorted(Comparator.comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed())
                 .findFirst();
-        if(best.isEmpty())return null;
-        Map<String,Object>m=best.get();
-        m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",Instant.now().toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");
-        m.put("claimCount",integer(m.get("claimCount"))+1);renewLease(m);
+        if(bestVideo.isPresent()){
+            Map<String,Object>m=bestVideo.get();
+            m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",Instant.now().toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");
+            m.put("claimCount",integer(m.get("claimCount"))+1);renewLease(m);
+            persistQuiet();emit("story",publicStory(m));
+            Map<String,Object>job=new LinkedHashMap<>();
+            job.put("jobType","VIDEO");job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
+            job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
+            return job;
+        }
+
+        Optional<Map<String,Object>>bestBias=stories.values().stream()
+                .filter(x->"QUEUED".equals(String.valueOf(x.get("biasAnalysisStatus"))))
+                .filter(x->x.get("candidate") instanceof Map<?,?>)
+                .sorted(Comparator.comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed())
+                .findFirst();
+        if(bestBias.isEmpty())return null;
+        Map<String,Object>m=bestBias.get();
+        m.put("biasAnalysisStatus","ANALYZING");m.put("biasAssignedWorker",workerId);m.put("biasAnalysisStartedAt",Instant.now().toString());
+        m.put("biasAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());m.remove("biasAnalysisError");
         persistQuiet();emit("story",publicStory(m));
-        Map<String,Object>job=new LinkedHashMap<>();job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));return job;
+        Map<String,Object>job=new LinkedHashMap<>();
+        job.put("jobType","POLITICAL_ANALYSIS");job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
+        return job;
     }
 
     public synchronized void progress(String jobId,WorkerState state){
@@ -241,13 +277,39 @@ public final class CommandCenterStore {
             Map<String,Object>story=stories.get(currentJob);
             if(story!=null&&"PRODUCING".equals(String.valueOf(story.get("status")))&&workerId.equals(String.valueOf(story.get("assignedWorker")))){
                 renewLease(story);
+            }else if(story!=null&&"ANALYZING".equals(String.valueOf(story.get("biasAnalysisStatus")))&&workerId.equals(String.valueOf(story.get("biasAssignedWorker")))){
+                story.put("biasAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());
             }
         }
         persistQuiet();emit("worker",publicCopy(m));
     }
 
+    public synchronized Map<String,Object> queuePoliticalAnalysis(String storyId){
+        Map<String,Object>m=requireStory(storyId);
+        m.put("politicalCandidate",true);m.put("biasAnalysisStatus","QUEUED");m.put("biasAnalysisQueuedAt",Instant.now().toString());
+        m.remove("biasAnalysisError");m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
+        persistQuiet();Map<String,Object>pub=publicStory(m);emit("story",pub);return pub;
+    }
+
+    public synchronized void politicalAnalysisComplete(String storyId,Map<String,Object>result,String workerId){
+        Map<String,Object>m=requireStory(storyId);
+        m.put("framingAnalysis",deepCopyMap(result));
+        m.put("framingInputHash",String.valueOf(m.getOrDefault("biasAnalysisInputHash","")));
+        m.put("biasAnalysisStatus","COMPLETE");m.put("biasAnalyzedAt",Instant.now().toString());m.put("biasAnalyzedBy",workerId);
+        m.remove("biasAnalysisError");m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
+        persistQuiet();emit("story",publicStory(m));
+    }
+
+    public synchronized void politicalAnalysisFail(String storyId,String error){
+        Map<String,Object>m=requireStory(storyId);
+        m.put("biasAnalysisStatus","FAILED");m.put("biasAnalysisError",safe(error));m.put("biasAnalysisFailedAt",Instant.now().toString());
+        m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
+        persistQuiet();emit("story",publicStory(m));
+    }
+
     public synchronized void maintenance(){
-        if(recoverExpiredLeases(true)>0)persistQuiet();
+        int recovered=recoverExpiredLeases(true)+recoverExpiredBiasLeases(true);
+        if(recovered>0)persistQuiet();
     }
 
     public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes){
@@ -300,6 +362,9 @@ public final class CommandCenterStore {
         counts.put("worthy",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("worthy"))).filter(x->!"SKIPPED".equals(String.valueOf(x.get("status")))).count());
         counts.put("queued",countStatus("QUEUED"));counts.put("producing",countStatus("PRODUCING"));counts.put("complete",countStatus("COMPLETE")+countStatus("COMPLETE_HISTORY"));counts.put("hold",countStatus("HOLD"));counts.put("skipped",countStatus("SKIPPED"));counts.put("failed",countStatus("FAILED"));
         counts.put("feedsOk",feeds.values().stream().filter(x->"OK".equals(x.get("status"))).count());counts.put("feedsFailed",feeds.values().stream().filter(x->"FAILED".equals(x.get("status"))).count());counts.put("workersOnline",ww.stream().filter(x->Boolean.TRUE.equals(x.get("online"))).count());
+        counts.put("biasQueued",stories.values().stream().filter(x->"QUEUED".equals(x.get("biasAnalysisStatus"))).count());
+        counts.put("biasAnalyzing",stories.values().stream().filter(x->"ANALYZING".equals(x.get("biasAnalysisStatus"))).count());
+        counts.put("biasComplete",stories.values().stream().filter(x->"COMPLETE".equals(x.get("biasAnalysisStatus"))).count());
         Map<String,Object>out=new LinkedHashMap<>();out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
     }
 
@@ -330,6 +395,22 @@ public final class CommandCenterStore {
         }
         return recovered;
     }
+    private int recoverExpiredBiasLeases(boolean announce){
+        int recovered=0;Instant now=Instant.now();
+        for(Map<String,Object>m:stories.values()){
+            if(!"ANALYZING".equals(String.valueOf(m.get("biasAnalysisStatus"))))continue;
+            boolean expired=true;Object raw=m.get("biasAnalysisLeaseUntil");
+            if(raw!=null)try{expired=!Instant.parse(String.valueOf(raw)).isAfter(now);}catch(Exception ignored){}
+            if(!expired)continue;
+            String previous=String.valueOf(m.getOrDefault("biasAssignedWorker","unknown"));
+            m.put("biasLastAssignedWorker",previous);m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
+            m.put("biasAnalysisStatus","QUEUED");m.put("biasAnalysisQueuedAt",now.toString());
+            m.put("biasAnalysisError","Analysis worker lease expired; automatically requeued.");
+            m.put("biasLeaseRecoveries",integer(m.get("biasLeaseRecoveries"))+1);
+            recovered++;if(announce)emit("story",publicStory(m));
+        }
+        return recovered;
+    }
     private static String valueAfter(String text,String marker){int i=text.indexOf(marker);return i<0?"":text.substring(i+marker.length()).trim();}
     private static String valueAfter(String text,String marker,String until){int i=text.indexOf(marker);if(i<0)return "";String tail=text.substring(i+marker.length());int j=tail.indexOf(until);return (j<0?tail:tail.substring(0,j)).trim();}
     private static String safe(String x){return x==null?"":x.length()>1000?x.substring(0,1000):x;}
@@ -347,7 +428,7 @@ public final class CommandCenterStore {
         try{
             Map<String,Object>root=Json.object(Json.read(statePath));copyMap(root.get("stories"),stories);copyMap(root.get("feeds"),feeds);copyMap(root.get("videos"),videos);
             Object scan=root.get("lastScan");if(scan instanceof Map<?,?>)lastScan=new LinkedHashMap<>(Json.object(scan));
-            if(recoverExpiredLeases(false)>0)persistQuiet();
+            if(recoverExpiredLeases(false)+recoverExpiredBiasLeases(false)>0)persistQuiet();
         }catch(Exception e){System.err.println("Command center state load failed: "+e.getMessage());}
     }
 
