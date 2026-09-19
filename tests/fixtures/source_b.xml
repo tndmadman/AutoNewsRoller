@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Publisher B</title>
+<item><title>Nvidia launches Orion chip for AI training and inference</title><link>https://b.example/orion</link><pubDate>Sat, 19 Sep 2026 15:20:00 GMT</pubDate><description>The company introduced its Orion accelerator, a new data-center processor aimed at artificial intelligence training and inference.</description></item>
+<item><title>Researchers publish a battery recycling method</title><link>https://b.example/battery</link><pubDate>Sat, 19 Sep 2026 14:10:00 GMT</pubDate><description>Researchers published a process intended to recover useful battery materials from spent cells.</description></item>
+</channel></rss>

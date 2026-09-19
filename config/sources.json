@@ -1,0 +1,49 @@
+{
+  "sources": [
+    {
+      "name": "BBC World",
+      "type": "rss",
+      "category": "world",
+      "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Guardian World",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.theguardian.com/world/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Guardian Technology",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.theguardian.com/technology/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Ars Technica",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://feeds.arstechnica.com/arstechnica/index",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "NASA JPL News",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.jpl.nasa.gov/feeds/news/",
+      "enabled": true,
+      "trustTier": 1,
+      "authoritativePrimary": true
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+# Build/runtime
+build/
+*.class
+.venv-news/
+.venv-kokoro/
+.venv-qwen3-tts/
+__pycache__/
+*.pyc
+output/**
+!output/.gitkeep
+data/*.jsonl
+data/feed_cache.json
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Publisher A</title>
+<item><title>Nvidia unveils Orion AI accelerator for data centers</title><link>https://a.example/orion</link><pubDate>Sat, 19 Sep 2026 15:00:00 GMT</pubDate><description>Nvidia announced the Orion AI accelerator for data centers, saying the new hardware is designed for large model training and inference workloads.</description></item>
+<item><title>Space telescope team releases new calibration images</title><link>https://a.example/telescope</link><pubDate>Sat, 19 Sep 2026 13:30:00 GMT</pubDate><description>A space telescope science team released a new set of calibration images and explained how the data will be used by researchers.</description></item>
+<item><title>Old archive story should be filtered in live mode</title><link>https://a.example/old</link><pubDate>Mon, 01 Sep 2025 12:00:00 GMT</pubDate><description>This deliberately stale fixture exists to test age filtering behavior.</description></item>
+</channel></rss>

@@ -1,0 +1,4 @@
+package autonewsroller.visuals;
+
+import autonewsroller.model.*;import java.util.*;
+public final class VisualPlanner {public VisualPlan plan(NewsScript s,FactPackage fp){List<VisualPlan.Item>out=new ArrayList<>();out.add(new VisualPlan.Item(0,"HEADLINE_CARD",s.headline(),"",Math.min(4,s.estimatedDuration()),""));int idx=1;for(NewsScript.Segment seg:s.segments()){if(idx>5)break;String type=seg.visualType();if(type==null||type.isBlank()||type.equals("HEADLINE_CARD"))type=idx%2==0?"TIMELINE":"BACKGROUND";out.add(new VisualPlan.Item(idx++,type,s.headline(),seg.narration(),Math.max(3,seg.durationTarget()),seg.visualPrompt()));}String src=fp.sources().stream().map(x->String.valueOf(x.get("publisher"))).distinct().limit(4).reduce((a,b)->a+" • "+b).orElse("");out.add(new VisualPlan.Item(idx,"SOURCE_CARD","Sources",src,3,""));return new VisualPlan(s.storyId(),out);}}
