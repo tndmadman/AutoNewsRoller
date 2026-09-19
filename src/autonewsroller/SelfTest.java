@@ -155,14 +155,23 @@ public final class SelfTest {
         VerificationResult unverified=new SourceVerifier().verify(unverifiedCluster,2);
         NewsPipeline.DiscoveryItem unverifiedItem=new NewsPipeline.DiscoveryItem(unverifiedCluster,unverified.factPackage(),false,unverified.reason(),0.76,false);
         NewsPipeline.DiscoveryResult unverifiedResult=new NewsPipeline.DiscoveryResult(List.of(unverifiedItem),1,1,0,1,1,1,1,Instant.now());
-        store.applyDiscovery(unverifiedResult);
-        Map<String,Object>before=store.storyDetail(unverifiedCluster.id);
-        ok("DISCOVERED".equals(before.get("status"))&&!Boolean.TRUE.equals(before.get("verified")),"unverified story remains discovered under automatic rules");
-        store.action(unverifiedCluster.id,"MAKE");
-        Map<String,Object>forced=store.storyDetail(unverifiedCluster.id);
-        ok("QUEUED".equals(forced.get("status"))&&Boolean.TRUE.equals(forced.get("manualVerificationOverride")),"manual MAKE force-queues unverified story");
-        Map<String,Object>forcedJob=store.claim("override-worker",Map.of("duration",60));
-        ok(unverifiedCluster.id.equals(forcedJob.get("jobId"))&&Boolean.TRUE.equals(forcedJob.get("manualVerificationOverride")),"worker can claim manual verification override job");
+        CommandCenterStore overrideStore=new CommandCenterStore(dir.resolve("override-state.json"),BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null,75,0.74,0.82);
+        overrideStore.applyDiscovery(unverifiedResult);
+        Map<String,Object>before=overrideStore.storyDetail(unverifiedCluster.id);
+        ok("WORTHY".equals(before.get("status"))&&Boolean.TRUE.equals(before.get("worthy"))&&!Boolean.TRUE.equals(before.get("verified")),"high-score one-source story becomes soft worthy");
+        overrideStore.action(unverifiedCluster.id,"WORTH");
+        Map<String,Object>forced=overrideStore.storyDetail(unverifiedCluster.id);
+        ok("QUEUED".equals(forced.get("status"))&&Boolean.TRUE.equals(forced.get("manualVerificationOverride"))&&Boolean.TRUE.equals(forced.get("manualWorth")),"WORTH IT queues one-source story with explicit override");
+        Map<String,Object>forcedJob=overrideStore.claim("override-worker",Map.of("duration",60));
+        ok(unverifiedCluster.id.equals(forcedJob.get("jobId"))&&Boolean.TRUE.equals(forcedJob.get("manualVerificationOverride")),"worker can claim WORTH IT override job");
+
+        StoryCluster autoCluster=new StoryCluster("soft-auto-story",single.title()+" auto",List.of(single),Set.of(),"soft-auto-fingerprint");
+        VerificationResult autoUnverified=new SourceVerifier().verify(autoCluster,2);
+        NewsPipeline.DiscoveryItem autoItem=new NewsPipeline.DiscoveryItem(autoCluster,autoUnverified.factPackage(),false,autoUnverified.reason(),0.86,false);
+        CommandCenterStore relaxedAuto=new CommandCenterStore(dir.resolve("soft-auto-state.json"),BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null,75,0.74,0.82);
+        relaxedAuto.applyDiscovery(new NewsPipeline.DiscoveryResult(List.of(autoItem),1,1,0,1,1,1,1,Instant.now()));
+        Map<String,Object>autoQueued=relaxedAuto.storyDetail(autoCluster.id);
+        ok("QUEUED".equals(autoQueued.get("status"))&&Boolean.TRUE.equals(autoQueued.get("softVerificationOverride")),"exceptional one-source story can auto-queue under relaxed threshold");
     }
 
     private void testCommandCenterMediaReporting(Path root,List<Article>a)throws Exception{
