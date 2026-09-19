@@ -127,8 +127,11 @@ Confidence must reflect the amount and clarity of supplied evidence.
         return List.copyOf(out);
     }
     private static boolean containsPoliticalTerm(String text){
-        String x=lower(text);
-        for(String term:POLITICAL_TERMS)if(x.contains(term))return true;
+        String x=" "+lower(text).replaceAll("[^a-z0-9-]+"," ").replaceAll("\\s+"," ").trim()+" ";
+        for(String term:POLITICAL_TERMS){
+            String t=" "+lower(term).replaceAll("[^a-z0-9-]+"," ").replaceAll("\\s+"," ").trim()+" ";
+            if(x.contains(t))return true;
+        }
         return false;
     }
     private static String normalize(Object v){String x=lower(String.valueOf(v)).replace('-','_').replace(' ','_');return ALLOWED.contains(x)?x:"uncertain";}
