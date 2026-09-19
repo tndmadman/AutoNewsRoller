@@ -554,6 +554,16 @@ Useful worker flags:
 
 ## Current limitations
 
+Command Center production jobs now request optional ComfyUI imagery by default. If no explicit imageCheckpoint is set, comfyAutoPickCheckpoint=true allows the worker to select the first checkpoint advertised by ComfyUI. A ComfyUI failure remains non-fatal and falls back to procedural cards.
+
+The story card and video archive report the actual media path used:
+
+- TTS engine actually used: Kokoro or Qwen3 fallback;
+- selected voice;
+- ComfyUI success/fallback detail;
+- checkpoint used;
+- count of ComfyUI-generated images included in the completed video.
+
 The first command-center implementation deliberately focuses on the complete controller/worker loop rather than every possible visual.
 
 Current limitations include:
