@@ -24,22 +24,96 @@ public final class NewsPipeline {
     public NewsPipeline(Path root,NewsConfig cfg,Path batchDir){this.root=root;this.batchDir=batchDir;this.cfg=cfg;this.events=new EventLog(batchDir.resolve("runtime/events.jsonl"));this.logs=new RuntimeLog(batchDir);this.history=new StoryHistory(root.resolve("data/story_history.jsonl"));this.publishHistory=new PublishHistory(root.resolve("data/publish_history.jsonl"));this.logs.debug("Batch initialized at "+batchDir);}
 
     public List<Candidate> discover(String category,int maxAge,int minSources,boolean enrichArticles)throws Exception{
-        events.emit(0,0,PipelineStage.DISCOVER,"refreshing feeds");logs.debug("Discovery started category="+category+" maxAgeHours="+maxAge+" minimumIndependentSources="+minSources);
-        List<Article>all=new ArrayList<>();ArticleHistory ah=new ArticleHistory(root.resolve("data/seen_articles.jsonl"));Set<String>seen=ah.ids();
-        for(SourceConfig sc:FeedRegistry.load(root.resolve("config/sources.json"))){
-            if(!sc.enabled()||!"rss".equalsIgnoreCase(sc.type()))continue;if(category!=null&&!category.isBlank()&&!"general".equalsIgnoreCase(category)&&!category.equalsIgnoreCase(sc.category()))continue;
+        events.emit(0,0,PipelineStage.DISCOVER,"scanning all enabled feeds");
+        logs.debug("Discovery started category="+category+" maxAgeHours="+maxAge+" minimumIndependentSources="+minSources);
+
+        List<Article>allScanned=new ArrayList<>();
+        ArticleHistory ah=new ArticleHistory(root.resolve("data/seen_articles.jsonl"));
+        Set<String>seen=ah.ids();
+        List<SourceConfig>sources=FeedRegistry.load(root.resolve("config/sources.json"));
+        int attemptedFeeds=0,successfulFeeds=0,failedFeeds=0,totalEntries=0,recentEntries=0;
+
+        // Always refresh every enabled RSS source first. Category selection is
+        // applied only after the complete feed scan, so watch/batch runs never
+        // stop discovery just because one category or one source had no match.
+        for(SourceConfig sc:sources){
+            if(!sc.enabled()||!"rss".equalsIgnoreCase(sc.type()))continue;
+            attemptedFeeds++;
             try{
-                List<Article>fresh=new RssSource(sc,cfg.getInt("articleFetchTimeout",30),cfg.get("userAgent","AutoNewsRoller/0.1"),root.resolve("data/feed_cache.json")).discover();
-                for(Article a:fresh){
-                    long age=Math.max(0,Duration.between(a.publishedAt(),Instant.now()).toHours());if(age>maxAge)continue;Article x=a;
-                    if(enrichArticles&&a.description().length()<120){try{String html=new ArticleFetcher(cfg.getInt("articleFetchTimeout",30),cfg.get("userAgent","AutoNewsRoller/0.1")).fetch(a.url());String body=ArticleParser.extractText(html);x=new Article(a.id(),a.publisher(),a.title(),a.url(),a.canonicalUrl(),a.publishedAt(),a.discoveredAt(),a.author(),a.category(),a.description(),body,a.language(),a.sourceTrustTier(),a.authoritativePrimary());}catch(Exception e){logs.debug("Article extraction failed url="+a.url()+" reason="+e.getMessage());}}
-                    all.add(x);if(!seen.contains(x.id())){try{ah.append(x);seen.add(x.id());}catch(Exception e){logs.debug("Article history append failed id="+x.id()+" reason="+e.getMessage());}}
+                List<Article>entries=new RssSource(
+                        sc,
+                        cfg.getInt("articleFetchTimeout",30),
+                        cfg.get("userAgent","AutoNewsRoller/0.1"),
+                        root.resolve("data/feed_cache.json")
+                ).discover();
+                successfulFeeds++;
+                totalEntries+=entries.size();
+
+                for(Article a:entries){
+                    long age=Math.max(0,Duration.between(a.publishedAt(),Instant.now()).toHours());
+                    if(age>maxAge)continue;
+                    recentEntries++;
+                    Article x=a;
+
+                    // Pull every feed, but only crawl linked article pages when
+                    // the story can actually be used for the selected output
+                    // category. General mode enriches all categories.
+                    if(enrichArticles&&categoryMatches(category,a.category())&&a.description().length()<120){
+                        try{
+                            String html=new ArticleFetcher(
+                                    cfg.getInt("articleFetchTimeout",30),
+                                    cfg.get("userAgent","AutoNewsRoller/0.1")
+                            ).fetch(a.url());
+                            String body=ArticleParser.extractText(html);
+                            x=new Article(a.id(),a.publisher(),a.title(),a.url(),a.canonicalUrl(),a.publishedAt(),a.discoveredAt(),a.author(),a.category(),a.description(),body,a.language(),a.sourceTrustTier(),a.authoritativePrimary());
+                        }catch(Exception e){
+                            logs.debug("Article extraction failed url="+a.url()+" reason="+e.getMessage());
+                        }
+                    }
+
+                    allScanned.add(x);
+                    if(!seen.contains(x.id())){
+                        try{ah.append(x);seen.add(x.id());}
+                        catch(Exception e){logs.debug("Article history append failed id="+x.id()+" reason="+e.getMessage());}
+                    }
                 }
-            }catch(Exception e){String msg="Feed failed and was skipped: "+sc.name()+" :: "+e.getMessage();System.err.println(msg);logs.debug(msg);}
+            }catch(Exception e){
+                failedFeeds++;
+                String msg="Feed failed and was skipped: "+sc.name()+" :: "+e.getMessage();
+                System.err.println(msg);
+                logs.debug(msg);
+            }
         }
-        List<StoryCluster>clusters=new StoryClusterer().cluster(all);SourceVerifier verifier=new SourceVerifier();StoryRanker ranker=new StoryRanker(cfg.ranking());List<Candidate>out=new ArrayList<>();
-        for(StoryCluster c:clusters){if(history.seen(c.fingerprint))continue;VerificationResult vr=verifier.verify(c,minSources);if(!vr.accepted()){logs.debug("Rejected cluster "+c.id+" verification="+vr.reason());continue;}double score=ranker.score(c,vr.factPackage(),Instant.now(),1);out.add(new Candidate(c,vr.factPackage(),score));}
-        out.sort(Comparator.comparingDouble(Candidate::score).reversed());logs.debug("Discovery complete articles="+all.size()+" clusters="+clusters.size()+" verifiedCandidates="+out.size());return out;
+
+        List<Article>eligible=allScanned.stream().filter(a->categoryMatches(category,a.category())).toList();
+        String scanSummary="Feed scan complete: attempted="+attemptedFeeds+
+                " succeeded="+successfulFeeds+
+                " failed="+failedFeeds+
+                " entries="+totalEntries+
+                " recent="+recentEntries+
+                " eligible="+eligible.size();
+        System.out.println(scanSummary);
+        logs.debug(scanSummary);
+
+        List<StoryCluster>clusters=new StoryClusterer().cluster(eligible);
+        SourceVerifier verifier=new SourceVerifier();
+        StoryRanker ranker=new StoryRanker(cfg.ranking());
+        List<Candidate>out=new ArrayList<>();
+
+        for(StoryCluster c:clusters){
+            if(history.seen(c.fingerprint))continue;
+            VerificationResult vr=verifier.verify(c,minSources);
+            if(!vr.accepted()){
+                logs.debug("Rejected cluster "+c.id+" verification="+vr.reason());
+                continue;
+            }
+            double score=ranker.score(c,vr.factPackage(),Instant.now(),1);
+            out.add(new Candidate(c,vr.factPackage(),score));
+        }
+
+        out.sort(Comparator.comparingDouble(Candidate::score).reversed());
+        logs.debug("Discovery complete articles="+eligible.size()+" clusters="+clusters.size()+" verifiedCandidates="+out.size());
+        return out;
     }
 
     public List<Candidate> discoverFixtures(int maxAge,int minSources)throws Exception{
@@ -78,6 +152,10 @@ public final class NewsPipeline {
     }
 
     public void rejected(int worker,int slot,String detail){events.emit(worker,slot,PipelineStage.REJECTED,detail);logs.worker(worker,"slot="+slot+" rejected "+detail);}
+
+    private static boolean categoryMatches(String requested,String articleCategory){
+        return requested==null||requested.isBlank()||"general".equalsIgnoreCase(requested)||requested.equalsIgnoreCase(articleCategory);
+    }
 
     private String commitSha(){String env=System.getenv("GITHUB_SHA");if(env!=null&&!env.isBlank())return env;try{Process p=new ProcessBuilder("git","rev-parse","HEAD").directory(root.toFile()).redirectErrorStream(true).start();if(p.waitFor(5,TimeUnit.SECONDS)&&p.exitValue()==0)return new String(p.getInputStream().readAllBytes(),StandardCharsets.UTF_8).trim();}catch(Exception ignored){}return "unknown";}
     public record Candidate(StoryCluster cluster,FactPackage factPackage,double score){}
