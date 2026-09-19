@@ -1,11 +1,12 @@
-name: Windows validation
+name: Cross-platform validation
 on:
   push:
     branches: [main, feature/news-video-pipeline]
   pull_request:
     branches: [main]
+
 jobs:
-  self-test:
+  windows-self-test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,3 +20,34 @@ jobs:
       - name: Self test
         shell: cmd
         run: batch_create_news_videos_windows.bat --self-test
+
+  linux-headless:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Compile and self-test
+        shell: bash
+        run: |
+          bash -n build_linux.sh
+          bash -n run_command_center_linux.sh
+          bash -n run_gpu_worker_linux.sh
+          bash build_linux.sh
+          java -cp build/classes autonewsroller.Main --self-test
+          java -cp build/classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264
+      - name: Headless command center smoke test
+        shell: bash
+        run: |
+          java -cp build/classes autonewsroller.Main --command-center --host 127.0.0.1 --port 18787 --scan-minutes 60 --no-initial-scan > command-center-smoke.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:18787/api/health > /tmp/health.json; then break; fi
+            sleep 0.5
+          done
+          curl --fail --silent http://127.0.0.1:18787/api/state > /tmp/state.json
+          curl --fail --silent http://127.0.0.1:18787/ | grep -q "AUTONEWSROLLER"
+          grep -q '"ok":true' /tmp/health.json
