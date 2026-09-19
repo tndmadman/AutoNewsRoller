@@ -122,7 +122,8 @@ public final class NewsPipeline {
     }
 
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean dryRun)throws Exception{
-        return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,false,1,dryRun);
+        int images=cfg.getInt("commandCenterComfyImages",7);
+        return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,useComfy,images,dryRun);
     }
 
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,boolean dryRun)throws Exception{
