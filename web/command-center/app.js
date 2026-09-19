@@ -86,7 +86,7 @@ function storyCard(s){
   const bar=k=>Math.round(num(mix[k])/total*100);
   const pubs=(s.publishers||[]).slice(0,8).map(p=>`<span class="sourceChip">${esc(p)}</span>`).join("");
   const cls=status==="PRODUCING"?" producing":status==="FAILED"?" failed":"";
-  const makeDisabled=!verified||status==="PRODUCING"||status==="COMPLETE";
+  const makeDisabled=status==="PRODUCING"||status==="COMPLETE";
   const engine=esc(s.ttsEngine||"pending");
   const voice=esc(s.ttsVoice||"");
   const visual=esc(s.visualMode||((s.stage==="VISUALS"&&s.detail)?s.detail:"pending"));
@@ -105,6 +105,7 @@ function storyCard(s){
       <div class="scoreRing" style="--score:${score}"><div><b>${score}</b><small>WORTH</small></div></div>
       <div><div class="storyTitle">${esc(s.topic)}</div>
         <div class="storyMeta"><span class="statusTag ${verified?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
+        ${s.manualVerificationOverride?'<span class="statusTag failed">MANUAL VERIFY OVERRIDE</span>':""}
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
       </div>
     </div>
@@ -141,8 +142,12 @@ function renderVideos(){
   }).join("");
 }
 async function storyAction(id,action){
-  try{await api("/api/stories/"+encodeURIComponent(id)+"/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});toast(action==="MAKE"?"Queued for video production.":action+" saved.");await loadState()}
-  catch(e){toast(e.message,true)}
+  try{
+    const result=await api("/api/stories/"+encodeURIComponent(id)+"/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
+    if(action==="MAKE"&&result&&result.manualVerificationOverride)toast("Force-queued. Manual verification override recorded.");
+    else toast(action==="MAKE"?"Queued for video production.":action+" saved.");
+    await loadState();
+  }catch(e){toast(e.message,true)}
 }
 window.storyAction=storyAction;
 
