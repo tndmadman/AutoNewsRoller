@@ -122,6 +122,10 @@ public final class NewsPipeline {
     }
 
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean dryRun)throws Exception{
+        return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,false,1,dryRun);
+    }
+
+    public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,boolean dryRun)throws Exception{
         Files.createDirectories(slotDir);StoryCluster c=cand.cluster();FactPackage fp=cand.factPackage();logs.worker(worker,"slot="+slot+" story="+c.topic+" started");events.emit(worker,slot,PipelineStage.VERIFY,fp.independentSourceCount()+" independent sources");
         Json.write(slotDir.resolve("story.json"),c.toMap());Path articleDir=slotDir.resolve("articles");Files.createDirectories(articleDir);int articleIndex=0;for(Article a:c.articles)Json.write(articleDir.resolve(String.format("%02d.json",articleIndex++)),a.toMap());Json.write(slotDir.resolve("fact_package.json"),fp.toMap());
         OllamaClient oc=dryRun?null:new OllamaClient(cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate"),cfg.get("ollamaModel","llama3.1:8b"),cfg.get("ollamaKeepAlive","30m"),root.resolve("output/runtime/ollama.lock"));NewsScript script=new NewsScriptGenerator(oc,cfg.getInt("ollamaRetries",3)).generate(fp,targetSeconds,dryRun);Json.write(slotDir.resolve("script.json"),script.toMap());events.emit(worker,slot,PipelineStage.SCRIPT,"script ready");
@@ -131,13 +135,62 @@ public final class NewsPipeline {
         Path visuals=slotDir.resolve("visuals");List<Path>imgs=new ArrayList<>();List<Map<String,Object>>imageSources=new ArrayList<>();CardRenderer cards=new CardRenderer();int i=0;
         for(VisualPlan.Item item:plan.items()){Path p=visuals.resolve(String.format("%02d_%s.png",i++,item.type().toLowerCase(Locale.ROOT)));cards.render(item,p,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));imgs.add(p);imageSources.add(Map.of("type","procedural-card","path",p.toString(),"visualType",item.type()));}
         String usedCheckpoint="";
+        int comfyGenerated=0;
         if(useComfy){
-            events.emit(worker,slot,PipelineStage.VISUALS,"ComfyUI optional image");ComfyImageGenerator comfy=new ComfyImageGenerator(root,cfg.get("comfyUrl","http://127.0.0.1:8188"),cfg.get("qwenUrl","http://127.0.0.1:8765"));
+            events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI CHECK starting");
+            ComfyImageGenerator comfy=new ComfyImageGenerator(root,cfg.get("comfyUrl","http://127.0.0.1:8188"),cfg.get("qwenUrl","http://127.0.0.1:8765"));
             try{
-                if(!comfy.reachable())throw new IllegalStateException("ComfyUI is not reachable");List<String>available=comfy.checkpoints();String configured=cfg.get("imageCheckpoint","");if(!configured.isBlank()){if(!available.contains(configured))throw new IllegalStateException("configured checkpoint is unavailable: "+configured);usedCheckpoint=configured;}else if(cfg.getBool("comfyAutoPickCheckpoint",false)&&!available.isEmpty()){usedCheckpoint=available.get(0);}else throw new IllegalStateException("no imageCheckpoint configured and auto-pick is disabled");
-                int replace=-1;VisualPlan.Item chosen=null;for(int n=0;n<plan.items().size();n++){VisualPlan.Item item=plan.items().get(n);if(!item.prompt().isBlank()&&!item.type().equals("HEADLINE_CARD")&&!item.type().equals("SOURCE_CARD")){replace=n;chosen=item;break;}}
-                if(replace>=0){String prompt=(chosen.prompt()+", editorial news illustration, no text, no logos, vertical composition").trim();Path generated=visuals.resolve(String.format("%02d_comfy_generated.png",replace));comfy.generate(prompt,cfg.get("imageNegative","text, watermark, logo, captions, low quality, distorted"),usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",24),Double.parseDouble(cfg.get("imageCfg","5.0")));imgs.set(replace,generated);imageSources.set(replace,Map.of("type","comfyui-generated","path",generated.toString(),"checkpoint",usedCheckpoint,"prompt",prompt));String comfyUsed="COMFYUI USED checkpoint="+usedCheckpoint+" image="+generated.getFileName();events.emit(worker,slot,PipelineStage.VISUALS,comfyUsed);logs.worker(worker,"slot="+slot+" "+comfyUsed);}else{events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI SKIPPED: no eligible visual prompt");}
-            }catch(Exception e){String msg="COMFYUI FALLBACK: "+e.getMessage();System.err.println("ComfyUI visual failed; using procedural cards: "+e.getMessage());logs.worker(worker,"slot="+slot+" "+msg);events.emit(worker,slot,PipelineStage.VISUALS,msg);usedCheckpoint="";}
+                if(!comfy.reachable())throw new IllegalStateException("ComfyUI is not reachable at "+cfg.get("comfyUrl","http://127.0.0.1:8188"));
+                List<String>available=comfy.checkpoints();
+                String configured=cfg.get("imageCheckpoint","");
+                if(!configured.isBlank()){
+                    if(!available.contains(configured))throw new IllegalStateException("configured checkpoint is unavailable: "+configured+"; available="+available);
+                    usedCheckpoint=configured;
+                }else if(cfg.getBool("comfyAutoPickCheckpoint",true)&&!available.isEmpty()){
+                    usedCheckpoint=available.get(0);
+                }else throw new IllegalStateException("no imageCheckpoint configured and ComfyUI returned no usable checkpoints");
+
+                int limit=Math.max(1,maxComfyImages);
+                List<Integer>eligible=new ArrayList<>();
+                for(int n=0;n<plan.items().size();n++){
+                    VisualPlan.Item item=plan.items().get(n);
+                    if(item.type().equals("HEADLINE_CARD")||item.type().equals("SOURCE_CARD"))continue;
+                    eligible.add(n);
+                }
+
+                if(eligible.isEmpty()){
+                    throw new IllegalStateException("visual plan contained no replaceable story visuals");
+                }
+
+                for(int replace:eligible){
+                    if(comfyGenerated>=limit)break;
+                    VisualPlan.Item chosen=plan.items().get(replace);
+                    String basePrompt=chosen.prompt()==null||chosen.prompt().isBlank()
+                            ? (chosen.title()+". "+chosen.body())
+                            : chosen.prompt();
+                    String prompt=(basePrompt+", editorial news illustration, realistic documentary style, no text, no logos, vertical composition").replaceAll("\\s+"," ").trim();
+                    Path generated=visuals.resolve(String.format("%02d_comfy_generated_%02d.png",replace,comfyGenerated+1));
+                    events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" checkpoint="+usedCheckpoint);
+                    comfy.generate(prompt,cfg.get("imageNegative","text, watermark, logo, captions, low quality, distorted"),usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",24),Double.parseDouble(cfg.get("imageCfg","5.0")));
+                    imgs.set(replace,generated);
+                    imageSources.set(replace,Map.of("type","comfyui-generated","path",generated.toString(),"checkpoint",usedCheckpoint,"prompt",prompt));
+                    comfyGenerated++;
+                    String comfyUsed="COMFYUI USED checkpoint="+usedCheckpoint+" image="+generated.getFileName()+" count="+comfyGenerated;
+                    events.emit(worker,slot,PipelineStage.VISUALS,comfyUsed);
+                    logs.worker(worker,"slot="+slot+" "+comfyUsed);
+                }
+
+                if(comfyGenerated==0)throw new IllegalStateException("ComfyUI produced zero images");
+            }catch(Exception e){
+                String msg="COMFYUI FAILED: "+e.getMessage();
+                System.err.println(msg);
+                logs.worker(worker,"slot="+slot+" "+msg);
+                events.emit(worker,slot,PipelineStage.VISUALS,msg);
+                usedCheckpoint="";
+                if(requireComfy)throw new IllegalStateException(msg,e);
+            }
+        }else{
+            events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI DISABLED for this job");
         }
 
         List<String>kv=cfg.csv("kokoroVoices","af_heart");List<String>qv=cfg.csv("qwenVoices","Ryan");String kVoice=kv.get(Math.floorMod(c.id.hashCode(),kv.size()));String qVoice=qv.get(Math.floorMod(c.id.hashCode(),qv.size()));Path wav=slotDir.resolve("narration/narration.wav");NarrationEngine primary=new KokoroNarrator(root);NarrationEngine fallback=new QwenNarrator(root,cfg.get("qwenUrl","http://127.0.0.1:8765"));events.emit(worker,slot,PipelineStage.TTS,"KOKORO active");NarrationResult nr;
@@ -146,7 +199,7 @@ public final class NewsPipeline {
         Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));VideoRenderer.RenderResult rr=renderer.render(imgs,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration());
         Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);Json.write(slotDir.resolve("audit.json"),audit);
         Path finalDir=slotDir.getParent().resolve("final_videos");Path finalVideo=FileNames.unique(finalDir,c.topic,".mp4");Files.createDirectories(finalDir);Files.copy(render,finalVideo,StandardCopyOption.REPLACE_EXISTING);
-        Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
+        Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
         history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
     }
 
