@@ -1,7 +1,16 @@
 {
   "sources": [
     {
-      "name": "BBC World",
+      "name": "BBC News",
+      "type": "rss",
+      "category": "general",
+      "url": "https://feeds.bbci.co.uk/news/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "BBC News",
       "type": "rss",
       "category": "world",
       "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
@@ -10,7 +19,61 @@
       "authoritativePrimary": false
     },
     {
-      "name": "The Guardian World",
+      "name": "BBC News",
+      "type": "rss",
+      "category": "business",
+      "url": "https://feeds.bbci.co.uk/news/business/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "BBC News",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://feeds.bbci.co.uk/news/technology/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "BBC News",
+      "type": "rss",
+      "category": "science",
+      "url": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "BBC News",
+      "type": "rss",
+      "category": "health",
+      "url": "https://feeds.bbci.co.uk/news/health/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "BBC News",
+      "type": "rss",
+      "category": "entertainment",
+      "url": "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "BBC News",
+      "type": "rss",
+      "category": "world",
+      "url": "https://feeds.bbci.co.uk/news/uk/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Guardian",
       "type": "rss",
       "category": "world",
       "url": "https://www.theguardian.com/world/rss",
@@ -19,10 +82,613 @@
       "authoritativePrimary": false
     },
     {
-      "name": "The Guardian Technology",
+      "name": "The Guardian",
+      "type": "rss",
+      "category": "us",
+      "url": "https://www.theguardian.com/us-news/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Guardian",
+      "type": "rss",
+      "category": "business",
+      "url": "https://www.theguardian.com/business/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Guardian",
       "type": "rss",
       "category": "technology",
       "url": "https://www.theguardian.com/technology/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Guardian",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.theguardian.com/science/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Guardian",
+      "type": "rss",
+      "category": "environment",
+      "url": "https://www.theguardian.com/environment/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Guardian",
+      "type": "rss",
+      "category": "entertainment",
+      "url": "https://www.theguardian.com/culture/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Guardian",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://www.theguardian.com/sport/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS News",
+      "type": "rss",
+      "category": "general",
+      "url": "https://www.cbsnews.com/latest/rss/main",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS News",
+      "type": "rss",
+      "category": "us",
+      "url": "https://www.cbsnews.com/latest/rss/us",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS News",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://www.cbsnews.com/latest/rss/politics",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS News",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.cbsnews.com/latest/rss/world",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS News",
+      "type": "rss",
+      "category": "health",
+      "url": "https://www.cbsnews.com/latest/rss/health",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS News",
+      "type": "rss",
+      "category": "business",
+      "url": "https://www.cbsnews.com/latest/rss/moneywatch",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS News",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.cbsnews.com/latest/rss/science",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS News",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.cbsnews.com/latest/rss/technology",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS News",
+      "type": "rss",
+      "category": "entertainment",
+      "url": "https://www.cbsnews.com/latest/rss/entertainment",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS News",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.cbsnews.com/latest/rss/space",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Fox News",
+      "type": "rss",
+      "category": "general",
+      "url": "https://moxie.foxnews.com/google-publisher/latest.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Fox News",
+      "type": "rss",
+      "category": "world",
+      "url": "https://moxie.foxnews.com/google-publisher/world.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Fox News",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://moxie.foxnews.com/google-publisher/politics.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Fox News",
+      "type": "rss",
+      "category": "science",
+      "url": "https://moxie.foxnews.com/google-publisher/science.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Fox News",
+      "type": "rss",
+      "category": "health",
+      "url": "https://moxie.foxnews.com/google-publisher/health.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Fox News",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://moxie.foxnews.com/google-publisher/sports.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Fox News",
+      "type": "rss",
+      "category": "travel",
+      "url": "https://moxie.foxnews.com/google-publisher/travel.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Fox News",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://moxie.foxnews.com/google-publisher/tech.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ABC News",
+      "type": "rss",
+      "category": "general",
+      "url": "https://abcnews.go.com/abcnews/topstories",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ABC News",
+      "type": "rss",
+      "category": "us",
+      "url": "https://abcnews.go.com/abcnews/usheadlines",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ABC News",
+      "type": "rss",
+      "category": "world",
+      "url": "https://abcnews.go.com/abcnews/internationalheadlines",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ABC News",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://abcnews.go.com/abcnews/politicsheadlines",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ABC News",
+      "type": "rss",
+      "category": "business",
+      "url": "https://abcnews.go.com/abcnews/businessheadlines",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ABC News",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://abcnews.go.com/abcnews/technologyheadlines",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ABC News",
+      "type": "rss",
+      "category": "health",
+      "url": "https://abcnews.go.com/abcnews/healthheadlines",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ABC News",
+      "type": "rss",
+      "category": "entertainment",
+      "url": "https://abcnews.go.com/abcnews/entertainmentheadlines",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ABC News",
+      "type": "rss",
+      "category": "travel",
+      "url": "https://abcnews.go.com/abcnews/travelheadlines",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "NPR",
+      "type": "rss",
+      "category": "general",
+      "url": "https://feeds.npr.org/1001/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "NPR",
+      "type": "rss",
+      "category": "world",
+      "url": "https://feeds.npr.org/1004/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "NPR",
+      "type": "rss",
+      "category": "business",
+      "url": "https://feeds.npr.org/1006/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "NPR",
+      "type": "rss",
+      "category": "science",
+      "url": "https://feeds.npr.org/1007/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "NPR",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://feeds.npr.org/1019/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "NPR",
+      "type": "rss",
+      "category": "health",
+      "url": "https://feeds.npr.org/1128/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New York Times",
+      "type": "rss",
+      "category": "general",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New York Times",
+      "type": "rss",
+      "category": "world",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New York Times",
+      "type": "rss",
+      "category": "us",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/US.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New York Times",
+      "type": "rss",
+      "category": "business",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New York Times",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New York Times",
+      "type": "rss",
+      "category": "science",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/Science.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New York Times",
+      "type": "rss",
+      "category": "health",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/Health.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New York Times",
+      "type": "rss",
+      "category": "entertainment",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New York Times",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/Sports.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Global News",
+      "type": "rss",
+      "category": "general",
+      "url": "https://globalnews.ca/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Global News",
+      "type": "rss",
+      "category": "world",
+      "url": "https://globalnews.ca/world/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Global News",
+      "type": "rss",
+      "category": "us",
+      "url": "https://globalnews.ca/us-news/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Global News",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://globalnews.ca/politics/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Global News",
+      "type": "rss",
+      "category": "business",
+      "url": "https://globalnews.ca/money/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Global News",
+      "type": "rss",
+      "category": "health",
+      "url": "https://globalnews.ca/health/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Global News",
+      "type": "rss",
+      "category": "entertainment",
+      "url": "https://globalnews.ca/entertainment/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Global News",
+      "type": "rss",
+      "category": "environment",
+      "url": "https://globalnews.ca/environment/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Global News",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://globalnews.ca/sports/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "NASA",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.nasa.gov/feed/",
+      "enabled": true,
+      "trustTier": 1,
+      "authoritativePrimary": true
+    },
+    {
+      "name": "NASA",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.nasa.gov/news-release/feed/",
+      "enabled": true,
+      "trustTier": 1,
+      "authoritativePrimary": true
+    },
+    {
+      "name": "NASA",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.nasa.gov/technology/feed/",
+      "enabled": true,
+      "trustTier": 1,
+      "authoritativePrimary": true
+    },
+    {
+      "name": "NASA",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.nasa.gov/aeronautics/feed/",
+      "enabled": true,
+      "trustTier": 1,
+      "authoritativePrimary": true
+    },
+    {
+      "name": "ScienceDaily",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.sciencedaily.com/rss/all.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ScienceDaily",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.sciencedaily.com/rss/top.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ScienceDaily",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.sciencedaily.com/rss/top/science.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ScienceDaily",
+      "type": "rss",
+      "category": "health",
+      "url": "https://www.sciencedaily.com/rss/top/health.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ScienceDaily",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.sciencedaily.com/rss/top/technology.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ScienceDaily",
+      "type": "rss",
+      "category": "environment",
+      "url": "https://www.sciencedaily.com/rss/top/environment.xml",
       "enabled": true,
       "trustTier": 2,
       "authoritativePrimary": false
@@ -37,13 +703,94 @@
       "authoritativePrimary": false
     },
     {
-      "name": "NASA JPL News",
+      "name": "TechCrunch",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://techcrunch.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Verge",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.theverge.com/rss/index.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "WIRED",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.wired.com/feed/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Engadget",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.engadget.com/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Phys.org",
       "type": "rss",
       "category": "science",
-      "url": "https://www.jpl.nasa.gov/feeds/news/",
+      "url": "https://phys.org/rss-feed/",
       "enabled": true,
-      "trustTier": 1,
-      "authoritativePrimary": true
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Space.com",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.space.com/feeds/all",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Tom's Hardware",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.tomshardware.com/feeds/all",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ESPN",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://www.espn.com/espn/rss/news",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CNBC",
+      "type": "rss",
+      "category": "business",
+      "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "MarketWatch",
+      "type": "rss",
+      "category": "business",
+      "url": "https://feeds.marketwatch.com/marketwatch/topstories/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
     }
   ]
 }

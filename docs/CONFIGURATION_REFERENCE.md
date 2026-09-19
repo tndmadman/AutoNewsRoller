@@ -41,7 +41,7 @@ Current defaults:
     ffmpegCommand=ffmpeg
     ffprobeCommand=ffprobe
     userAgent=AutoNewsRoller/0.1 (+https://github.com/tndmadman/AutoNewsRoller)
-    httpRetries=3
+    httpRetries=2
     imageWidth=768
     imageHeight=1344
     imageSteps=24
@@ -268,11 +268,23 @@ The worker number is whole-video concurrency. Ollama and GPU-heavy operations ha
 
 ## HTTP settings
 
+### feedFetchTimeout
+
+Default: 12 seconds
+
+Used for RSS/Atom feed requests. The shorter feed-specific timeout prevents a dead endpoint from stalling an 88-feed scan for too long.
+
 ### articleFetchTimeout
 
 Default: 30 seconds
 
-Used for feed and linked-article HTTP behavior.
+Used only for optional linked-article extraction.
+
+### articleEnrichmentEnabled
+
+Default: false
+
+With the expanded feed pack, discovery is RSS-only by default. Linked article HTML is not fetched unless this is explicitly enabled.
 
 ### feedRefreshMinutes
 
@@ -292,11 +304,9 @@ This intentionally identifies the project rather than pretending to be a normal 
 
 ### httpRetries
 
-Default: 3
+Default: 2
 
-This exists in configuration.
-
-Current RssSource and ArticleFetcher implementations also directly use a three-attempt loop. Changing httpRetries alone does not currently alter those hard-coded retry counts. Treat that as a configuration-consistency improvement for future work.
+RssSource now uses this value as its maximum feed-request attempt count. ArticleFetcher retains its own bounded retry behavior.
 
 ## FFmpeg settings
 
@@ -316,52 +326,35 @@ Change these if the binaries are not on PATH and an explicit executable path is 
 
 ## config/sources.json
 
-Current source entries:
+The default pack now contains **88 enabled RSS feeds**. Multiple section feeds from the same publisher deliberately use the same `name` so they do not count as separate independent publishers during verification.
 
-### BBC World
+Publisher groups currently include:
 
-- type: rss
-- category: world
-- URL: https://feeds.bbci.co.uk/news/world/rss.xml
-- enabled: true
-- trustTier: 2
-- authoritativePrimary: false
+- BBC News
+- The Guardian
+- CBS News
+- Fox News
+- ABC News
+- NPR
+- The New York Times
+- Global News
+- NASA
+- ScienceDaily
+- Ars Technica
+- TechCrunch
+- The Verge
+- WIRED
+- Engadget
+- Phys.org
+- Space.com
+- Tom's Hardware
+- ESPN
+- CNBC
+- MarketWatch
 
-### The Guardian World
+The exact feed URLs and categories are maintained in `config/sources.json`, which is the source of truth.
 
-- type: rss
-- category: world
-- URL: https://www.theguardian.com/world/rss
-- enabled: true
-- trustTier: 2
-- authoritativePrimary: false
-
-### The Guardian Technology
-
-- type: rss
-- category: technology
-- URL: https://www.theguardian.com/technology/rss
-- enabled: true
-- trustTier: 2
-- authoritativePrimary: false
-
-### Ars Technica
-
-- type: rss
-- category: technology
-- URL: https://feeds.arstechnica.com/arstechnica/index
-- enabled: true
-- trustTier: 2
-- authoritativePrimary: false
-
-### NASA JPL News
-
-- type: rss
-- category: science
-- URL: https://www.jpl.nasa.gov/feeds/news/
-- enabled: true
-- trustTier: 1
-- authoritativePrimary: true
+NASA's old JPL-specific feed was removed from the default pack after live testing showed a Java TLS trust failure followed by an HTTP 403 on the fallback request. The replacement NASA feeds are the main NASA WordPress RSS endpoints, including general content, news releases, technology, and aeronautics.
 
 ## Source object fields
 

@@ -283,18 +283,18 @@ Measure hardware behavior.
 
 Do not jump directly to very high concurrency until VRAM use is known.
 
-### Priority 6 — source-pack expansion
+### Priority 6 — live source-pack health and clustering validation
 
-The current five-feed source list is too small for broad automatic news discovery and cross-confirmation.
+The default pack has been expanded from the original five feeds to 88 enabled RSS feeds across 21 publisher/source groups.
 
-Expand carefully with:
+Next validate the pack on the target machine:
 
-- more general-news feeds;
-- first-party government/science sources;
-- technology/business feeds;
-- local sources if desired.
-
-Before enabling a source for commercial use, review its terms/licensing model.
+- record which feeds consistently succeed, redirect, return 403/429, or fail TLS;
+- disable persistently dead feeds instead of wasting retries;
+- measure total scan time;
+- review same-event clustering across differently worded publishers;
+- tune clustering only from observed false negatives/false positives;
+- continue reviewing source terms/licensing for the intended use.
 
 ### Priority 7 — per-domain article rate limiter
 

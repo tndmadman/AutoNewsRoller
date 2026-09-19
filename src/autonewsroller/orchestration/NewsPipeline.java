@@ -27,7 +27,7 @@ public final class NewsPipeline {
         events.emit(0,0,PipelineStage.DISCOVER,"scanning all enabled feeds");
         logs.debug("Discovery started category="+category+" maxAgeHours="+maxAge+" minimumIndependentSources="+minSources);
 
-        List<Article>allScanned=new ArrayList<>();
+        Map<String,Article>allScanned=new LinkedHashMap<>();
         ArticleHistory ah=new ArticleHistory(root.resolve("data/seen_articles.jsonl"));
         Set<String>seen=ah.ids();
         List<SourceConfig>sources=FeedRegistry.load(root.resolve("config/sources.json"));
@@ -42,7 +42,8 @@ public final class NewsPipeline {
             try{
                 List<Article>entries=new RssSource(
                         sc,
-                        cfg.getInt("articleFetchTimeout",30),
+                        cfg.getInt("feedFetchTimeout",12),
+                        cfg.getInt("httpRetries",2),
                         cfg.get("userAgent","AutoNewsRoller/0.1"),
                         root.resolve("data/feed_cache.json")
                 ).discover();
@@ -58,7 +59,7 @@ public final class NewsPipeline {
                     // Pull every feed, but only crawl linked article pages when
                     // the story can actually be used for the selected output
                     // category. General mode enriches all categories.
-                    if(enrichArticles&&categoryMatches(category,a.category())&&a.description().length()<120){
+                    if(enrichArticles&&cfg.getBool("articleEnrichmentEnabled",false)&&categoryMatches(category,a.category())&&a.description().length()<120){
                         try{
                             String html=new ArticleFetcher(
                                     cfg.getInt("articleFetchTimeout",30),
@@ -71,7 +72,7 @@ public final class NewsPipeline {
                         }
                     }
 
-                    allScanned.add(x);
+                    allScanned.put(x.id(),x);
                     if(!seen.contains(x.id())){
                         try{ah.append(x);seen.add(x.id());}
                         catch(Exception e){logs.debug("Article history append failed id="+x.id()+" reason="+e.getMessage());}
@@ -85,12 +86,13 @@ public final class NewsPipeline {
             }
         }
 
-        List<Article>eligible=allScanned.stream().filter(a->categoryMatches(category,a.category())).toList();
+        List<Article>eligible=allScanned.values().stream().filter(a->categoryMatches(category,a.category())).toList();
         String scanSummary="Feed scan complete: attempted="+attemptedFeeds+
                 " succeeded="+successfulFeeds+
                 " failed="+failedFeeds+
                 " entries="+totalEntries+
                 " recent="+recentEntries+
+                " uniqueRecent="+allScanned.size()+
                 " eligible="+eligible.size();
         System.out.println(scanSummary);
         logs.debug(scanSummary);
