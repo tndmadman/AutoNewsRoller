@@ -1,3 +1,20 @@
 {
-  "categories": ["general", "world", "technology", "science", "business", "markets", "environment", "health", "entertainment", "gaming", "local", "custom"]
+  "categories": [
+    "general",
+    "us",
+    "world",
+    "politics",
+    "business",
+    "markets",
+    "technology",
+    "science",
+    "environment",
+    "health",
+    "entertainment",
+    "gaming",
+    "sports",
+    "travel",
+    "local",
+    "custom"
+  ]
 }
