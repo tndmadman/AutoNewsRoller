@@ -35,7 +35,7 @@ public final class CaptionWriter {
                 .append("Style: Caption,Arial,").append(fontSize)
                 .append(",").append(WHITE)
                 .append(",").append(WHITE)
-                .append(",&H00101820&,&H88030A10&,-1,0,0,0,100,100,0,0,3,2,0,2,125,125,300,1\n\n")
+                .append(",&H00101820&,&H88030A10&,-1,0,0,0,100,100,0,0,3,2,0,2,125,125,390,1\n\n")
                 .append("[Events]\n")
                 .append("Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n");
 
