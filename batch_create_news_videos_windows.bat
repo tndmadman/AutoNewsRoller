@@ -11,7 +11,7 @@ if "%TARGET%"=="" set /p "TARGET=Approved video target [30]: "
 if "%TARGET%"=="" set "TARGET=30"
 if "%WORKERS%"=="" set /p "WORKERS=Parallel workers [4]: "
 if "%WORKERS%"=="" set "WORKERS=4"
-set /p "CATEGORY=News category [general]: "
+set /p "CATEGORY=Output category [general] - all enabled RSS feeds are still scanned: "
 if "%CATEGORY%"=="" set "CATEGORY=general"
 set /p "AGE=Maximum article age [24 hours]: "
 if "%AGE%"=="" set "AGE=24"
@@ -36,7 +36,12 @@ for /f "delims=" %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyM
 set "BATCHDIR=output\batch_!STAMP!"
 start "AutoNewsRoller Dashboard" powershell -NoProfile -ExecutionPolicy Bypass -File "tools\batch_dashboard.ps1" -EventsPath "!BATCHDIR!\runtime\events.jsonl" -Target "%TARGET%"
 java -cp build\classes autonewsroller.Main --batch-dir "!BATCHDIR!" --batch-target "%TARGET%" --workers "%WORKERS%" --category "%CATEGORY%" --max-age-hours "%AGE%" --minimum-independent-sources "%MINSRC%" --duration "%DURATION%" --encoder "%ENCODER%" %COMFYFLAG% %OLLAMAFLAG%
-exit /b %errorlevel%
+set "RUN_STATUS=!errorlevel!"
+if "!RUN_STATUS!"=="2" (
+    echo.
+    echo All enabled RSS feeds were scanned, but there were not enough verified candidate stories to reach the requested target.
+)
+exit /b !RUN_STATUS!
 
 :selftest
 call build_windows.bat
