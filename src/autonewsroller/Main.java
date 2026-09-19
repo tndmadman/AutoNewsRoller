@@ -25,7 +25,7 @@ public final class Main {
                 double threshold=doublev(o,"--auto-threshold",cfg.getDouble("commandCenterAutoThreshold",0.68));
                 int maxQueued=intv(o,"--max-queued",cfg.getInt("commandCenterMaxQueued",12));
                 String token=o.getOrDefault("--token",env("AUTONEWS_TOKEN",""));
-                CommandCenterServer server=new CommandCenterServer(root,cfg,host,port,scan,auto,threshold,maxQueued,token);
+                CommandCenterServer server=new CommandCenterServer(root,cfg,host,port,scan,auto,threshold,maxQueued,token,!has(args,"--no-initial-scan"));
                 Runtime.getRuntime().addShutdownHook(new Thread(server::stop,"autonews-command-center-shutdown"));
                 server.start();server.block();return;
             }
