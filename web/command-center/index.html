@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AutoNewsRoller // Command Center</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="scanlines"></div>
+  <div class="noise"></div>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logoMark">ANR</div>
+      <div>
+        <h1>AUTONEWSROLLER <span>// COMMAND CENTER</span></h1>
+        <div class="sub">LIVE NEWS INTELLIGENCE & VIDEO PRODUCTION GRID</div>
+      </div>
+    </div>
+    <div class="topActions">
+      <div id="connection" class="pill danger">DISCONNECTED</div>
+      <div id="clock" class="clock">--:--:--</div>
+      <button id="scanBtn" class="btn primary">◉ SCAN NOW</button>
+      <button id="authBtn" class="btn ghost">KEY</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="heroGrid">
+      <div class="panel radarPanel">
+        <div class="panelTitle"><span>GLOBAL FEED RADAR</span><small id="scanState">STANDBY</small></div>
+        <canvas id="radarCanvas"></canvas>
+        <div class="radarLegend"><span><i class="dot ok"></i> ONLINE</span><span><i class="dot bad"></i> FAILED</span><span><i class="dot scan"></i> SCANNING</span></div>
+      </div>
+
+      <div class="metricsGrid">
+        <div class="metric"><span>FEEDS ONLINE</span><strong id="feedsOnline">0</strong><small id="feedsFailed">0 failed</small></div>
+        <div class="metric"><span>STORIES TRACKED</span><strong id="storiesTracked">0</strong><small id="verifiedCount">0 verified</small></div>
+        <div class="metric accent"><span>PRODUCTION QUEUE</span><strong id="queuedCount">0</strong><small id="producingCount">0 active</small></div>
+        <div class="metric"><span>VIDEOS COMPLETE</span><strong id="completeCount">0</strong><small>controller archive</small></div>
+        <div class="metric"><span>WORKERS ONLINE</span><strong id="workersOnline">0</strong><small>remote GPU nodes</small></div>
+        <div class="metric"><span>AUTO THRESHOLD</span><strong id="autoThreshold">--</strong><small id="autoQueueState">auto queue</small></div>
+      </div>
+    </section>
+
+    <section class="panel workersPanel">
+      <div class="panelTitle"><span>PRODUCTION NODES</span><small>CPU / RAM / GPU / VRAM / JOB TELEMETRY</small></div>
+      <div id="workers" class="workerGrid emptyState">No workers connected.</div>
+    </section>
+
+    <section class="panel">
+      <div class="panelTitle storyHeader">
+        <span>STORY OPERATIONS BOARD</span>
+        <div class="controls">
+          <input id="search" type="search" placeholder="Search stories, publishers, category…">
+          <select id="statusFilter">
+            <option value="ALL">ALL STATUS</option>
+            <option value="DISCOVERED">DISCOVERED</option>
+            <option value="VERIFIED">VERIFIED</option>
+            <option value="QUEUED">QUEUED</option>
+            <option value="PRODUCING">PRODUCING</option>
+            <option value="HOLD">HOLD</option>
+            <option value="FAILED">FAILED</option>
+            <option value="COMPLETE">COMPLETE</option>
+            <option value="SKIPPED">SKIPPED</option>
+          </select>
+        </div>
+      </div>
+      <div class="statusRail">
+        <button class="rail active" data-filter="ALL">ALL <b id="railAll">0</b></button>
+        <button class="rail" data-filter="DISCOVERED">FOUND <b id="railFound">0</b></button>
+        <button class="rail" data-filter="VERIFIED">WORTHY <b id="railVerified">0</b></button>
+        <button class="rail" data-filter="QUEUED">QUEUE <b id="railQueued">0</b></button>
+        <button class="rail" data-filter="PRODUCING">MAKING <b id="railProducing">0</b></button>
+        <button class="rail" data-filter="COMPLETE">DONE <b id="railComplete">0</b></button>
+      </div>
+      <div id="stories" class="storyGrid"></div>
+    </section>
+
+    <section class="split">
+      <div class="panel">
+        <div class="panelTitle"><span>RSS FEED HEALTH</span><small id="feedSummary">0 feeds</small></div>
+        <div id="feeds" class="feedGrid"></div>
+      </div>
+      <div class="panel">
+        <div class="panelTitle"><span>VIDEO ARCHIVE</span><small>UPLOADED FROM WORKERS</small></div>
+        <div id="videos" class="videoList emptyState">No completed videos yet.</div>
+      </div>
+    </section>
+
+    <section class="panel eventPanel">
+      <div class="panelTitle"><span>LIVE EVENT BUS</span><small>SSE STREAM</small></div>
+      <div id="eventLog" class="eventLog"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
