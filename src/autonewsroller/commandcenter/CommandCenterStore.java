@@ -166,7 +166,7 @@ public final class CommandCenterStore {
         else if(detail.startsWith("QWEN3 FALLBACK USED")){m.put("ttsEngine","Qwen3 fallback");m.put("ttsVoice",valueAfter(detail,"voice="));}
         else if(detail.startsWith("KOKORO FAILED"))m.put("kokoroFailure",detail);
         if(detail.startsWith("COMFYUI USED")){m.put("visualMode","ComfyUI + procedural cards");m.put("comfyCheckpoint",valueAfter(detail,"checkpoint="," image="));}
-        else if(detail.startsWith("COMFYUI FALLBACK")||detail.startsWith("COMFYUI SKIPPED")){m.put("visualMode","Procedural cards");m.put("comfyStatus",detail);}
+        else if(detail.startsWith("COMFYUI FALLBACK")||detail.startsWith("COMFYUI SKIPPED")||detail.startsWith("COMFYUI FAILED")){m.put("visualMode","ComfyUI failed");m.put("comfyStatus",detail);}
         persistQuiet();emit("story",publicStory(m));
     }
 
