@@ -111,8 +111,8 @@ function storyCard(s){
   }).join("");
   const framing=s.framingAnalysis||{};
   const framingStatus=String(s.biasAnalysisStatus||"");
-  const framingTotal=Math.max(1,num(framing.left)+num(framing.center)+num(framing.right));
-  const framingBar=k=>Math.round(num(framing[k])/framingTotal*100);
+  const framingWeights=framing.overallWeights||{};
+  const framingBar=k=>Math.round(num(framingWeights[k])*100);
   const framingArticles=Array.isArray(framing.articles)?framing.articles:[];
   const framingRows=framingArticles.slice(0,6).map(a=>`<div class="framingRow"><span>${esc(a.publisher||"source")}</span><b class="frame-${esc(a.classification||"uncertain")}">${esc(String(a.classification||"uncertain").replace("_"," ").toUpperCase())}</b><small>${Math.round(num(a.confidence)*100)}%</small></div>`).join("");
   const analysisButton=(framingStatus==="QUEUED"||framingStatus==="ANALYZING")
@@ -121,10 +121,10 @@ function storyCard(s){
   const framingPanel=framingStatus==="COMPLETE"
     ?`<div class="framingPanel">
         <div class="mixTitle"><span>ARTICLE FRAMING // LOCAL OLLAMA</span><span>${esc(String(framing.overallClassification||"uncertain").replace("_"," ").toUpperCase())} // ${Math.round(num(framing.overallConfidence)*100)}%</span></div>
-        <div class="triBias"><div class="tri left" style="--v:${framingBar("left")}%"><span>LEFT</span><b>${num(framing.left)}</b></div><div class="tri center" style="--v:${framingBar("center")}%"><span>CENTER</span><b>${num(framing.center)}</b></div><div class="tri right" style="--v:${framingBar("right")}%"><span>RIGHT</span><b>${num(framing.right)}</b></div></div>
+        <div class="triBias"><div class="tri left" style="--v:${framingBar("left")}%"><span>LEFT WEIGHT</span><b>${framingBar("left")}%</b></div><div class="tri center" style="--v:${framingBar("center")}%"><span>CENTER WEIGHT</span><b>${framingBar("center")}%</b></div><div class="tri right" style="--v:${framingBar("right")}%"><span>RIGHT WEIGHT</span><b>${framingBar("right")}%</b></div></div>
         <div class="framingSummary">${esc(framing.summary||"")}</div>
         ${framingRows}
-        <div class="framingMeta">MIXED ${num(framing.mixed)} // UNCERTAIN ${num(framing.uncertain)} // NOT POLITICAL ${num(framing.notPolitical)} // MODEL ${esc(framing.model||"")}</div>
+        <div class="framingMeta">HEURISTIC WEIGHTS, NOT TRUTH PROBABILITIES // MIXED ${num(framing.mixed)} // UNCERTAIN ${num(framing.uncertain)} // NOT POLITICAL ${num(framing.notPolitical)} // MODEL ${esc(framing.model||"")}</div>
         ${analysisButton}
       </div>`
     :`<div class="framingPanel pending"><div class="mixTitle"><span>ARTICLE FRAMING // LOCAL OLLAMA</span><span>${esc(framingStatus||"NOT ANALYZED")}</span></div><div class="framingSummary">${framingStatus==="FAILED"?esc(s.biasAnalysisError||"Analysis failed."):s.politicalCandidate?"Queued automatically for idle-worker analysis.":"This story was not automatically flagged as political; you can still analyze it manually."}</div>${analysisButton}</div>`;
