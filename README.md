@@ -4,6 +4,25 @@ AutoNewsRoller is a Windows-first, local news-to-video pipeline. It discovers cu
 
 The project is inspired by useful production lessons from `tndmadman/ThreadGens`, but it is a separate implementation designed specifically for news. It does not modify ThreadGens.
 
+
+## Full project documentation
+
+The detailed project knowledge is maintained under docs/:
+
+- [Project overview](docs/PROJECT_OVERVIEW.md)
+- [Architecture and data flow](docs/ARCHITECTURE_AND_DATA_FLOW.md)
+- [Configuration reference](docs/CONFIGURATION_REFERENCE.md)
+- [Windows operations](docs/WINDOWS_OPERATIONS.md)
+- [News sources, polling, bot behavior, and content use](docs/NEWS_SOURCES_AND_CONTENT_USE.md)
+- [TTS, GPU, ComfyUI, captions, and video](docs/TTS_GPU_VISUALS_VIDEO.md)
+- [Output, audit, provenance, and history](docs/OUTPUT_AUDIT_HISTORY.md)
+- [Notifications and automatic phone delivery](docs/NOTIFICATIONS_AND_PHONE_DELIVERY.md)
+- [Validation status and roadmap](docs/VALIDATION_STATUS_AND_ROADMAP.md)
+- [Codebase map](docs/CODEBASE_MAP.md)
+- [Development history and design decisions](docs/DEVELOPMENT_HISTORY.md)
+
+The documentation deliberately distinguishes between code that is implemented, behavior validated by fixture/Windows CI, and heavyweight live integrations that still need target-machine validation. Phone notification/KDE Connect delivery is documented as planned work and is not currently implemented.
+
 ## Architecture
 
 The Java pipeline under `src/autonewsroller` is split into configuration, ingestion, article extraction, clustering, verification, ranking, script generation, TTS, GPU coordination, visuals, video rendering, auditing, history, and orchestration. Python helpers under `tools/` isolate Kokoro and Qwen3-TTS. `tools/batch_dashboard.ps1` is a static dashboard that reads structured JSONL worker events; it is never rewritten at runtime.
