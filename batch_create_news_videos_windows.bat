@@ -30,7 +30,8 @@ set /p "KEEPOLLAMA=Keep Ollama model warm after requests? Y/n: "
 set "OLLAMAFLAG=--keep-ollama-loaded"
 if /I "%KEEPOLLAMA%"=="N" set "OLLAMAFLAG=--unload-ollama-after"
 if /I "%KEEPOLLAMA%"=="NO" set "OLLAMAFLAG=--unload-ollama-after"
-call build_windows.bat || exit /b %errorlevel%
+call build_windows.bat
+if errorlevel 1 exit /b 1
 for /f "delims=" %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "STAMP=%%I"
 set "BATCHDIR=output\batch_!STAMP!"
 start "AutoNewsRoller Dashboard" powershell -NoProfile -ExecutionPolicy Bypass -File "tools\batch_dashboard.ps1" -EventsPath "!BATCHDIR!\runtime\events.jsonl" -Target "%TARGET%"
@@ -38,10 +39,15 @@ java -cp build\classes autonewsroller.Main --batch-dir "!BATCHDIR!" --batch-targ
 exit /b %errorlevel%
 
 :selftest
-call build_windows.bat || exit /b %errorlevel%
+call build_windows.bat
+if errorlevel 1 exit /b 1
 where py >nul 2>nul && (set "PY=py") || (set "PY=python")
-%PY% -m py_compile tools\fetch_news.py tools\article_extract.py tools\kokoro_tts.py tools\qwen3_tts.py tools\qwen3_tts_server.py || exit /b %errorlevel%
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$errors=$null;$tokens=$null;[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'tools\batch_dashboard.ps1'),[ref]$tokens,[ref]$errors)|Out-Null;if($errors.Count){$errors|%%{Write-Error $_};exit 1}" || exit /b %errorlevel%
-java -cp build\classes autonewsroller.Main --self-test || exit /b %errorlevel%
+%PY% -m py_compile tools\fetch_news.py tools\article_extract.py tools\kokoro_tts.py tools\qwen3_tts.py tools\qwen3_tts_server.py
+if errorlevel 1 exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$errors=$null;$tokens=$null;[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'tools\batch_dashboard.ps1'),[ref]$tokens,[ref]$errors)|Out-Null;if($errors.Count){$errors | ForEach-Object { Write-Error $_ };exit 1}"
+if errorlevel 1 exit /b 1
+java -cp build\classes autonewsroller.Main --self-test
+if errorlevel 1 exit /b 1
 java -cp build\classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264
-exit /b %errorlevel%
+if errorlevel 1 exit /b 1
+exit /b 0
