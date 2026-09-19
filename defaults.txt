@@ -40,4 +40,7 @@ commandCenterAutoQueue=true
 commandCenterAutoThreshold=0.68
 commandCenterMaxQueued=12
 commandCenterUseComfy=true
+commandCenterRequireComfy=true
+commandCenterComfyImages=3
+commandCenterJobLeaseSeconds=75
 commandCenterControllerUrl=http://127.0.0.1:8787
