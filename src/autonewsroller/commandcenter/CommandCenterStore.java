@@ -80,6 +80,7 @@ public final class CommandCenterStore {
             m.put("score",item.score());
             m.put("verified",item.verified());
             m.put("verificationReason",item.verificationReason());
+            if(item.verified()){m.remove("manualVerificationOverride");m.remove("verificationOverrideReason");}
             m.put("previouslyGenerated",item.previouslyGenerated());
             m.put("independentSources",item.factPackage().independentSourceCount());
             m.put("sourceCount",item.factPackage().sourceCount());
@@ -128,13 +129,19 @@ public final class CommandCenterStore {
         String a=action==null?"":action.trim().toUpperCase(Locale.ROOT);
         switch(a){
             case "MAKE","QUEUE"->{
-                if(!Boolean.TRUE.equals(m.get("verified")))throw new IllegalStateException("Story is not verified yet. Use HOLD while waiting for confirmation.");
+                boolean verified=Boolean.TRUE.equals(m.get("verified"));
                 m.put("decision","MAKE");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);
+                if(!verified){
+                    m.put("manualVerificationOverride",true);
+                    m.put("verificationOverrideReason","User explicitly selected MAKE VIDEO before automatic independent-source verification passed.");
+                }else{
+                    m.remove("manualVerificationOverride");m.remove("verificationOverrideReason");
+                }
             }
-            case "HOLD"->{m.put("decision","HOLD");m.put("status","HOLD");m.put("stage","HOLD");m.put("progress",10);}
-            case "SKIP","NOT_WORTH","NOT-WORTH"->{m.put("decision","SKIP");m.put("status","SKIPPED");m.put("stage","SKIPPED");m.put("progress",0);}
+            case "HOLD"->{m.put("decision","HOLD");m.put("status","HOLD");m.put("stage","HOLD");m.put("progress",10);m.remove("manualVerificationOverride");m.remove("verificationOverrideReason");}
+            case "SKIP","NOT_WORTH","NOT-WORTH"->{m.put("decision","SKIP");m.put("status","SKIPPED");m.put("stage","SKIPPED");m.put("progress",0);m.remove("manualVerificationOverride");m.remove("verificationOverrideReason");}
             case "AUTO"->{
-                m.put("decision","AUTO");m.remove("error");
+                m.put("decision","AUTO");m.remove("error");m.remove("manualVerificationOverride");m.remove("verificationOverrideReason");
                 if(Boolean.TRUE.equals(m.get("previouslyGenerated")))m.put("status","COMPLETE_HISTORY");
                 else if(Boolean.TRUE.equals(m.get("verified"))&&autoQueue&&number(m.get("score"))>=autoThreshold&&queueDepth()<maxQueued){m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);}
                 else {m.put("status",Boolean.TRUE.equals(m.get("verified"))?"VERIFIED":"DISCOVERED");m.put("stage","DISCOVERED");m.put("progress",Boolean.TRUE.equals(m.get("verified"))?12:6);}
@@ -155,7 +162,7 @@ public final class CommandCenterStore {
         m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",Instant.now().toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");
         m.put("claimCount",integer(m.get("claimCount"))+1);renewLease(m);
         persistQuiet();emit("story",publicStory(m));
-        Map<String,Object>job=new LinkedHashMap<>();job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);return job;
+        Map<String,Object>job=new LinkedHashMap<>();job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));return job;
     }
 
     public synchronized void progress(String jobId,WorkerState state){
