@@ -24,7 +24,9 @@ public final class VideoAudit {
         if(seconds<=60.0)throw new IllegalStateException(String.format(Locale.US,"final video must exceed 60 sec; got %.3f",seconds));
 
         double fps=probeRate(video,"avg_frame_rate");
-        if(Math.abs(fps-30.0)>.05)throw new IllegalStateException(String.format(Locale.US,"final video is not CFR 30 fps; avg_frame_rate=%.4f",fps));
+        double nominalFps=probeRate(video,"r_frame_rate");
+        if(Math.abs(fps-30.0)>.05||Math.abs(nominalFps-30.0)>.05||Math.abs(fps-nominalFps)>.01)
+            throw new IllegalStateException(String.format(Locale.US,"final video is not CFR 30 fps; avg=%.4f nominal=%.4f",fps,nominalFps));
 
         double videoStream=probeStreamDuration(video,"v:0");
         double audioStream=probeStreamDuration(video,"a:0");
@@ -36,6 +38,7 @@ public final class VideoAudit {
         m.put("audioStreamDuration",audioStream);
         m.put("resolution",dims);
         m.put("averageFps",fps);
+        m.put("nominalFps",nominalFps);
         m.put("cfr30",true);
         m.put("audioNonSilent",true);
         m.put("status","approved");
