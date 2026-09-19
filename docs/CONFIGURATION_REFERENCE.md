@@ -29,7 +29,7 @@ Current defaults:
     qwenUrl=http://127.0.0.1:8765
     comfyUrl=http://127.0.0.1:8188
     imageCheckpoint=
-    comfyAutoPickCheckpoint=false
+    comfyAutoPickCheckpoint=true
     videoEncoder=auto
     videoWidth=1080
     videoHeight=1920
@@ -55,7 +55,7 @@ Current defaults:
     commandCenterAutoQueue=true
     commandCenterAutoThreshold=0.68
     commandCenterMaxQueued=12
-    commandCenterUseComfy=false
+    commandCenterUseComfy=true
     commandCenterControllerUrl=http://127.0.0.1:8787
 
 ## News settings
@@ -190,7 +190,7 @@ The pipeline checks that a configured checkpoint exists before it submits genera
 
 ### comfyAutoPickCheckpoint
 
-Default: false
+Default: true
 
 When false and imageCheckpoint is blank, optional ComfyUI generation fails over to procedural cards.
 
@@ -334,7 +334,7 @@ Maximum QUEUED + PRODUCING depth used by automatic queueing. Manual MAKE decisio
 
 Default:
 
-    false
+    true
 
 Controls whether remote Command Center jobs ask the production worker to use optional ComfyUI imagery.
 

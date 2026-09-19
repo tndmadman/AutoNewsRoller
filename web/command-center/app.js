@@ -87,6 +87,17 @@ function storyCard(s){
   const pubs=(s.publishers||[]).slice(0,8).map(p=>`<span class="sourceChip">${esc(p)}</span>`).join("");
   const cls=status==="PRODUCING"?" producing":status==="FAILED"?" failed":"";
   const makeDisabled=!verified||status==="PRODUCING"||status==="COMPLETE";
+  const engine=esc(s.ttsEngine||"pending");
+  const voice=esc(s.ttsVoice||"");
+  const visual=esc(s.visualMode||((s.stage==="VISUALS"&&s.detail)?s.detail:"pending"));
+  const checkpoint=esc(s.comfyCheckpoint||"");
+  const liveDetail=s.detail?`<div class="liveDetail">${esc(s.detail)}</div>`:"";
+  const productionFacts=(status==="PRODUCING"||status==="COMPLETE"||status==="FAILED")
+    ?`<div class="productionFacts">
+        <span><b>TTS</b> ${engine}${voice?" // "+voice:""}</span>
+        <span><b>VISUALS</b> ${visual}${checkpoint?" // "+checkpoint:""}</span>
+        ${s.comfyImages!=null?`<span><b>COMFY</b> ${num(s.comfyImages)} generated image(s)</span>`:""}
+      </div>`:"";
   return `<article class="storyCard${cls}">
     <div class="storyTop">
       <div class="scoreRing" style="--score:${score}"><div><b>${score}</b><small>WORTH</small></div></div>
@@ -98,6 +109,8 @@ function storyCard(s){
     <div class="verifyReason">${verified?"✓ ":"⚠ "}${esc(s.verificationReason||"")}</div>
     <div class="sources">${pubs||'<span class="sourceChip">NO SOURCE LABELS</span>'}</div>
     <div class="progressWrap"><div class="progressText"><span>${esc(s.stage||status)}</span><span>${Math.round(num(s.progress))}%</span></div><div class="progress"><i style="width:${pct(s.progress)}%"></i></div></div>
+    ${liveDetail}
+    ${productionFacts}
     <div class="mix" title="${esc(mix.note||"Configured external source classifications only")}">
       <div class="mixTitle"><span>POLITICAL SOURCE MIX</span><span>${esc(mix.provider||"unconfigured")}${mix.asOf?" // "+esc(mix.asOf):""}</span></div>
       <div class="mixBars"><div class="mixBar left"><i style="width:${bar("left")}%"></i></div><div class="mixBar center"><i style="width:${bar("center")}%"></i></div><div class="mixBar right"><i style="width:${bar("right")}%"></i></div><div class="mixBar unknown"><i style="width:${bar("unknown")}%"></i></div></div>
@@ -121,7 +134,8 @@ function renderVideos(){
   root.className="videoList";
   root.innerHTML=vs.slice().reverse().map(v=>{
     const href="/videos/"+encodeURIComponent(v.filename||"")+(token?"?token="+encodeURIComponent(token):"");
-    return `<div class="videoRow"><div><strong>${esc(v.topic||v.jobId)}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}</small></div><a href="${href}" target="_blank">OPEN MP4</a></div>`
+    const tech=[v.ttsEngine?("TTS "+v.ttsEngine+(v.ttsVoice?" / "+v.ttsVoice:"")):"",v.visualMode?("VISUALS "+v.visualMode):"",num(v.comfyImages)>0?("COMFY "+num(v.comfyImages)+" IMG"):""].filter(Boolean).join(" // ");
+    return `<div class="videoRow"><div><strong>${esc(v.topic||v.jobId)}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small></div><a href="${href}" target="_blank">OPEN MP4</a></div>`
   }).join("");
 }
 async function storyAction(id,action){

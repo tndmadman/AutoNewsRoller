@@ -450,3 +450,17 @@ Record:
 - whether ComfyUI becomes unstable after repeated runs;
 - whether Qwen can reload after ComfyUI releases;
 - whether final TTS metadata always matches the actual WAV path.
+
+
+## Command Center media reporting
+
+Command Center jobs request ComfyUI by default.
+
+If ComfyUI succeeds, NewsPipeline emits a live `COMFYUI USED` event containing the checkpoint and generated filename. If it cannot be used, the live event explicitly reports `COMFYUI FALLBACK` or `COMFYUI SKIPPED` and procedural cards remain in the render.
+
+The TTS stage likewise emits the actual path:
+
+- `KOKORO USED voice=...`
+- or `KOKORO FAILED: ...` followed by `QWEN3 FALLBACK USED voice=...`
+
+The final MP4 sidecar remains authoritative and the Command Center copies these values into the persistent story/video state so the website displays the engine, voice, visual mode, checkpoint, and ComfyUI image count after completion.

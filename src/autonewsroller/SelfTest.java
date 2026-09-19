@@ -29,6 +29,7 @@ public final class SelfTest {
         testRedirectAnd304Cache(root);
         testClusterAndVerify(a);
         testCommandCenterQueue(a);
+        testCommandCenterMediaReporting(root,a);
         testAuthoritative(root);
         testMalformed(root);
         testScriptValidation(a);
@@ -147,6 +148,29 @@ public final class SelfTest {
         store.fail(cluster.id,"expected test failure");
         store.action(cluster.id,"MAKE");
         ok("QUEUED".equals(store.storyDetail(cluster.id).get("status")),"command center manual MAKE requeues verified story");
+    }
+
+    private void testCommandCenterMediaReporting(Path root,List<Article>a)throws Exception{
+        NewsConfig cfg=NewsConfig.load(root);
+        ok(cfg.getBool("commandCenterUseComfy",false)&&cfg.getBool("comfyAutoPickCheckpoint",false),"command center enables ComfyUI and checkpoint auto-pick by default");
+
+        List<Article>fresh=a.stream().filter(x->!x.title().contains("Old archive")).toList();
+        StoryCluster cluster=new StoryClusterer().cluster(fresh).stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
+        VerificationResult verified=new SourceVerifier().verify(cluster,2);
+        NewsPipeline.DiscoveryItem item=new NewsPipeline.DiscoveryItem(cluster,verified.factPackage(),true,verified.reason(),0.91,false);
+        NewsPipeline.DiscoveryResult result=new NewsPipeline.DiscoveryResult(List.of(item),3,3,0,fresh.size(),fresh.size(),fresh.size(),fresh.size(),Instant.now());
+        Path dir=Files.createTempDirectory("autonews-command-media-");
+        CommandCenterStore store=new CommandCenterStore(dir.resolve("state.json"),BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null);
+        store.applyDiscovery(result);
+        store.claim("test-worker",Map.of("duration",60));
+        store.progress(cluster.id,new WorkerState(1,1,PipelineStage.TTS,"KOKORO USED voice=af_heart",Instant.now()));
+        store.progress(cluster.id,new WorkerState(1,1,PipelineStage.VISUALS,"COMFYUI USED checkpoint=test.safetensors image=00.png",Instant.now()));
+        Map<String,Object>sidecar=new LinkedHashMap<>();
+        sidecar.put("ttsEngineActuallyUsed","Kokoro");sidecar.put("voice","af_heart");sidecar.put("comfyCheckpoint","test.safetensors");
+        sidecar.put("imageSources",List.of(Map.of("type","comfyui-generated"),Map.of("type","procedural-card")));
+        store.complete(cluster.id,Map.of("sidecar",sidecar));
+        Map<String,Object>story=store.storyDetail(cluster.id);
+        ok("Kokoro".equals(story.get("ttsEngine"))&&((Number)story.get("comfyImages")).intValue()==1&&"test.safetensors".equals(story.get("comfyCheckpoint")),"command center retains actual TTS and ComfyUI results");
     }
 
     private void testAuthoritative(Path root)throws Exception{
