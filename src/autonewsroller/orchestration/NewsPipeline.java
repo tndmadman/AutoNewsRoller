@@ -18,12 +18,24 @@ import java.nio.file.*;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public final class NewsPipeline {
     private final Path root,batchDir;private final NewsConfig cfg;private final EventLog events;private final RuntimeLog logs;private final StoryHistory history;private final PublishHistory publishHistory;
-    public NewsPipeline(Path root,NewsConfig cfg,Path batchDir){this.root=root;this.batchDir=batchDir;this.cfg=cfg;this.events=new EventLog(batchDir.resolve("runtime/events.jsonl"));this.logs=new RuntimeLog(batchDir);this.history=new StoryHistory(root.resolve("data/story_history.jsonl"));this.publishHistory=new PublishHistory(root.resolve("data/publish_history.jsonl"));this.logs.debug("Batch initialized at "+batchDir);}
+    public NewsPipeline(Path root,NewsConfig cfg,Path batchDir){this(root,cfg,batchDir,null);}
+    public NewsPipeline(Path root,NewsConfig cfg,Path batchDir,Consumer<WorkerState> eventListener){this.root=root;this.batchDir=batchDir;this.cfg=cfg;this.events=new EventLog(batchDir.resolve("runtime/events.jsonl"),eventListener);this.logs=new RuntimeLog(batchDir);this.history=new StoryHistory(root.resolve("data/story_history.jsonl"));this.publishHistory=new PublishHistory(root.resolve("data/publish_history.jsonl"));this.logs.debug("Batch initialized at "+batchDir);}
 
     public List<Candidate> discover(String category,int maxAge,int minSources,boolean enrichArticles)throws Exception{
+        DiscoveryResult detailed=discoverDetailed(category,maxAge,minSources,enrichArticles,DiscoveryObserver.NOOP);
+        return detailed.items().stream()
+                .filter(x->x.verified()&&!x.previouslyGenerated())
+                .map(x->new Candidate(x.cluster(),x.factPackage(),x.score()))
+                .sorted(Comparator.comparingDouble(Candidate::score).reversed())
+                .toList();
+    }
+
+    public DiscoveryResult discoverDetailed(String category,int maxAge,int minSources,boolean enrichArticles,DiscoveryObserver observer)throws Exception{
+        if(observer==null)observer=DiscoveryObserver.NOOP;
         events.emit(0,0,PipelineStage.DISCOVER,"scanning all enabled feeds");
         logs.debug("Discovery started category="+category+" maxAgeHours="+maxAge+" minimumIndependentSources="+minSources);
 
@@ -33,12 +45,10 @@ public final class NewsPipeline {
         List<SourceConfig>sources=FeedRegistry.load(root.resolve("config/sources.json"));
         int attemptedFeeds=0,successfulFeeds=0,failedFeeds=0,totalEntries=0,recentEntries=0;
 
-        // Always refresh every enabled RSS source first. Category selection is
-        // applied only after the complete feed scan, so watch/batch runs never
-        // stop discovery just because one category or one source had no match.
         for(SourceConfig sc:sources){
             if(!sc.enabled()||!"rss".equalsIgnoreCase(sc.type()))continue;
             attemptedFeeds++;
+            observer.feedStarted(sc);
             try{
                 List<Article>entries=new RssSource(
                         sc,
@@ -49,16 +59,13 @@ public final class NewsPipeline {
                 ).discover();
                 successfulFeeds++;
                 totalEntries+=entries.size();
+                observer.feedSucceeded(sc,entries.size());
 
                 for(Article a:entries){
                     long age=Math.max(0,Duration.between(a.publishedAt(),Instant.now()).toHours());
                     if(age>maxAge)continue;
                     recentEntries++;
                     Article x=a;
-
-                    // Pull every feed, but only crawl linked article pages when
-                    // the story can actually be used for the selected output
-                    // category. General mode enriches all categories.
                     if(enrichArticles&&cfg.getBool("articleEnrichmentEnabled",false)&&categoryMatches(category,a.category())&&a.description().length()<120){
                         try{
                             String html=new ArticleFetcher(
@@ -67,11 +74,8 @@ public final class NewsPipeline {
                             ).fetch(a.url());
                             String body=ArticleParser.extractText(html);
                             x=new Article(a.id(),a.publisher(),a.title(),a.url(),a.canonicalUrl(),a.publishedAt(),a.discoveredAt(),a.author(),a.category(),a.description(),body,a.language(),a.sourceTrustTier(),a.authoritativePrimary());
-                        }catch(Exception e){
-                            logs.debug("Article extraction failed url="+a.url()+" reason="+e.getMessage());
-                        }
+                        }catch(Exception e){logs.debug("Article extraction failed url="+a.url()+" reason="+e.getMessage());}
                     }
-
                     allScanned.put(x.id(),x);
                     if(!seen.contains(x.id())){
                         try{ah.append(x);seen.add(x.id());}
@@ -81,41 +85,34 @@ public final class NewsPipeline {
             }catch(Exception e){
                 failedFeeds++;
                 String msg="Feed failed and was skipped: "+sc.name()+" :: "+e.getMessage();
-                System.err.println(msg);
-                logs.debug(msg);
+                System.err.println(msg);logs.debug(msg);observer.feedFailed(sc,e.getMessage());
             }
         }
 
         List<Article>eligible=allScanned.values().stream().filter(a->categoryMatches(category,a.category())).toList();
         String scanSummary="Feed scan complete: attempted="+attemptedFeeds+
-                " succeeded="+successfulFeeds+
-                " failed="+failedFeeds+
-                " entries="+totalEntries+
-                " recent="+recentEntries+
-                " uniqueRecent="+allScanned.size()+
-                " eligible="+eligible.size();
-        System.out.println(scanSummary);
-        logs.debug(scanSummary);
+                " succeeded="+successfulFeeds+" failed="+failedFeeds+" entries="+totalEntries+
+                " recent="+recentEntries+" uniqueRecent="+allScanned.size()+" eligible="+eligible.size();
+        System.out.println(scanSummary);logs.debug(scanSummary);
 
         List<StoryCluster>clusters=new StoryClusterer().cluster(eligible);
         SourceVerifier verifier=new SourceVerifier();
         StoryRanker ranker=new StoryRanker(cfg.ranking());
-        List<Candidate>out=new ArrayList<>();
-
+        List<DiscoveryItem>items=new ArrayList<>();
         for(StoryCluster c:clusters){
-            if(history.seen(c.fingerprint))continue;
             VerificationResult vr=verifier.verify(c,minSources);
-            if(!vr.accepted()){
-                logs.debug("Rejected cluster "+c.id+" verification="+vr.reason());
-                continue;
-            }
+            boolean generated=history.seen(c.fingerprint);
             double score=ranker.score(c,vr.factPackage(),Instant.now(),1);
-            out.add(new Candidate(c,vr.factPackage(),score));
+            if(!vr.accepted())logs.debug("Rejected cluster "+c.id+" verification="+vr.reason());
+            DiscoveryItem item=new DiscoveryItem(c,vr.factPackage(),vr.accepted(),vr.reason(),score,generated);
+            items.add(item);observer.storyEvaluated(item);
         }
-
-        out.sort(Comparator.comparingDouble(Candidate::score).reversed());
-        logs.debug("Discovery complete articles="+eligible.size()+" clusters="+clusters.size()+" verifiedCandidates="+out.size());
-        return out;
+        items.sort(Comparator.comparingDouble(DiscoveryItem::score).reversed());
+        long verified=items.stream().filter(DiscoveryItem::verified).count();
+        logs.debug("Discovery complete articles="+eligible.size()+" clusters="+clusters.size()+" verifiedCandidates="+verified);
+        DiscoveryResult result=new DiscoveryResult(List.copyOf(items),attemptedFeeds,successfulFeeds,failedFeeds,totalEntries,recentEntries,allScanned.size(),eligible.size(),Instant.now());
+        observer.scanComplete(result);
+        return result;
     }
 
     public List<Candidate> discoverFixtures(int maxAge,int minSources)throws Exception{
@@ -160,5 +157,23 @@ public final class NewsPipeline {
     }
 
     private String commitSha(){String env=System.getenv("GITHUB_SHA");if(env!=null&&!env.isBlank())return env;try{Process p=new ProcessBuilder("git","rev-parse","HEAD").directory(root.toFile()).redirectErrorStream(true).start();if(p.waitFor(5,TimeUnit.SECONDS)&&p.exitValue()==0)return new String(p.getInputStream().readAllBytes(),StandardCharsets.UTF_8).trim();}catch(Exception ignored){}return "unknown";}
-    public record Candidate(StoryCluster cluster,FactPackage factPackage,double score){}
+    public record Candidate(StoryCluster cluster,FactPackage factPackage,double score){
+        public Map<String,Object>toMap(){Map<String,Object>m=new LinkedHashMap<>();m.put("cluster",cluster.toMap());m.put("factPackage",factPackage.toMap());m.put("score",score);return m;}
+        public static Candidate fromMap(Map<String,Object>m){return new Candidate(StoryCluster.fromMap(Json.object(m.get("cluster"))),FactPackage.fromMap(Json.object(m.get("factPackage"))),m.get("score") instanceof Number n?n.doubleValue():0);}
+    }
+    public record DiscoveryItem(StoryCluster cluster,FactPackage factPackage,boolean verified,String verificationReason,double score,boolean previouslyGenerated){
+        public Map<String,Object>toMap(){Map<String,Object>m=new LinkedHashMap<>();m.put("cluster",cluster.toMap());m.put("factPackage",factPackage.toMap());m.put("verified",verified);m.put("verificationReason",verificationReason);m.put("score",score);m.put("previouslyGenerated",previouslyGenerated);return m;}
+        public Candidate candidate(){return new Candidate(cluster,factPackage,score);}
+    }
+    public record DiscoveryResult(List<DiscoveryItem>items,int attemptedFeeds,int successfulFeeds,int failedFeeds,int totalEntries,int recentEntries,int uniqueRecent,int eligibleEntries,Instant completedAt){
+        public Map<String,Object>toMap(){Map<String,Object>m=new LinkedHashMap<>();m.put("attemptedFeeds",attemptedFeeds);m.put("successfulFeeds",successfulFeeds);m.put("failedFeeds",failedFeeds);m.put("totalEntries",totalEntries);m.put("recentEntries",recentEntries);m.put("uniqueRecent",uniqueRecent);m.put("eligibleEntries",eligibleEntries);m.put("completedAt",completedAt.toString());m.put("stories",items.stream().map(DiscoveryItem::toMap).toList());return m;}
+    }
+    public interface DiscoveryObserver{
+        DiscoveryObserver NOOP=new DiscoveryObserver(){};
+        default void feedStarted(SourceConfig source){}
+        default void feedSucceeded(SourceConfig source,int entries){}
+        default void feedFailed(SourceConfig source,String reason){}
+        default void storyEvaluated(DiscoveryItem item){}
+        default void scanComplete(DiscoveryResult result){}
+    }
 }

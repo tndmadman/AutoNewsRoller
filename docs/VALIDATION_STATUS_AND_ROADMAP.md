@@ -40,6 +40,31 @@ Post-merge main run:
 
 The logs were inspected, not merely the green status badge.
 
+## Current cross-platform command-center validation
+
+The workflow now has separate Windows and Linux jobs.
+
+Windows validates:
+
+- JDK 21 compilation;
+- Python helper syntax;
+- PowerShell dashboard syntax;
+- all 20 Java self-tests;
+- offline fixture batch target behavior.
+
+Linux validates:
+
+- shell syntax for the Linux launchers;
+- JDK 21 compilation;
+- all 20 Java self-tests;
+- offline fixture batch target behavior;
+- headless Command Center process startup;
+- GET /api/health;
+- GET /api/state;
+- serving the browser dashboard HTML.
+
+This verifies that the controller is genuinely headless/cross-platform and not dependent on Windows BAT files.
+
 ## Important CI issue that was found and fixed
 
 An earlier Windows workflow appeared green even though javac had failed.
@@ -64,25 +89,28 @@ This is why future validation should inspect meaningful output, not only workflo
 
 ## Current Java self-test coverage
 
-SelfTest reports 15 checks.
-
-Current checks:
+SelfTest currently reports **20 checks**:
 
 1. JSON parser.
-2. Source configuration parsing.
-3. RSS fixture parsing.
-4. Duplicate clustering separates unrelated story.
-5. Same event clustered.
-6. FactPackage verification.
-7. Syndication duplicate does not destroy independent confirmations.
-8. Authoritative primary-source exception.
-9. Malformed feed rejected without process exit.
-10. Dry-run script generation.
-11. Script JSON/fact validation.
-12. TTS fallback state logic.
-13. Dashboard event parsing.
-14. Output filename collision handling.
-15. NVENC probe mode logic.
+2. Expanded source configuration parsing.
+3. Expanded source URLs are unique.
+4. RSS fixture parsing.
+5. RSS redirects and 304 cached-snapshot reuse.
+6. Duplicate clustering separates unrelated story.
+7. Same event clustered.
+8. FactPackage verification.
+9. Syndication duplicate does not destroy independent confirmations.
+10. Command Center auto-queues a verified high-score story.
+11. Remote-worker candidate serialization/reconstruction round trip.
+12. Manual MAKE can requeue a still-verified failed story.
+13. Authoritative primary-source exception.
+14. Malformed feed rejected without process exit.
+15. Dry-run script generation.
+16. Script JSON/fact validation.
+17. TTS fallback state logic.
+18. Dashboard event parsing.
+19. Output filename collision handling.
+20. NVENC probe mode logic.
 
 ## Offline fixture batch validation
 
@@ -211,6 +239,21 @@ Needs a long enough run to expose:
 - worker starvation/deadlock;
 - repeated-service crash patterns.
 
+### Distributed Command Center worker handoff
+
+Controller/store/API/worker serialization and headless Linux startup are automated-validated.
+
+Still needs a real two-machine live test with:
+
+- Linux controller on the LAN;
+- Windows RTX worker;
+- worker heartbeat and NVIDIA telemetry;
+- real job claim;
+- real Ollama/TTS/Comfy/FFmpeg generation;
+- MP4 upload back to Linux;
+- controller archive playback;
+- worker disconnect/reconnect while jobs remain queued.
+
 ### Phone integration
 
 Not implemented yet.
@@ -218,6 +261,23 @@ Not implemented yet.
 Needs code plus real Windows-to-phone test.
 
 ## Highest-priority roadmap
+
+### Priority 0 — live controller/worker LAN proof
+
+The distributed control plane now exists and passes Windows/Linux CI.
+
+Before calling the new architecture live-hardware validated:
+
+1. run the controller on the intended headless Linux box;
+2. connect the Windows RTX worker;
+3. confirm dashboard CPU/RAM/GPU/VRAM telemetry;
+4. queue one verified story with MAKE VIDEO;
+5. generate a real MP4;
+6. verify live stage progress;
+7. verify the MP4 uploads back to the Linux archive;
+8. power off/disconnect the worker, queue another story, reconnect, and confirm the queued job is claimed.
+
+
 
 ### Priority 1 — target-machine smoke test
 

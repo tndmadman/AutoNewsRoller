@@ -13,6 +13,7 @@ The detailed project knowledge is maintained under docs/:
 - [Architecture and data flow](docs/ARCHITECTURE_AND_DATA_FLOW.md)
 - [Configuration reference](docs/CONFIGURATION_REFERENCE.md)
 - [Windows operations](docs/WINDOWS_OPERATIONS.md)
+- [Command Center](docs/COMMAND_CENTER.md)
 - [News sources, polling, bot behavior, and content use](docs/NEWS_SOURCES_AND_CONTENT_USE.md)
 - [TTS, GPU, ComfyUI, captions, and video](docs/TTS_GPU_VISUALS_VIDEO.md)
 - [Output, audit, provenance, and history](docs/OUTPUT_AUDIT_HISTORY.md)
@@ -121,15 +122,27 @@ Offline fixture dry run:
 java -cp build\classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2
 ```
 
-## Watch mode
+## Watch mode and Command Center
 
-Basic polling mode is available:
+`watch_news_windows.bat` now launches the full local Command Center experience:
+
+1. compiles Java;
+2. starts a local GPU worker;
+3. opens the browser dashboard at `http://127.0.0.1:8787`;
+4. runs the controller;
+5. scans every enabled RSS feed;
+6. keeps verified stories queued for the worker;
+7. repeats scans on the configured interval.
+
+The first argument is the RSS scan interval in minutes:
 
 ```bat
-watch_news_windows.bat 30
+watch_news_windows.bat 10
 ```
 
-The number is the polling interval in minutes. Feed requests use ETag/Last-Modified caching, timeouts, bounded retries, and backoff. Persistent story history prevents already-published fingerprints from being recreated.
+For a lightweight always-on Linux controller with a separate Windows GPU worker, see [Command Center](docs/COMMAND_CENTER.md).
+
+The original direct one-video and interactive batch launchers remain available for non-controller workflows.
 
 ## TTS
 

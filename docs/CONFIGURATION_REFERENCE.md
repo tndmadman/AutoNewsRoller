@@ -36,7 +36,9 @@ Current defaults:
     videoFps=30
     captions=sentence
     workers=4
+    feedFetchTimeout=12
     articleFetchTimeout=30
+    articleEnrichmentEnabled=false
     feedRefreshMinutes=30
     ffmpegCommand=ffmpeg
     ffprobeCommand=ffprobe
@@ -47,6 +49,14 @@ Current defaults:
     imageSteps=24
     imageCfg=5.0
     imageNegative=text, watermark, logo, captions, low quality, distorted, deformed
+    commandCenterHost=127.0.0.1
+    commandCenterPort=8787
+    commandCenterScanMinutes=10
+    commandCenterAutoQueue=true
+    commandCenterAutoThreshold=0.68
+    commandCenterMaxQueued=12
+    commandCenterUseComfy=false
+    commandCenterControllerUrl=http://127.0.0.1:8787
 
 ## News settings
 
@@ -266,6 +276,94 @@ Effective worker count can be lower when fewer verified candidates exist.
 
 The worker number is whole-video concurrency. Ollama and GPU-heavy operations have their own serialization/resource controls.
 
+## Command Center settings
+
+### commandCenterHost
+
+Default:
+
+    127.0.0.1
+
+Bind address for --command-center mode.
+
+Use 0.0.0.0 only when the controller should accept LAN connections. Configure AUTONEWS_TOKEN when listening beyond localhost.
+
+### commandCenterPort
+
+Default:
+
+    8787
+
+HTTP dashboard/API port.
+
+### commandCenterScanMinutes
+
+Default:
+
+    10
+
+Full RSS scan interval used by the Command Center scheduler.
+
+### commandCenterAutoQueue
+
+Default:
+
+    true
+
+Allows verified stories meeting the automatic worthiness threshold to enter the production queue without manual approval.
+
+### commandCenterAutoThreshold
+
+Default:
+
+    0.68
+
+Minimum StoryRanker score for AUTO decisions to queue a verified story.
+
+This is a production-priority threshold, not a probability that the story is true.
+
+### commandCenterMaxQueued
+
+Default:
+
+    12
+
+Maximum QUEUED + PRODUCING depth used by automatic queueing. Manual MAKE decisions can still be applied to verified stories.
+
+### commandCenterUseComfy
+
+Default:
+
+    false
+
+Controls whether remote Command Center jobs ask the production worker to use optional ComfyUI imagery.
+
+### commandCenterControllerUrl
+
+Default:
+
+    http://127.0.0.1:8787
+
+Default controller URL used by --worker mode.
+
+### AUTONEWS_TOKEN
+
+Not stored in defaults.txt.
+
+Optional environment variable shared by the controller and workers.
+
+When configured, API/video endpoints require the token.
+
+A CLI --token value can also be supplied, but environment variables are preferable to leaving long-lived tokens in shell history or service command lines.
+
+## config/source_bias.json
+
+Optional metadata for the dashboard political source-mix visualization.
+
+The repository ships with provider=unconfigured and no labels.
+
+AutoNewsRoller does not infer political classifications itself. See docs/COMMAND_CENTER.md.
+
 ## HTTP settings
 
 ### feedFetchTimeout
@@ -290,9 +388,9 @@ With the expanded feed pack, discovery is RSS-only by default. Linked article HT
 
 Default: 30
 
-Represents the intended feed refresh period.
+Legacy/general refresh setting retained for non-Command-Center workflows.
 
-Current watch_news_windows.bat independently defaults its loop interval to 30 minutes and accepts a positional override. The batch file does not currently read feedRefreshMinutes directly.
+The Command Center uses commandCenterScanMinutes. watch_news_windows.bat now launches the Command Center and passes its first argument as that controller scan interval.
 
 ### userAgent
 

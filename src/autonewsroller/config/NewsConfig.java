@@ -16,6 +16,7 @@ public final class NewsConfig {
     public String get(String k,String def){return p.getProperty(k,def).trim();}
     public void set(String k,String value){if(value==null)p.remove(k);else p.setProperty(k,value);}
     public int getInt(String k,int def){try{return Integer.parseInt(get(k,String.valueOf(def)));}catch(Exception e){return def;}}
+    public double getDouble(String k,double def){try{return Double.parseDouble(get(k,String.valueOf(def)));}catch(Exception e){return def;}}
     public boolean getBool(String k,boolean def){return Boolean.parseBoolean(get(k,String.valueOf(def)));}
     public List<String> csv(String k,String def){return Arrays.stream(get(k,def).split(",")).map(String::trim).filter(s->!s.isBlank()).toList();}
     public Map<String,Double> ranking(){return Collections.unmodifiableMap(ranking);}

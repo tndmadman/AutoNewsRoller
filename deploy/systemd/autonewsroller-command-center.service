@@ -1,0 +1,22 @@
+[Unit]
+Description=AutoNewsRoller Headless Command Center
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=autonewsroller
+Group=autonewsroller
+WorkingDirectory=/opt/autonewsroller
+EnvironmentFile=-/etc/autonewsroller.env
+ExecStart=/usr/bin/java -cp build/classes autonewsroller.Main --command-center --host 0.0.0.0 --port 8787 --scan-minutes 10 --auto-queue
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/autonewsroller/data /opt/autonewsroller/output
+
+[Install]
+WantedBy=multi-user.target

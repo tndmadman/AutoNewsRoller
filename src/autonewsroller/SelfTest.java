@@ -1,6 +1,7 @@
 package autonewsroller;
 
 import autonewsroller.cluster.*;
+import autonewsroller.commandcenter.*;
 import autonewsroller.config.*;
 import autonewsroller.ingest.*;
 import autonewsroller.model.*;
@@ -27,6 +28,7 @@ public final class SelfTest {
         List<Article>a=testRss(root);
         testRedirectAnd304Cache(root);
         testClusterAndVerify(a);
+        testCommandCenterQueue(a);
         testAuthoritative(root);
         testMalformed(root);
         testScriptValidation(a);
@@ -125,6 +127,26 @@ public final class SelfTest {
         VerificationResult v=new SourceVerifier().verify(n,2);
         ok(v.accepted(),"FactPackage verification");
         ok(v.factPackage().independentSourceCount()>=2,"syndication duplicate does not destroy independent confirmations");
+    }
+
+    private void testCommandCenterQueue(List<Article>a)throws Exception{
+        List<Article>fresh=a.stream().filter(x->!x.title().contains("Old archive")).toList();
+        StoryCluster cluster=new StoryClusterer().cluster(fresh).stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
+        VerificationResult verified=new SourceVerifier().verify(cluster,2);
+        NewsPipeline.DiscoveryItem item=new NewsPipeline.DiscoveryItem(cluster,verified.factPackage(),true,verified.reason(),0.91,false);
+        NewsPipeline.DiscoveryResult result=new NewsPipeline.DiscoveryResult(List.of(item),3,3,0,fresh.size(),fresh.size(),fresh.size(),fresh.size(),Instant.now());
+        Path dir=Files.createTempDirectory("autonews-command-center-");
+        CommandCenterStore store=new CommandCenterStore(dir.resolve("state.json"),BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null);
+        store.applyDiscovery(result);
+        Map<String,Object>snap=store.snapshot();
+        Map<String,Object>counts=Json.object(snap.get("counts"));
+        ok(((Number)counts.get("queued")).intValue()==1,"command center auto-queues verified worthy story");
+        Map<String,Object>job=store.claim("test-worker",Map.of("duration",60,"encoder","x264","useComfy",false));
+        NewsPipeline.Candidate rebuilt=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
+        ok(rebuilt.cluster().id.equals(cluster.id)&&rebuilt.factPackage().independentSourceCount()>=2,"remote worker candidate round trip");
+        store.fail(cluster.id,"expected test failure");
+        store.action(cluster.id,"MAKE");
+        ok("QUEUED".equals(store.storyDetail(cluster.id).get("status")),"command center manual MAKE requeues verified story");
     }
 
     private void testAuthoritative(Path root)throws Exception{
