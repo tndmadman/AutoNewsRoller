@@ -209,46 +209,67 @@ Displayed state includes:
 
 The dashboard is a read-only monitor. It does not control the workers.
 
-## Watch mode
+## Watch mode and Command Center
 
 Run:
 
     watch_news_windows.bat
 
-Default behavior:
+This now launches the interactive Command Center rather than the old one-video/sleep BAT loop.
 
-    run one one-video cycle
-    wait 30 minutes
-    repeat forever
+Default scan interval:
+
+    10 minutes
 
 Custom interval:
 
-    watch_news_windows.bat 10
+    watch_news_windows.bat 30
 
-The argument is minutes.
+The first argument is the full RSS scan interval in minutes.
 
-Current watch file:
+Current launcher flow:
 
-    @echo off
-    setlocal EnableExtensions
-    cd /d "%~dp0"
-    set "INTERVAL_MINUTES=30"
-    if not "%~1"=="" set "INTERVAL_MINUTES=%~1"
-    :loop
-    call run_news_video_windows.bat
-    ...
-    timeout ...
-    goto loop
+1. call build_windows.bat once;
+2. start a local remote-worker process in another command window;
+3. open http://127.0.0.1:8787 in the default browser;
+4. run the Java Command Center in the foreground;
+5. scan all enabled RSS feeds immediately;
+6. persist discovered/verified/queued story state;
+7. allow the local worker to claim queued jobs;
+8. repeat scans at the requested interval.
 
-### Watch-mode behavior to understand
+The Command Center replaces the old watch loop while retaining the direct one-video and interactive batch launchers for simpler workflows.
 
-The one-video cycle asks for one approved video.
+### command_center_windows.bat
 
-If no verified candidates exist, Main can exit without reaching the requested target.
+Can be launched directly.
 
-Watch mode currently does not branch on success/failure before sleeping; it simply runs again after the interval.
+    command_center_windows.bat 10
 
-Watch mode currently has no built-in phone notification or phone file-transfer step.
+It is the implementation behind watch_news_windows.bat.
+
+### run_gpu_worker_windows.bat
+
+Use this when the Command Center runs on another machine.
+
+Example:
+
+    set AUTONEWS_TOKEN=your-controller-token
+    run_gpu_worker_windows.bat http://192.168.1.50:8787 RTX3090-WORKSTATION
+
+The worker reports telemetry, waits for queued jobs, runs the normal AI/video pipeline, and uploads approved MP4s back to the controller.
+
+### Existing PowerShell dashboard
+
+tools\batch_dashboard.ps1 remains in use for the legacy/direct interactive batch launcher.
+
+It is not the new Command Center UI.
+
+The new controller dashboard is served by Java from:
+
+    web\command-center\
+
+See docs/COMMAND_CENTER.md for controller/worker architecture, Linux deployment, API/security, manual story controls, and the dashboard state model.
 
 ## Recommended first live-machine validation sequence
 
