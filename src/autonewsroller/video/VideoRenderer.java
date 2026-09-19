@@ -121,7 +121,7 @@ public final class VideoRenderer {
         cmd.addAll(List.of("-vf",vf));
         double tail=Math.max(0,totalDuration-audioDuration);
         if(tail>.01)cmd.addAll(List.of("-af","apad=pad_dur="+String.format(Locale.US,"%.3f",tail+.1)));
-        cmd.addAll(List.of("-t",String.format(Locale.US,"%.4f",totalDuration),"-r",String.valueOf(fps),"-fps_mode","cfr","-vsync","cfr"));
+        cmd.addAll(List.of("-t",String.format(Locale.US,"%.4f",totalDuration),"-r",String.valueOf(fps),"-fps_mode","cfr"));
         if(enc.equals("nvenc"))cmd.addAll(List.of("-c:v","h264_nvenc","-preset","p6","-tune","hq","-rc","vbr","-cq","19","-b:v","0"));
         else cmd.addAll(List.of("-c:v","libx264","-preset","medium","-crf","19"));
         cmd.addAll(List.of("-c:a","aac","-b:a","192k","-ar","48000","-movflags","+faststart",output.toString()));
