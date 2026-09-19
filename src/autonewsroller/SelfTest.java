@@ -149,6 +149,20 @@ public final class SelfTest {
         store.fail(cluster.id,"expected test failure");
         store.action(cluster.id,"MAKE");
         ok("QUEUED".equals(store.storyDetail(cluster.id).get("status")),"command center manual MAKE requeues verified story");
+
+        Article single=fresh.get(0);
+        StoryCluster unverifiedCluster=new StoryCluster("manual-override-story",single.title(),List.of(single),Set.of(),"manual-override-fingerprint");
+        VerificationResult unverified=new SourceVerifier().verify(unverifiedCluster,2);
+        NewsPipeline.DiscoveryItem unverifiedItem=new NewsPipeline.DiscoveryItem(unverifiedCluster,unverified.factPackage(),false,unverified.reason(),0.76,false);
+        NewsPipeline.DiscoveryResult unverifiedResult=new NewsPipeline.DiscoveryResult(List.of(unverifiedItem),1,1,0,1,1,1,1,Instant.now());
+        store.applyDiscovery(unverifiedResult);
+        Map<String,Object>before=store.storyDetail(unverifiedCluster.id);
+        ok("DISCOVERED".equals(before.get("status"))&&!Boolean.TRUE.equals(before.get("verified")),"unverified story remains discovered under automatic rules");
+        store.action(unverifiedCluster.id,"MAKE");
+        Map<String,Object>forced=store.storyDetail(unverifiedCluster.id);
+        ok("QUEUED".equals(forced.get("status"))&&Boolean.TRUE.equals(forced.get("manualVerificationOverride")),"manual MAKE force-queues unverified story");
+        Map<String,Object>forcedJob=store.claim("override-worker",Map.of("duration",60));
+        ok(unverifiedCluster.id.equals(forcedJob.get("jobId"))&&Boolean.TRUE.equals(forcedJob.get("manualVerificationOverride")),"worker can claim manual verification override job");
     }
 
     private void testCommandCenterMediaReporting(Path root,List<Article>a)throws Exception{
