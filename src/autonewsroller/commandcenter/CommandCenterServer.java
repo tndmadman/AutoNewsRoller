@@ -31,7 +31,7 @@ public final class CommandCenterServer {
     public CommandCenterServer(Path root,NewsConfig cfg,String host,int port,int scanMinutes,boolean autoQueue,double autoThreshold,int maxQueued,String token,boolean scanOnStart){
         this.root=root;this.cfg=cfg;this.host=host;this.requestedPort=port;this.scanMinutes=Math.max(1,scanMinutes);this.token=token==null?"":token.trim();this.scanOnStart=scanOnStart;
         BiasRegistry bias=BiasRegistry.load(root.resolve("config/source_bias.json"));
-        this.store=new CommandCenterStore(root.resolve("data/command_center_state.json"),bias,autoQueue,autoThreshold,maxQueued,this::broadcast);
+        this.store=new CommandCenterStore(root.resolve("data/command_center_state.json"),bias,autoQueue,autoThreshold,maxQueued,this::broadcast,cfg.getInt("commandCenterJobLeaseSeconds",75));
     }
 
     public int start() throws Exception {
@@ -52,6 +52,7 @@ public final class CommandCenterServer {
         System.out.println("AutoNewsRoller Command Center listening on http://"+displayHost()+":"+actual);
         if(!isLoopbackHost(host)&&token.isBlank())System.err.println("WARNING: command center is listening beyond localhost without an API token. Set AUTONEWS_TOKEN or --token.");
         scheduler.scheduleWithFixedDelay(this::scanSafe,scanOnStart?0:scanMinutes,scanMinutes,TimeUnit.MINUTES);
+        scheduler.scheduleWithFixedDelay(store::maintenance,15,15,TimeUnit.SECONDS);
         return actual;
     }
 
@@ -125,7 +126,10 @@ public final class CommandCenterServer {
         if(worker.isBlank()){json(x,400,Map.of("error","worker query parameter required"));return;}
         Map<String,Object>settings=new LinkedHashMap<>();
         settings.put("duration",cfg.duration());settings.put("encoder",cfg.get("videoEncoder","auto"));
-        settings.put("useComfy",cfg.getBool("commandCenterUseComfy",false));settings.put("dryRun",false);
+        settings.put("useComfy",cfg.getBool("commandCenterUseComfy",true));
+        settings.put("requireComfy",cfg.getBool("commandCenterRequireComfy",true));
+        settings.put("comfyImages",cfg.getInt("commandCenterComfyImages",3));
+        settings.put("dryRun",false);
         Map<String,Object>job=store.claim(worker,settings);
         if(job==null){x.sendResponseHeaders(204,-1);x.close();return;}
         json(x,200,job);
