@@ -3,7 +3,7 @@ on:
   push:
     branches: [feature/news-video-pipeline]
     paths:
-      - '.bootstrap/project.tar.xz.b64'
+      - '.bootstrap/project.tar.xz.b64.part*'
       - '.github/workflows/bootstrap-project.yml'
 permissions:
   contents: write
@@ -16,13 +16,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f .bootstrap/project.tar.xz.b64 ]; then
-            echo "Archive not present yet; waiting for the archive push."
-            exit 0
+          shopt -s nullglob
+          parts=(.bootstrap/project.tar.xz.b64.part*)
+          if [ "${#parts[@]}" -ne 8 ]; then
+            echo "Expected 8 snapshot chunks, found ${#parts[@]}."
+            exit 1
           fi
-          base64 -d .bootstrap/project.tar.xz.b64 > /tmp/autonewsroller.tar.xz
+          cat "${parts[@]}" | base64 -d > /tmp/autonewsroller.tar.xz
+          echo "b8694c57647c79e19ac33e14287115b91328872050e7a04600063679ea36e89b  /tmp/autonewsroller.tar.xz" | sha256sum -c -
           tar -xJf /tmp/autonewsroller.tar.xz -C .
-          rm -f .bootstrap/project.tar.xz.b64
+          rm -f .bootstrap/project.tar.xz.b64.part*
           rmdir .bootstrap 2>/dev/null || true
           rm -f .github/workflows/bootstrap-project.yml
           git config user.name "github-actions[bot]"
