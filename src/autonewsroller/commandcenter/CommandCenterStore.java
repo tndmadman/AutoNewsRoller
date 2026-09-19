@@ -5,6 +5,7 @@ import autonewsroller.model.Article;
 import autonewsroller.orchestration.NewsPipeline;
 import autonewsroller.orchestration.WorkerState;
 import autonewsroller.util.Json;
+import autonewsroller.util.Hashing;
 
 import java.nio.file.*;
 import java.time.*;
@@ -107,8 +108,10 @@ public final class CommandCenterStore {
             m.put("sourceMix",bias.mix(item.cluster().publishers()));
             boolean politicalCandidate=PoliticalFramingAnalyzer.likelyPolitical(item.cluster());
             m.put("politicalCandidate",politicalCandidate);
-            String framingFingerprint=String.valueOf(m.getOrDefault("framingFingerprint",""));
-            if(politicalCandidate&&!item.cluster().fingerprint.equals(framingFingerprint)){
+            String framingInputHash=Hashing.sha256(item.cluster().articles.stream().map(Article::id).sorted().reduce("",(a,b)->a+"|"+b));
+            m.put("biasAnalysisInputHash",framingInputHash);
+            String analyzedInputHash=String.valueOf(m.getOrDefault("framingInputHash",""));
+            if(politicalCandidate&&!framingInputHash.equals(analyzedInputHash)){
                 String biasStatus=String.valueOf(m.getOrDefault("biasAnalysisStatus",""));
                 if(!"ANALYZING".equals(biasStatus)){
                     m.put("biasAnalysisStatus","QUEUED");
@@ -291,7 +294,7 @@ public final class CommandCenterStore {
     public synchronized void politicalAnalysisComplete(String storyId,Map<String,Object>result,String workerId){
         Map<String,Object>m=requireStory(storyId);
         m.put("framingAnalysis",deepCopyMap(result));
-        m.put("framingFingerprint",String.valueOf(m.getOrDefault("fingerprint","")));
+        m.put("framingInputHash",String.valueOf(m.getOrDefault("biasAnalysisInputHash","")));
         m.put("biasAnalysisStatus","COMPLETE");m.put("biasAnalyzedAt",Instant.now().toString());m.put("biasAnalyzedBy",workerId);
         m.remove("biasAnalysisError");m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
         persistQuiet();emit("story",publicStory(m));
