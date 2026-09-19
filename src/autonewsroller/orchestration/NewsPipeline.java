@@ -58,7 +58,7 @@ public final class NewsPipeline {
                     // Pull every feed, but only crawl linked article pages when
                     // the story can actually be used for the selected output
                     // category. General mode enriches all categories.
-                    if(enrichArticles&&categoryMatches(category,a.category())&&a.description().length()<120){
+                    if(enrichArticles&&cfg.getBool("articleEnrichmentEnabled",false)&&categoryMatches(category,a.category())&&a.description().length()<120){
                         try{
                             String html=new ArticleFetcher(
                                     cfg.getInt("articleFetchTimeout",30),
