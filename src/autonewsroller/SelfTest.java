@@ -10,6 +10,7 @@ import autonewsroller.script.*;
 import autonewsroller.util.*;
 import autonewsroller.verify.*;
 import autonewsroller.video.*;
+import autonewsroller.visuals.*;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.*;
@@ -36,6 +37,8 @@ public final class SelfTest {
         testAuthoritative(root);
         testMalformed(root);
         testScriptValidation(a);
+        testLongFormVisualPlan(a);
+        testComfyResidencySource(root);
         testTtsFallback();
         testWorkerEvent();
         testFilename(root);
@@ -267,6 +270,34 @@ public final class SelfTest {
             VerificationResult v=new SourceVerifier().verify(c,2);
             ok(v.accepted()&&v.factPackage().authoritativePrimaryAccepted(),"authoritative primary-source exception");
         }
+    }
+
+    private void testLongFormVisualPlan(List<Article>a){
+        StoryCluster cluster=new StoryClusterer().cluster(a.stream().filter(x->!x.title().contains("Old archive")).toList()).stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
+        FactPackage fp=new SourceVerifier().verify(cluster,2).factPackage();
+        String sentence="The report explains the event, the documented context, the people affected, and the current status using only supported information.";
+        String narration=String.join(" ",Collections.nCopies(18,sentence));
+        List<NewsScript.Segment>segments=new ArrayList<>();
+        String[]words=narration.split("\\s+");
+        for(int i=0;i<8;i++){
+            int from=(int)Math.floor(i*words.length/8.0),to=(int)Math.floor((i+1)*words.length/8.0);
+            String beat=String.join(" ",Arrays.copyOfRange(words,from,Math.max(from+1,to)));
+            segments.add(new NewsScript.Segment(i,beat,"detail","POST_CARD","believable editorial scene with a central subject",8.5));
+        }
+        NewsScript script=new NewsScript(cluster.id,"Fixture long-form headline",narration,segments,68,List.of());
+        VisualPlan plan=new VisualPlanner().plan(script,fp,68,2.5,7,9);
+        long storyScenes=plan.items().stream().filter(x->!"SOURCE_CARD".equals(x.type())).count();
+        double total=plan.items().stream().mapToDouble(VisualPlan.Item::duration).sum();
+        boolean captionsShort=plan.items().stream().filter(x->!"SOURCE_CARD".equals(x.type())).allMatch(x->Text.words(x.displayCaption())<=9);
+        boolean promptsStrong=plan.items().stream().filter(x->!"SOURCE_CARD".equals(x.type())).allMatch(x->x.prompt().contains("No readable text")&&x.negativePrompt().contains("malformed hands"));
+        ok(storyScenes>=7&&storyScenes<=9&&plan.items().get(plan.items().size()-1).type().equals("SOURCE_CARD"),"long-form visual plan creates 7-9 story scenes plus source tail");
+        ok(total>70&&total<72&&captionsShort&&promptsStrong,"visual plan duration, short captions, and SDXL prompt constraints");
+    }
+
+    private void testComfyResidencySource(Path root)throws Exception{
+        String source=Files.readString(root.resolve("src/autonewsroller/visuals/ComfyImageGenerator.java"));
+        int freeCalls=source.split("postJson\\(\"/free\"", -1).length-1;
+        ok(freeCalls==1&&source.contains("CUDA OOM recovery required")&&source.contains("keeping SDXL/CLIP/VAE resident"),"ComfyUI unload remains only in OOM recovery path");
     }
 
     private void testTtsFallback()throws Exception{

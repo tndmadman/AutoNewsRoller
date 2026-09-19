@@ -17,7 +17,7 @@ Current defaults:
 
     newsMaxAgeHours=24
     minimumIndependentSources=2
-    targetDurationSeconds=60
+    targetDurationSeconds=70
     ollamaModel=llama3.1:8b
     ollamaUrl=http://127.0.0.1:11434/api/generate
     ollamaRetries=3
@@ -28,13 +28,13 @@ Current defaults:
     qwenVoices=Ryan,Aiden,Ono_Anna,Sohee
     qwenUrl=http://127.0.0.1:8765
     comfyUrl=http://127.0.0.1:8188
-    imageCheckpoint=
+    imageCheckpoint=RealVisXL_V5.0_fp32.safetensors
     comfyAutoPickCheckpoint=true
     videoEncoder=auto
     videoWidth=1080
     videoHeight=1920
     videoFps=30
-    captions=sentence
+    captions=phrase
     workers=4
     feedFetchTimeout=12
     articleFetchTimeout=30
@@ -46,9 +46,9 @@ Current defaults:
     httpRetries=2
     imageWidth=768
     imageHeight=1344
-    imageSteps=24
-    imageCfg=5.0
-    imageNegative=text, watermark, logo, captions, low quality, distorted, deformed
+    imageSteps=28
+    imageCfg=5.5
+    imageNegative=text, letters, words, captions, subtitles, watermark, logo, fake UI, garbled signage, malformed hands, extra fingers, extra limbs, duplicated people, distorted faces, bad anatomy, unrelated objects, low detail, low quality, deformed
     commandCenterHost=127.0.0.1
     commandCenterPort=8787
     commandCenterScanMinutes=10
@@ -56,6 +56,8 @@ Current defaults:
     commandCenterAutoThreshold=0.68
     commandCenterMaxQueued=12
     commandCenterUseComfy=true
+    commandCenterRequireComfy=true
+    commandCenterComfyImages=7
     commandCenterControllerUrl=http://127.0.0.1:8787
 
 ## News settings
@@ -84,15 +86,23 @@ An authoritativePrimary source can bypass the minimum, with that exception recor
 
 ### targetDurationSeconds
 
-Default: 60
+Default: 70
 
-Used as the target duration supplied to the script generator.
+Used as the nominal narration target. Production clamps normal news-video targets into the 68-75 second script window.
 
 CLI override:
 
     --duration N
 
-This is a target, not an exact hard duration. Final video duration follows the narration audio.
+Word count is not trusted as final timing. Kokoro/Qwen synthesis is measured with ffprobe and narration is regenerated/resynthesized when the actual WAV is outside the configured audio-duration band.
+
+Related defaults:
+
+    videoTargetAudioMinSeconds=65
+    videoTargetAudioMaxSeconds=72
+    narrationDurationRetries=3
+    videoSourceTailSeconds=2.5
+    videoMinimumDurationSeconds=60.5
 
 ## Ollama settings
 
@@ -209,19 +219,17 @@ These are the optional ComfyUI generation dimensions, not the final video dimens
 
 ### imageSteps
 
-Default: 24
+Default: 28
 
 ### imageCfg
 
-Default: 5.0
+Default: 5.5
 
 ### imageNegative
 
-Default negative-prompt text:
+The default negative prompt now rejects readable text/UI artifacts and common anatomy failures, including letters, words, captions, subtitles, watermarks, logos, fake UI, garbled signage, malformed hands, extra fingers/limbs, duplicated people, distorted faces, bad anatomy, unrelated objects, and low detail.
 
-    text, watermark, logo, captions, low quality, distorted, deformed
-
-The ComfyUI code adds an editorial-news prompt qualifier and explicitly asks for no text or logos.
+Each scene also carries its own structured negative prompt from VisualPlanner.
 
 ## Video settings
 
@@ -250,19 +258,63 @@ Vertical 9:16 output.
 
 Default: 30
 
+### videoMinimumDurationSeconds
+
+Default:
+
+    60.5
+
+The technical audit requires the final playable file to exceed 60 seconds.
+
+### videoTargetAudioMinSeconds / videoTargetAudioMaxSeconds
+
+Defaults:
+
+    65
+    72
+
+The narration WAV must fall inside this range after measured TTS retries.
+
+### videoSourceTailSeconds
+
+Default:
+
+    2.5
+
+Short natural source/context ending after narration.
+
+### videoMinStoryScenes / videoMaxStoryScenes
+
+Defaults:
+
+    7
+    9
+
+Normal story-scene range before the source tail.
+
+### captionFontSize / captionMaxWords
+
+Defaults:
+
+    44
+    9
+
+ASS caption presentation controls.
+
 ### captions
 
-Default: sentence
+Default: phrase
 
-Current modes:
+Current production behavior uses short ASS phrase captions.
 
-- off
-- sentence
-- word
+Related defaults:
 
-Sentence and word modes are duration-proportional caption timing generated from narration text.
+    captionFontSize=44
+    captionMaxWords=9
 
-Kokoro can also write an exact token-timing sidecar when the underlying Kokoro result exposes timestamps, but VideoRenderer currently uses CaptionWriter rather than consuming that Kokoro timing file.
+Normal phrases are approximately 4-9 words and at most two visual lines. Timing remains proportional to narration word count.
+
+Kokoro can also write an exact token-timing sidecar when the underlying Kokoro result exposes timestamps, but exact timing integration remains future work.
 
 ## Worker settings
 
@@ -337,6 +389,22 @@ Default:
     true
 
 Controls whether remote Command Center jobs ask the production worker to use optional ComfyUI imagery.
+
+### commandCenterRequireComfy
+
+Default:
+
+    true
+
+Command Center video jobs treat missing/failed Comfy generation as a production failure instead of silently shipping a mostly procedural video.
+
+### commandCenterComfyImages
+
+Default:
+
+    7
+
+Unique SDXL render target used to support the normal 7-9 story-scene plan. A normal required-Comfy job requires at least six unique generated images.
 
 ### commandCenterControllerUrl
 
@@ -416,6 +484,12 @@ Used only for optional linked-article extraction.
 Default: false
 
 With the expanded feed pack, discovery is RSS-only by default. Linked article HTML is not fetched unless this is explicitly enabled.
+
+### productionEnrichmentEnabled
+
+Default: true
+
+When a story is actually selected for video production, AutoNewsRoller may fetch missing/short article body text for that cluster before script generation. This is separate from broad discovery-time enrichment and exists to support a substantive one-minute fact-grounded script without crawling every feed item.
 
 ### feedRefreshMinutes
 
@@ -602,3 +676,12 @@ Documented examples:
 - feedRefreshMinutes is not currently read by watch_news_windows.bat.
 
 These are good cleanup targets because configuration should ideally be authoritative rather than partly descriptive.
+
+
+## Video-quality pipeline reference
+
+See:
+
+    docs/VIDEO_QUALITY_OVERHAUL.md
+
+for measured-TTS duration control, scene planning, AWARE post/card rendering, caption styling, ComfyUI residency, CFR assembly, and live acceptance.

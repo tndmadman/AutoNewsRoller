@@ -16,6 +16,7 @@ The detailed project knowledge is maintained under docs/:
 - [Command Center](docs/COMMAND_CENTER.md)
 - [News sources, polling, bot behavior, and content use](docs/NEWS_SOURCES_AND_CONTENT_USE.md)
 - [TTS, GPU, ComfyUI, captions, and video](docs/TTS_GPU_VISUALS_VIDEO.md)
+- [Video quality overhaul and live acceptance](docs/VIDEO_QUALITY_OVERHAUL.md)
 - [Output, audit, provenance, and history](docs/OUTPUT_AUDIT_HISTORY.md)
 - [Notifications and automatic phone delivery](docs/NOTIFICATIONS_AND_PHONE_DELIVERY.md)
 - [Validation status and roadmap](docs/VALIDATION_STATUS_AND_ROADMAP.md)
@@ -30,13 +31,13 @@ The Java pipeline under `src/autonewsroller` is split into configuration, ingest
 
 The default flow is:
 
-`RSS/Atom -> normalize -> cluster -> verify -> rank -> FactPackage -> Ollama script -> visual plan -> Kokoro (Qwen fallback) -> FFmpeg -> audit -> final video -> history`
+`RSS/Atom -> normalize -> cluster -> verify -> rank -> FactPackage -> Ollama script -> Kokoro (Qwen fallback) -> measure audio -> revise if needed -> 7-9 scene plan -> persistent ComfyUI -> AWARE post cards -> CFR FFmpeg -> audit -> final video -> history`
 
 Article text is treated as untrusted evidence. The Ollama prompt explicitly limits factual statements to the supplied FactPackage and tells the model not to follow instructions found inside source material. Scripts are original summaries; the system is not intended to reproduce articles verbatim.
 
 ## Requirements
 
-Recommended target is Windows 10/11 with JDK 21+, Python 3.12, FFmpeg/ffprobe, Ollama, and an NVIDIA GPU for Qwen3-TTS/optional ComfyUI. Kokoro is the primary narrator and does not require the GPU lane. Qwen3-TTS is lazy-started only when Kokoro fails. ComfyUI is optional; if it is unavailable or image generation fails, AutoNewsRoller continues with procedural news cards.
+Recommended target is Windows 10/11 with JDK 21+, Python 3.12, FFmpeg/ffprobe, Ollama, and an NVIDIA GPU for Qwen3-TTS/ComfyUI. Kokoro is the primary narrator and does not require the GPU lane. Qwen3-TTS is lazy-started only when Kokoro actually fails. Direct non-Comfy workflows can still use procedural cards, while Command Center production requests real ComfyUI imagery by default and rejects a required-Comfy job if the configured image profile cannot be produced.
 
 Default Ollama model: `llama3.1:8b`.
 
@@ -63,6 +64,18 @@ batch_create_news_videos_windows.bat --self-test
 ```
 
 The self-test compiles Java, checks Python syntax, parses the PowerShell dashboard, validates fixture RSS ingestion, clustering, verification, duplicate behavior, script validation, TTS fallback state, dashboard events, output collision handling, and runs an offline end-to-end dry run.
+
+## Live video-quality acceptance
+
+After setup/self-test, the target Windows GPU machine can run:
+
+```bat
+live_acceptance_windows.bat
+```
+
+This is intentionally separate from CI because it exercises the real local Ollama, Kokoro, ComfyUI checkpoint, GPU residency, FFmpeg/NVENC path, three real news stories, and representative-frame extraction.
+
+See [Video quality overhaul and live acceptance](docs/VIDEO_QUALITY_OVERHAUL.md).
 
 ## Sources
 

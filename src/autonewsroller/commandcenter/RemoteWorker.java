@@ -64,7 +64,7 @@ public final class RemoteWorker {
             boolean controllerComfy=settings.containsKey("useComfy")?bool(settings.get("useComfy")):true;
             boolean useComfy=cfg.getBool("commandCenterUseComfy",true)||controllerComfy;
             boolean requireComfy=cfg.getBool("commandCenterRequireComfy",true)||(settings.containsKey("requireComfy")&&bool(settings.get("requireComfy")));
-            int comfyImages=settings.get("comfyImages") instanceof Number n?Math.max(1,n.intValue()):cfg.getInt("commandCenterComfyImages",3);
+            int comfyImages=settings.get("comfyImages") instanceof Number n?Math.max(1,n.intValue()):cfg.getInt("commandCenterComfyImages",7);
             boolean dryRun=bool(settings.get("dryRun"));
             System.out.println("Claimed job: "+currentTopic+" | comfy="+useComfy+" required="+requireComfy+" images="+comfyImages+" | encoder="+encoder);
             String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());

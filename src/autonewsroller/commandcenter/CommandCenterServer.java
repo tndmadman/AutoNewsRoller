@@ -141,7 +141,7 @@ public final class CommandCenterServer {
         settings.put("duration",cfg.duration());settings.put("encoder",cfg.get("videoEncoder","auto"));
         settings.put("useComfy",cfg.getBool("commandCenterUseComfy",true));
         settings.put("requireComfy",cfg.getBool("commandCenterRequireComfy",true));
-        settings.put("comfyImages",cfg.getInt("commandCenterComfyImages",3));
+        settings.put("comfyImages",cfg.getInt("commandCenterComfyImages",7));
         settings.put("dryRun",false);
         Map<String,Object>job=store.claim(worker,settings);
         if(job==null){x.sendResponseHeaders(204,-1);x.close();return;}

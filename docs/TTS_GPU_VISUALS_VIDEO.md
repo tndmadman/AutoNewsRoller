@@ -2,14 +2,20 @@
 
 ## Overview
 
-The media side of AutoNewsRoller was designed around a predictable fallback chain:
+The media side now uses a measured-duration, post-card production chain:
 
-    script
+    fact-grounded script
       -> Kokoro narration
-      -> Qwen3-TTS fallback if needed
-      -> procedural visual plan
-      -> optional ComfyUI enhancement
-      -> FFmpeg render
+      -> Qwen3-TTS only if Kokoro actually fails
+      -> ffprobe actual WAV duration
+      -> script/TTS revision when outside the 65-72s narration window
+      -> 7-9 story-scene plan
+      -> persistent ComfyUI SDXL generation
+      -> AWARE post/card composition
+      -> short ASS phrase captions
+      -> animated CFR scene clips
+      -> 2-3s source/context tail
+      -> FFmpeg final assembly
       -> ffprobe/FFmpeg audit
 
 The most important production rule is that logs and provenance should identify what actually happened, not only what was configured.
@@ -236,11 +242,11 @@ Default endpoint:
 
     http://127.0.0.1:8188
 
-ComfyUI is optional.
+ComfyUI remains optional for non-Command-Center/manual workflows.
 
-The pipeline always has procedural cards available.
+Command Center production requests ComfyUI by default and requires the configured image profile.
 
-When enabled, it attempts to replace one eligible non-headline/non-source visual with a generated image.
+The default profile requests seven unique SDXL illustrations, normally supporting 7-9 story cards. If a normal required-Comfy job cannot produce at least six unique images, the job is rejected instead of silently shipping a mostly procedural video.
 
 ## Checkpoint validation
 
@@ -257,7 +263,7 @@ Behavior:
 - if blank and comfyAutoPickCheckpoint=true, select the first discovered checkpoint;
 - otherwise fail the optional image attempt.
 
-The caller catches the failure and keeps procedural cards.
+A required-Comfy Command Center job treats checkpoint/generation failure as a real production failure. Optional workflows may still retain procedural fallback behavior.
 
 This prevents repeated blind submission of a nonexistent checkpoint.
 
@@ -282,11 +288,11 @@ KSampler defaults in code:
 - scheduler=karras;
 - denoise=1.0.
 
-The generated prompt adds:
+Each visual-plan beat now carries a detailed scene-specific prompt describing subject, action, plausible setting, composition, foreground/background, camera framing, realistic lighting, editorial mood, and safe central placement.
 
-    editorial news illustration, no text, no logos, vertical composition
+Prompts explicitly prohibit readable text, captions, logos, fake interfaces, giant metaphorical objects, and presenting generated imagery as authentic documentary evidence.
 
-Default negative prompt is configurable and includes text, watermark, logo, captions, low quality, distorted, and deformed.
+The default negative prompt also covers letters/words/subtitles, garbled signage, malformed hands, extra fingers/limbs, duplicated people, distorted faces, bad anatomy, unrelated objects, and low detail.
 
 ## Qwen/Comfy handoff
 
@@ -298,61 +304,73 @@ Before ComfyUI generation:
 
 This is meant to reduce the chance that a resident Qwen model plus an image checkpoint exhausts VRAM.
 
-After image retrieval, AutoNewsRoller attempts a ComfyUI /free request with unload_models and free_memory.
+After image retrieval, AutoNewsRoller deliberately keeps SDXL/CLIP/VAE resident.
 
-## Procedural cards
+The old normal-success /free call was the direct cause of repeated cold model loads and has been removed.
+
+The /free endpoint remains only in explicit CUDA OOM recovery, where the reason is logged and the failed image is retried once.
+
+## AWARE post/card scenes
 
 Class:
 
     src/autonewsroller/visuals/CardRenderer.java
 
-Procedural cards use Java2D.
+Generated SDXL images are no longer used as the entire 1080x1920 frame.
 
-Default final card canvas uses the final video width/height.
+CardRenderer composes:
 
-Cards contain:
+- AWARE branding;
+- concise auto-fit headline;
+- centered dominant image with generous margins;
+- rounded post/card treatment;
+- a dedicated caption area below the image;
+- compact source/context footer;
+- an AI ILLUSTRATION badge when the main image is generated.
 
-- dark background;
-- rounded content panel;
-- wrapped title;
-- wrapped body;
-- AutoNewsRoller plus visual type footer.
-
-The procedural path is important because it provides a deterministic fallback when ComfyUI is unavailable or inappropriate.
+The final source/context card is separate and normally lasts about 2.5 seconds.
 
 ## Visual planning
 
-VisualPlanner creates:
+VisualPlanner creates 7-9 POST_CARD story scenes from the final narration plus one short SOURCE_CARD tail.
 
-1. headline card;
-2. up to five segment-driven visual items;
-3. source card.
+Typical 68-72 second narration produces eight story scenes.
 
-Segment visual types come from the generated script but headline-card collisions are normalized to other visual types after the first card.
+Scene durations are weighted by the narration carried by each beat rather than rigidly identical.
 
-The source card lists up to four distinct publisher names.
+Each visual-plan item stores:
+
+- narration/body;
+- displayCaption;
+- positive image prompt;
+- negative prompt;
+- duration;
+- emphasis words;
+- transition;
+- source metadata.
 
 ## Caption generation
 
-CaptionWriter supports:
+CaptionWriter now emits ASS phrase captions.
 
-- off
-- sentence
-- word
+Default:
 
-For sentence mode, narration is split into sentences.
+    captions=phrase
+    captionFontSize=44
+    captionMaxWords=9
 
-For word mode, narration is split into words.
+Normal phrases are 4-9 words and at most two visual lines.
 
-Duration is distributed proportionally to each unit's word count.
+Captions sit in the reserved post-card caption zone below the main image rather than covering faces/subjects.
 
-This is an approximation.
+Restrained emphasis:
 
-Potential future order of preference:
+- neutral/light text by default;
+- cyan for a small number of entities;
+- amber for a small number of numbers/results;
+- no partisan red/blue ideological shorthand.
 
-1. exact TTS word timestamps;
-2. forced-alignment timestamps;
-3. proportional fallback.
+Timing is currently proportional to narration words. Kokoro timing.tsv remains available for a future exact-alignment upgrade.
 
 ## Video encoder probe
 
@@ -364,7 +382,7 @@ Auto mode does not trust the fact that FFmpeg merely lists h264_nvenc.
 
 It performs a real small encode test:
 
-- generated black 64x64 frame;
+- generated black 256x256 frame;
 - h264_nvenc;
 - temporary MP4;
 - verify nonempty output.
@@ -378,48 +396,35 @@ This avoids false positives where FFmpeg was built with NVENC support but the ru
 
 ## Final render
 
-VideoRenderer:
+VideoRenderer first converts each post-card scene into a deterministic CFR clip with restrained motion such as push-in, pan, or zoom-out.
 
-- probes WAV duration;
-- splits duration across visuals;
-- creates concat input;
-- generates SRT;
-- scales/pads to configured resolution;
-- outputs 30 FPS by default;
-- uses yuv420p;
-- burns subtitles when enabled;
-- uses -shortest;
-- AAC audio at 192k;
+Final assembly:
+
+- 1080x1920;
+- 30 fps;
+- -fps_mode cfr;
+- yuv420p;
+- ASS phrase captions;
+- H.264;
+- AAC 192k / 48 kHz;
 - +faststart.
 
-NVENC defaults:
+The story visual scenes span the measured narration duration. A short source/context scene extends the final video by about 2.5 seconds; audio is padded only for that natural ending tail.
 
-- h264_nvenc
-- preset p6
-- tune hq
-- vbr
-- cq 19
-- b:v 0
-
-x264 defaults:
-
-- libx264
-- preset medium
-- crf 19
+NVENC remains preferred after the real encode probe. If final NVENC encoding nevertheless fails, VideoRenderer retries final encoding with x264.
 
 ## Video audit
 
 VideoAudit checks:
 
-- MP4 exists;
-- MP4 size is at least nontrivial;
-- WAV exists;
-- WAV size is nontrivial;
-- volumedetect does not report mean_volume: -inf;
-- first video stream resolution matches configured width x height;
-- duration is positive.
+- MP4 and narration WAV exist and are nontrivial;
+- narration is non-silent;
+- resolution matches 1080x1920;
+- final playable duration is greater than 60 seconds;
+- average and nominal frame rates are both approximately 30 fps and match each other;
+- final audio/video stream durations are materially aligned.
 
-Only approved outputs are copied to final_videos.
+Audit/provenance also records narration words, measured narration duration, scene counts, unique Comfy image count, actual TTS engine, actual encoder, and measured FPS.
 
 ## What still needs live validation
 
@@ -464,3 +469,12 @@ The TTS stage likewise emits the actual path:
 - or `KOKORO FAILED: ...` followed by `QWEN3 FALLBACK USED voice=...`
 
 The final MP4 sidecar remains authoritative and the Command Center copies these values into the persistent story/video state so the website displays the engine, voice, visual mode, checkpoint, and ComfyUI image count after completion.
+
+
+## Detailed quality-upgrade reference
+
+See:
+
+    docs/VIDEO_QUALITY_OVERHAUL.md
+
+for the complete duration loop, scene model, post-card design, Comfy residency behavior, and live acceptance procedure.

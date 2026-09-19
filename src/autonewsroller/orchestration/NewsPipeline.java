@@ -122,20 +122,88 @@ public final class NewsPipeline {
     }
 
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean dryRun)throws Exception{
-        return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,false,1,dryRun);
+        int images=cfg.getInt("commandCenterComfyImages",7);
+        return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,useComfy,images,dryRun);
     }
 
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,boolean dryRun)throws Exception{
-        Files.createDirectories(slotDir);StoryCluster c=cand.cluster();FactPackage fp=cand.factPackage();logs.worker(worker,"slot="+slot+" story="+c.topic+" started");events.emit(worker,slot,PipelineStage.VERIFY,fp.independentSourceCount()+" independent sources");
-        Json.write(slotDir.resolve("story.json"),c.toMap());Path articleDir=slotDir.resolve("articles");Files.createDirectories(articleDir);int articleIndex=0;for(Article a:c.articles)Json.write(articleDir.resolve(String.format("%02d.json",articleIndex++)),a.toMap());Json.write(slotDir.resolve("fact_package.json"),fp.toMap());
-        OllamaClient oc=dryRun?null:new OllamaClient(cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate"),cfg.get("ollamaModel","llama3.1:8b"),cfg.get("ollamaKeepAlive","30m"),root.resolve("output/runtime/ollama.lock"));NewsScript script=new NewsScriptGenerator(oc,cfg.getInt("ollamaRetries",3)).generate(fp,targetSeconds,dryRun);Json.write(slotDir.resolve("script.json"),script.toMap());events.emit(worker,slot,PipelineStage.SCRIPT,"script ready");
-        VisualPlan plan=new VisualPlanner().plan(script,fp);Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
-        if(dryRun){Map<String,Object>audit=new LinkedHashMap<>();audit.put("status","approved-dry-run");audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());Json.write(slotDir.resolve("audit.json"),audit);events.emit(worker,slot,PipelineStage.APPROVED,"dry-run complete");logs.worker(worker,"slot="+slot+" dry-run approved");return slotDir.resolve("script.json");}
+        Files.createDirectories(slotDir);
+        Candidate prepared=enrichForProduction(cand);
+        StoryCluster c=prepared.cluster();
+        FactPackage fp=prepared.factPackage();
+        int effectiveTarget=Math.max(68,Math.min(75,targetSeconds));
+        double minAudio=cfg.getDouble("videoTargetAudioMinSeconds",65);
+        double maxAudio=cfg.getDouble("videoTargetAudioMaxSeconds",72);
+        double sourceTail=cfg.getDouble("videoSourceTailSeconds",2.5);
+        int minScenes=cfg.getInt("videoMinStoryScenes",7),maxScenes=cfg.getInt("videoMaxStoryScenes",9);
 
-        Path visuals=slotDir.resolve("visuals");List<Path>imgs=new ArrayList<>();List<Map<String,Object>>imageSources=new ArrayList<>();CardRenderer cards=new CardRenderer();int i=0;
-        for(VisualPlan.Item item:plan.items()){Path p=visuals.resolve(String.format("%02d_%s.png",i++,item.type().toLowerCase(Locale.ROOT)));cards.render(item,p,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));imgs.add(p);imageSources.add(Map.of("type","procedural-card","path",p.toString(),"visualType",item.type()));}
+        logs.worker(worker,"slot="+slot+" story="+c.topic+" started");
+        events.emit(worker,slot,PipelineStage.VERIFY,fp.independentSourceCount()+" independent sources");
+        Json.write(slotDir.resolve("story.json"),c.toMap());
+        Path articleDir=slotDir.resolve("articles");Files.createDirectories(articleDir);
+        int articleIndex=0;for(Article a:c.articles)Json.write(articleDir.resolve(String.format("%02d.json",articleIndex++)),a.toMap());
+        Json.write(slotDir.resolve("fact_package.json"),fp.toMap());
+
+        OllamaClient oc=dryRun?null:new OllamaClient(
+                cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate"),
+                cfg.get("ollamaModel","llama3.1:8b"),
+                cfg.get("ollamaKeepAlive","30m"),
+                root.resolve("output/runtime/ollama.lock")
+        );
+        NewsScriptGenerator generator=new NewsScriptGenerator(oc,cfg.getInt("ollamaRetries",3));
+        NewsScript script=generator.generate(fp,effectiveTarget,dryRun);
+        System.out.println("[Story] Narration words: "+Text.words(script.narration()));
+        events.emit(worker,slot,PipelineStage.SCRIPT,"script ready; words="+Text.words(script.narration()));
+
+        if(dryRun){
+            VisualPlan dryPlan=new VisualPlanner().plan(script,fp,effectiveTarget,sourceTail,minScenes,maxScenes);
+            Json.write(slotDir.resolve("script.json"),script.toMap());
+            Json.write(slotDir.resolve("visual_plan.json"),dryPlan.toMap());
+            Map<String,Object>audit=new LinkedHashMap<>();audit.put("status","approved-dry-run");audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("plannedScenes",dryPlan.items().size());
+            Json.write(slotDir.resolve("audit.json"),audit);events.emit(worker,slot,PipelineStage.APPROVED,"dry-run complete");logs.worker(worker,"slot="+slot+" dry-run approved");return slotDir.resolve("script.json");
+        }
+
+        VideoRenderer renderer=new VideoRenderer(
+                cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),
+                cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30)
+        );
+
+        Path wav=slotDir.resolve("narration/narration.wav");
+        NarrationResult nr=null;
+        double audioDuration=0;
+        int durationAttempts=Math.max(1,cfg.getInt("narrationDurationRetries",3));
+        for(int attempt=1;attempt<=durationAttempts;attempt++){
+            nr=synthesizeNarration(c,script,worker,slot,wav);
+            audioDuration=renderer.probeDuration(nr.wav());
+            System.out.printf(Locale.US,"[TTS] Audio duration: %.2f sec (attempt %d/%d)%n",audioDuration,attempt,durationAttempts);
+            logs.worker(worker,String.format(Locale.US,"slot=%d TTS audio duration %.2f sec attempt=%d",slot,audioDuration,attempt));
+            events.emit(worker,slot,PipelineStage.TTS,String.format(Locale.US,"audio %.2fs",audioDuration));
+
+            if(audioDuration>=minAudio&&audioDuration<=maxAudio)break;
+            if(attempt>=durationAttempts)break;
+            String reason=audioDuration<minAudio?"too short":"too long";
+            System.out.printf(Locale.US,"[Story] Narration audio %s (%.2fs); regenerating toward %d sec%n",reason,audioDuration,effectiveTarget);
+            script=generator.regenerateForMeasuredDuration(fp,effectiveTarget,script,audioDuration);
+            System.out.println("[Story] Revised narration words: "+Text.words(script.narration()));
+        }
+        if(audioDuration<minAudio)throw new IllegalStateException(String.format(Locale.US,"narration remains too short after retries: %.2f sec; need >= %.2f",audioDuration,minAudio));
+        if(audioDuration>maxAudio)throw new IllegalStateException(String.format(Locale.US,"narration remains too long after retries: %.2f sec; need <= %.2f",audioDuration,maxAudio));
+
+        Json.write(slotDir.resolve("script.json"),script.toMap());
+        VisualPlan plan=new VisualPlanner().plan(script,fp,audioDuration,sourceTail,minScenes,maxScenes);
+        Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
+        long storySceneCount=plan.items().stream().filter(x->!"SOURCE_CARD".equals(x.type())).count();
+        System.out.println("[Scenes] Planned "+storySceneCount+" story scenes + "+(plan.items().size()-storySceneCount)+" source tail scene");
+        logs.worker(worker,"slot="+slot+" scenes="+plan.items().size());
+
+        Path visuals=slotDir.resolve("visuals");
+        Path generatedDir=visuals.resolve("generated");Files.createDirectories(generatedDir);
+        Path cardsDir=visuals.resolve("cards");Files.createDirectories(cardsDir);
+        Map<Integer,Path>generatedByScene=new LinkedHashMap<>();
+        List<Map<String,Object>>imageSources=new ArrayList<>();
         String usedCheckpoint="";
         int comfyGenerated=0;
+
         if(requireComfy&&!useComfy)throw new IllegalStateException("ComfyUI is required for this job but useComfy=false");
         if(useComfy){
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI CHECK starting");
@@ -148,62 +216,130 @@ public final class NewsPipeline {
                 if(!configured.isBlank()){
                     usedCheckpoint=available.stream().filter(x->checkpointMatches(x,configured)).findFirst().orElse("");
                     if(usedCheckpoint.isBlank())throw new IllegalStateException("configured checkpoint is unavailable: "+configured+"; available="+available);
-                }else if(cfg.getBool("comfyAutoPickCheckpoint",true)&&!available.isEmpty()){
-                    usedCheckpoint=available.get(0);
-                }else throw new IllegalStateException("no imageCheckpoint configured and ComfyUI returned no usable checkpoints");
+                }else if(cfg.getBool("comfyAutoPickCheckpoint",true)&&!available.isEmpty())usedCheckpoint=available.get(0);
+                else throw new IllegalStateException("no imageCheckpoint configured and ComfyUI returned no usable checkpoints");
 
-                int limit=Math.max(1,maxComfyImages);
                 List<Integer>eligible=new ArrayList<>();
-                for(int n=0;n<plan.items().size();n++){
-                    VisualPlan.Item item=plan.items().get(n);
-                    if(item.type().equals("HEADLINE_CARD")||item.type().equals("SOURCE_CARD"))continue;
-                    eligible.add(n);
-                }
-
-                if(eligible.isEmpty()){
-                    throw new IllegalStateException("visual plan contained no replaceable story visuals");
-                }
-
-                for(int replace:eligible){
-                    if(comfyGenerated>=limit)break;
-                    VisualPlan.Item chosen=plan.items().get(replace);
-                    String basePrompt=chosen.prompt()==null||chosen.prompt().isBlank()
-                            ? (chosen.title()+". "+chosen.body())
-                            : chosen.prompt();
-                    String prompt=(basePrompt+", editorial news illustration, realistic documentary style, no text, no logos, vertical composition").replaceAll("\\s+"," ").trim();
-                    Path generated=visuals.resolve(String.format("%02d_comfy_generated_%02d.png",replace,comfyGenerated+1));
-                    String generating="COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" checkpoint="+usedCheckpoint;
+                for(int n=0;n<plan.items().size();n++)if(!"SOURCE_CARD".equals(plan.items().get(n).type()))eligible.add(n);
+                int limit=Math.min(Math.max(1,maxComfyImages),eligible.size());
+                System.out.println("[Images] Need "+limit+" unique SDXL renders for "+eligible.size()+" story scenes");
+                for(int k=0;k<limit;k++){
+                    int sceneIndex=(int)Math.floor(k*eligible.size()/(double)limit);
+                    sceneIndex=eligible.get(Math.min(sceneIndex,eligible.size()-1));
+                    VisualPlan.Item chosen=plan.items().get(sceneIndex);
+                    String prompt=chosen.prompt();
+                    String negative=Text.clean(chosen.negativePrompt()+", "+cfg.get("imageNegative",""));
+                    Path generated=generatedDir.resolve(String.format("%02d_scene_%02d.png",k+1,sceneIndex+1));
+                    String generating="[ComfyUI] Submitting scene "+(sceneIndex+1)+"/"+eligible.size()+" unique="+(k+1)+"/"+limit;
                     System.out.println(generating);events.emit(worker,slot,PipelineStage.VISUALS,generating);
-                    comfy.generate(prompt,cfg.get("imageNegative","text, watermark, logo, captions, low quality, distorted"),usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",24),Double.parseDouble(cfg.get("imageCfg","5.0")));
-                    imgs.set(replace,generated);
-                    imageSources.set(replace,Map.of("type","comfyui-generated","path",generated.toString(),"checkpoint",usedCheckpoint,"prompt",prompt));
+                    comfy.generate(prompt,negative,usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",28),cfg.getDouble("imageCfg",5.5));
+                    generatedByScene.put(sceneIndex,generated);
+                    Map<String,Object>src=new LinkedHashMap<>();src.put("type","comfyui-generated");src.put("sceneIndex",sceneIndex);src.put("path",generated.toString());src.put("checkpoint",usedCheckpoint);src.put("prompt",prompt);src.put("negativePrompt",negative);imageSources.add(src);
                     comfyGenerated++;
-                    String comfyUsed="COMFYUI USED checkpoint="+usedCheckpoint+" image="+generated.getFileName()+" count="+comfyGenerated;
-                    System.out.println(comfyUsed);events.emit(worker,slot,PipelineStage.VISUALS,comfyUsed);
-                    logs.worker(worker,"slot="+slot+" "+comfyUsed);
                 }
-
-                if(comfyGenerated==0)throw new IllegalStateException("ComfyUI produced zero images");
+                int minimumUnique=Math.min(6,eligible.size());
+                if(requireComfy&&comfyGenerated<minimumUnique)throw new IllegalStateException("ComfyUI produced only "+comfyGenerated+" unique images; need at least "+minimumUnique);
             }catch(Exception e){
-                String msg="COMFYUI FAILED: "+e.getMessage();
-                System.err.println(msg);
-                logs.worker(worker,"slot="+slot+" "+msg);
-                events.emit(worker,slot,PipelineStage.VISUALS,msg);
-                usedCheckpoint="";
+                String msg="COMFYUI FAILED: "+e.getMessage();System.err.println(msg);logs.worker(worker,"slot="+slot+" "+msg);events.emit(worker,slot,PipelineStage.VISUALS,msg);usedCheckpoint="";
                 if(requireComfy)throw new IllegalStateException(msg,e);
             }
-        }else{
-            events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI DISABLED for this job");
+        }else events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI DISABLED for this job");
+
+        List<Path>uniqueGenerated=new ArrayList<>(generatedByScene.values());
+        CardRenderer cards=new CardRenderer();
+        List<VideoRenderer.Scene>renderScenes=new ArrayList<>();
+        int storyOrdinal=0;
+        for(int i=0;i<plan.items().size();i++){
+            VisualPlan.Item item=plan.items().get(i);
+            Path frame=cardsDir.resolve(String.format("%02d_%s.png",i+1,item.type().toLowerCase(Locale.ROOT)));
+            if("SOURCE_CARD".equals(item.type())){
+                cards.renderSourceCard(item,frame,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+            }else{
+                Path raw=generatedByScene.get(i);
+                boolean reused=false;
+                if(raw==null&&!uniqueGenerated.isEmpty()){
+                    raw=uniqueGenerated.get(Math.min(storyOrdinal,uniqueGenerated.size()-1)%uniqueGenerated.size());
+                    reused=true;
+                }
+                cards.renderPost(item,raw,frame,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),raw!=null);
+                if(raw==null){
+                    Map<String,Object>src=new LinkedHashMap<>();src.put("type","procedural-card");src.put("sceneIndex",i);src.put("path",frame.toString());imageSources.add(src);
+                }else if(reused){
+                    Map<String,Object>src=new LinkedHashMap<>();src.put("type","reused-comfy");src.put("sceneIndex",i);src.put("path",raw.toString());imageSources.add(src);
+                }
+                storyOrdinal++;
+            }
+            renderScenes.add(new VideoRenderer.Scene(frame,item.duration(),item.transition()));
         }
 
-        List<String>kv=cfg.csv("kokoroVoices","af_heart");List<String>qv=cfg.csv("qwenVoices","Ryan");String kVoice=kv.get(Math.floorMod(c.id.hashCode(),kv.size()));String qVoice=qv.get(Math.floorMod(c.id.hashCode(),qv.size()));Path wav=slotDir.resolve("narration/narration.wav");NarrationEngine primary=new KokoroNarrator(root);NarrationEngine fallback=new QwenNarrator(root,cfg.get("qwenUrl","http://127.0.0.1:8765"));events.emit(worker,slot,PipelineStage.TTS,"KOKORO active");NarrationResult nr;
-        try{nr=primary.narrate(script.narration(),kVoice,wav);String used="KOKORO USED voice="+kVoice;System.out.println(used);events.emit(worker,slot,PipelineStage.TTS,used);logs.worker(worker,"slot="+slot+" TTS engine used: Kokoro voice="+kVoice);}catch(Exception e){String fail="KOKORO FAILED: "+e.getMessage();System.err.println(fail);logs.worker(worker,"slot="+slot+" "+fail);events.emit(worker,slot,PipelineStage.TTS,fail);events.emit(worker,slot,PipelineStage.TTS,"QWEN3 FALLBACK active");nr=fallback.narrate(script.narration(),qVoice,wav);String used="QWEN3 FALLBACK USED voice="+qVoice;System.out.println(used);events.emit(worker,slot,PipelineStage.TTS,used);logs.worker(worker,"slot="+slot+" TTS engine used: Qwen3 fallback voice="+qVoice);}
+        Path render=slotDir.resolve("render/video.mp4");
+        events.emit(worker,slot,PipelineStage.RENDER,"building post-card scenes");
+        VideoRenderer.RenderResult rr=renderer.renderScenes(
+                renderScenes,nr.wav(),render,encoder,cfg.get("captions","phrase"),script.narration(),
+                cfg.getInt("captionFontSize",44),cfg.getInt("captionMaxWords",9)
+        );
 
-        Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));VideoRenderer.RenderResult rr=renderer.render(imgs,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration());
-        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);Json.write(slotDir.resolve("audit.json"),audit);
+        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+        audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());
+        audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);
+        audit.put("narrationWords",Text.words(script.narration()));audit.put("narrationAudioDuration",audioDuration);audit.put("storyScenes",storySceneCount);audit.put("totalScenes",plan.items().size());audit.put("uniqueComfyImages",comfyGenerated);audit.put("averageFps",rr.averageFps());
+        Json.write(slotDir.resolve("audit.json"),audit);
+
         Path finalDir=slotDir.getParent().resolve("final_videos");Path finalVideo=FileNames.unique(finalDir,c.topic,".mp4");Files.createDirectories(finalDir);Files.copy(render,finalVideo,StandardCopyOption.REPLACE_EXISTING);
-        Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
-        history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
+        Map<String,Object>prov=new LinkedHashMap<>();
+        prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("visualPlan",plan.toMap());prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());
+        prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));
+        prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("narrationWords",Text.words(script.narration()));prov.put("narrationAudioDuration",audioDuration);
+        prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);
+        prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("finalDuration",rr.finalDuration());prov.put("averageFps",rr.averageFps());prov.put("cfrTarget",cfg.getInt("videoFps",30));
+        prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());
+        Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
+
+        history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);
+        events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());
+        logs.worker(worker,String.format(Locale.US,"slot=%d approved output=%s duration=%.2f fps=%.3f scenes=%d uniqueImages=%d",slot,finalVideo,rr.finalDuration(),rr.averageFps(),plan.items().size(),comfyGenerated));
+        return finalVideo;
+    }
+
+    private Candidate enrichForProduction(Candidate cand){
+        if(!cfg.getBool("productionEnrichmentEnabled",true))return cand;
+        StoryCluster c=cand.cluster();List<Article>enriched=new ArrayList<>();boolean changed=false;
+        for(Article a:c.articles){
+            Article current=a;
+            if((a.bodyText()==null||a.bodyText().length()<600)&&a.url()!=null&&a.url().startsWith("http")){
+                try{
+                    String html=new ArticleFetcher(cfg.getInt("articleFetchTimeout",30),cfg.get("userAgent","AutoNewsRoller/0.1")).fetch(a.url());
+                    String body=ArticleParser.extractText(html);
+                    if(body.length()>=200){
+                        current=new Article(a.id(),a.publisher(),a.title(),a.url(),a.canonicalUrl(),a.publishedAt(),a.discoveredAt(),a.author(),a.category(),a.description(),body,a.language(),a.sourceTrustTier(),a.authoritativePrimary());
+                        changed=true;logs.debug("Production enrichment added "+body.length()+" chars from "+a.publisher());
+                    }
+                }catch(Exception e){logs.debug("Production enrichment failed url="+a.url()+" reason="+e.getMessage());}
+            }
+            enriched.add(current);
+        }
+        if(!changed)return cand;
+        StoryCluster ec=new StoryCluster(c.id,c.topic,enriched,c.entities,c.fingerprint);
+        FactPackage fp=new SourceVerifier().verify(ec,cfg.minimumIndependentSources()).factPackage();
+        logs.debug("Production fact package expanded to "+fp.facts().size()+" facts");
+        return new Candidate(ec,fp,cand.score());
+    }
+
+    private NarrationResult synthesizeNarration(StoryCluster c,NewsScript script,int worker,int slot,Path wav)throws Exception{
+        Files.deleteIfExists(wav);
+        List<String>kv=cfg.csv("kokoroVoices","af_heart");List<String>qv=cfg.csv("qwenVoices","Ryan");
+        String kVoice=kv.get(Math.floorMod(c.id.hashCode(),kv.size()));String qVoice=qv.get(Math.floorMod(c.id.hashCode(),qv.size()));
+        NarrationEngine primary=new KokoroNarrator(root),fallback=new QwenNarrator(root,cfg.get("qwenUrl","http://127.0.0.1:8765"));
+        events.emit(worker,slot,PipelineStage.TTS,"KOKORO active");
+        try{
+            NarrationResult nr=primary.narrate(script.narration(),kVoice,wav);
+            String used="KOKORO USED voice="+kVoice;System.out.println("[TTS] Engine actually used: Kokoro voice="+kVoice);events.emit(worker,slot,PipelineStage.TTS,used);logs.worker(worker,"slot="+slot+" TTS engine used: Kokoro voice="+kVoice);return nr;
+        }catch(Exception e){
+            String fail="KOKORO FAILED: "+e.getMessage();System.err.println(fail);logs.worker(worker,"slot="+slot+" "+fail);events.emit(worker,slot,PipelineStage.TTS,fail);
+            events.emit(worker,slot,PipelineStage.TTS,"QWEN3 FALLBACK active");
+            NarrationResult nr=fallback.narrate(script.narration(),qVoice,wav);
+            String used="QWEN3 FALLBACK USED voice="+qVoice;System.out.println("[TTS] Engine actually used: Qwen3 fallback voice="+qVoice);events.emit(worker,slot,PipelineStage.TTS,used);logs.worker(worker,"slot="+slot+" TTS engine used: Qwen3 fallback voice="+qVoice);return nr;
+        }
     }
 
     public void rejected(int worker,int slot,String detail){events.emit(worker,slot,PipelineStage.REJECTED,detail);logs.worker(worker,"slot="+slot+" rejected "+detail);}
