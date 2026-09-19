@@ -31,7 +31,17 @@ public final class CommandCenterServer {
     public CommandCenterServer(Path root,NewsConfig cfg,String host,int port,int scanMinutes,boolean autoQueue,double autoThreshold,int maxQueued,String token,boolean scanOnStart){
         this.root=root;this.cfg=cfg;this.host=host;this.requestedPort=port;this.scanMinutes=Math.max(1,scanMinutes);this.token=token==null?"":token.trim();this.scanOnStart=scanOnStart;
         BiasRegistry bias=BiasRegistry.load(root.resolve("config/source_bias.json"));
-        this.store=new CommandCenterStore(root.resolve("data/command_center_state.json"),bias,autoQueue,autoThreshold,maxQueued,this::broadcast,cfg.getInt("commandCenterJobLeaseSeconds",75));
+        this.store=new CommandCenterStore(
+                root.resolve("data/command_center_state.json"),
+                bias,
+                autoQueue,
+                autoThreshold,
+                maxQueued,
+                this::broadcast,
+                cfg.getInt("commandCenterJobLeaseSeconds",75),
+                cfg.getDouble("commandCenterSoftWorthThreshold",0.74),
+                cfg.getDouble("commandCenterSingleSourceAutoQueueThreshold",0.82)
+        );
     }
 
     public int start() throws Exception {
