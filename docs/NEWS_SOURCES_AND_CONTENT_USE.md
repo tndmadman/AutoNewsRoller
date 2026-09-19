@@ -10,19 +10,13 @@ Publisher terms, API terms, feed terms, copyright status, robots policies, and p
 
 ## Where news currently comes from
 
-The default source list is config/sources.json.
+The default source list is `config/sources.json`.
 
-Current enabled feeds:
+The current pack contains **88 enabled RSS feeds** across 21 publisher/source groups, including BBC News, The Guardian, CBS News, Fox News, ABC News, NPR, The New York Times, Global News, NASA, ScienceDaily, Ars Technica, TechCrunch, The Verge, WIRED, Engadget, Phys.org, Space.com, Tom's Hardware, ESPN, CNBC, and MarketWatch.
 
-- BBC World
-- The Guardian World
-- The Guardian Technology
-- Ars Technica
-- NASA JPL News
+Many publishers contribute several section feeds. Those feeds intentionally share the same publisher `name`, so one publisher appearing in several sections cannot satisfy the two-independent-publisher verification rule by itself.
 
-The current system is not a general web search engine.
-
-It does not currently query Google News, Bing News, Reddit, X, AP, Reuters, CNN, Fox, or a commercial news API unless such a source is added/configured and supported by the ingestion layer.
+The current system is still RSS/Atom discovery, not a general web search engine. It does not use Google News, Bing News, Reddit, X, AP, Reuters, or a commercial news-search API by default.
 
 ## How it pulls news
 
@@ -83,29 +77,13 @@ For a legitimate feed aggregator, being identifiable and rate-conscious is prefe
 
 ## When it fetches the actual article page
 
-The linked webpage is fetched when:
+By default, it **does not**.
 
-- this is normal live discovery, not dry-run behavior; and
-- the feed description is shorter than approximately 120 characters.
+`articleEnrichmentEnabled=false` keeps the expanded source scan RSS-only. This matters because 88 feeds can expose hundreds of recent entries per cycle, and automatically crawling every linked article would create unnecessary traffic.
 
-The reason is to enrich feed entries that provide too little text.
+Linked article extraction remains available as an optional feature. If it is explicitly enabled, AutoNewsRoller only attempts enrichment for short feed descriptions.
 
-This article-page request is different from fetching RSS.
-
-A normal article page may have:
-
-- site-specific Terms of Service;
-- robots directives;
-- anti-bot systems;
-- paywalls;
-- JavaScript challenges;
-- rate limits;
-- licensing restrictions.
-
-Therefore:
-
-- feed polling is normal aggregator behavior;
-- linked-page retrieval is web crawling/scraping and should be treated more carefully.
+RSS/Atom polling and linked-page crawling are separate behaviors. Feed polling is the normal default; article-page crawling should be enabled only when needed and should eventually receive stronger per-domain throttling/caching.
 
 ## Does it look like a bot?
 
@@ -133,7 +111,9 @@ Implemented:
 - bounded attempts;
 - short backoff;
 - feed failures are skipped instead of hammered forever;
-- article extraction only happens when the feed summary is short.
+- article-page enrichment is disabled by default;
+- overlapping section feeds are deduplicated by article ID before clustering;
+- feed timeout and retry count are bounded for large scans.
 
 Not yet implemented as a shared system-wide policy:
 
