@@ -39,7 +39,10 @@ public final class SelfTest {
 
     private void testSourceConfig(Path root)throws Exception{
         List<SourceConfig>s=FeedRegistry.load(root.resolve("config/sources.json"));
-        ok(s.size()>=2&&s.stream().allMatch(x->x.url()!=null&&!x.url().isBlank()),"source configuration parsing");
+        ok(s.size()>=80&&s.stream().allMatch(x->x.url()!=null&&!x.url().isBlank()),"expanded source configuration parsing");
+        Set<String>urls=new HashSet<>();
+        boolean unique=s.stream().allMatch(x->urls.add(x.url()));
+        ok(unique,"expanded source URLs are unique");
     }
 
     private void ok(boolean v,String n){
