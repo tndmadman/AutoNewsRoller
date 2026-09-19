@@ -154,7 +154,13 @@ public final class CommandCenterStore {
 
     public synchronized void progress(String jobId,WorkerState state){
         Map<String,Object>m=stories.get(jobId);if(m==null)return;
-        m.put("stage",state.stage().name());m.put("detail",state.detail());m.put("progress",stageProgress(state.stage().name()));m.put("updatedAt",Instant.now().toString());
+        String detail=state.detail()==null?"":state.detail();
+        m.put("stage",state.stage().name());m.put("detail",detail);m.put("progress",Math.max(number(m.get("progress")),stageProgress(state.stage().name())));m.put("updatedAt",Instant.now().toString());
+        if(detail.startsWith("KOKORO USED")){m.put("ttsEngine","Kokoro");m.put("ttsVoice",valueAfter(detail,"voice="));}
+        else if(detail.startsWith("QWEN3 FALLBACK USED")){m.put("ttsEngine","Qwen3 fallback");m.put("ttsVoice",valueAfter(detail,"voice="));}
+        else if(detail.startsWith("KOKORO FAILED"))m.put("kokoroFailure",detail);
+        if(detail.startsWith("COMFYUI USED")){m.put("visualMode","ComfyUI + procedural cards");m.put("comfyCheckpoint",valueAfter(detail,"checkpoint="," image="));}
+        else if(detail.startsWith("COMFYUI FALLBACK")||detail.startsWith("COMFYUI SKIPPED")){m.put("visualMode","Procedural cards");m.put("comfyStatus",detail);}
         emit("story",publicStory(m));
     }
 
@@ -169,7 +175,27 @@ public final class CommandCenterStore {
 
     public synchronized void complete(String jobId,Map<String,Object>metadata){
         Map<String,Object>m=requireStory(jobId);m.put("status","COMPLETE");m.put("stage","COMPLETE");m.put("progress",100);m.put("completedAt",Instant.now().toString());m.put("result",new LinkedHashMap<>(metadata));m.remove("error");
-        Map<String,Object>v=new LinkedHashMap<>();v.put("jobId",jobId);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("metadata",new LinkedHashMap<>(metadata));videos.put(jobId,v);
+        Object sidecarObj=metadata.get("sidecar");
+        if(sidecarObj instanceof Map<?,?>){
+            Map<String,Object>sidecar=Json.object(sidecarObj);
+            m.put("ttsEngine",String.valueOf(sidecar.getOrDefault("ttsEngineActuallyUsed",m.getOrDefault("ttsEngine","unknown"))));
+            m.put("ttsVoice",String.valueOf(sidecar.getOrDefault("voice",m.getOrDefault("ttsVoice",""))));
+            String checkpoint=String.valueOf(sidecar.getOrDefault("comfyCheckpoint",""));
+            if(!checkpoint.isBlank()&&!checkpoint.equals("null"))m.put("comfyCheckpoint",checkpoint);
+            int comfyImages=0,proceduralImages=0;
+            Object images=sidecar.get("imageSources");
+            if(images instanceof List<?>list){
+                for(Object image:list){
+                    if(!(image instanceof Map<?,?>))continue;
+                    String type=String.valueOf(Json.object(image).getOrDefault("type",""));
+                    if("comfyui-generated".equals(type))comfyImages++;
+                    if("procedural-card".equals(type))proceduralImages++;
+                }
+            }
+            m.put("comfyImages",comfyImages);m.put("proceduralImages",proceduralImages);
+            m.put("visualMode",comfyImages>0?"ComfyUI + procedural cards":"Procedural cards");
+        }
+        Map<String,Object>v=new LinkedHashMap<>();v.put("jobId",jobId);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));videos.put(jobId,v);
         persistQuiet();emit("story",publicStory(m));emit("video",publicCopy(v));
     }
 
@@ -202,6 +228,8 @@ public final class CommandCenterStore {
     private static boolean terminalOrManual(String s){return Set.of("HOLD","SKIPPED","QUEUED","PRODUCING","COMPLETE","COMPLETE_HISTORY","FAILED").contains(s);}
     private static int stageProgress(String s){return switch(s){case "VERIFY"->20;case "SCRIPT"->34;case "TTS"->52;case "VISUALS"->68;case "RENDER"->84;case "AUDIT"->96;case "APPROVED"->99;case "REJECTED"->0;default->25;};}
     private static double number(Object x){return x instanceof Number n?n.doubleValue():0;}
+    private static String valueAfter(String text,String marker){int i=text.indexOf(marker);return i<0?"":text.substring(i+marker.length()).trim();}
+    private static String valueAfter(String text,String marker,String until){int i=text.indexOf(marker);if(i<0)return "";String tail=text.substring(i+marker.length());int j=tail.indexOf(until);return (j<0?tail:tail.substring(0,j)).trim();}
     private static String safe(String x){return x==null?"":x.length()>1000?x.substring(0,1000):x;}
     private static boolean isOnline(Map<String,Object>x){try{return Duration.between(Instant.parse(String.valueOf(x.get("lastSeen"))),Instant.now()).toSeconds()<45;}catch(Exception e){return false;}}
     private Map<String,Object>publicStory(Map<String,Object>m){Map<String,Object>x=deepCopyMap(m);x.remove("candidate");return x;}
