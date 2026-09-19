@@ -136,6 +136,7 @@ public final class NewsPipeline {
         for(VisualPlan.Item item:plan.items()){Path p=visuals.resolve(String.format("%02d_%s.png",i++,item.type().toLowerCase(Locale.ROOT)));cards.render(item,p,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));imgs.add(p);imageSources.add(Map.of("type","procedural-card","path",p.toString(),"visualType",item.type()));}
         String usedCheckpoint="";
         int comfyGenerated=0;
+        if(requireComfy&&!useComfy)throw new IllegalStateException("ComfyUI is required for this job but useComfy=false");
         if(useComfy){
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI CHECK starting");
             ComfyImageGenerator comfy=new ComfyImageGenerator(root,cfg.get("comfyUrl","http://127.0.0.1:8188"),cfg.get("qwenUrl","http://127.0.0.1:8765"));
@@ -170,13 +171,14 @@ public final class NewsPipeline {
                             : chosen.prompt();
                     String prompt=(basePrompt+", editorial news illustration, realistic documentary style, no text, no logos, vertical composition").replaceAll("\\s+"," ").trim();
                     Path generated=visuals.resolve(String.format("%02d_comfy_generated_%02d.png",replace,comfyGenerated+1));
-                    events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" checkpoint="+usedCheckpoint);
+                    String generating="COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" checkpoint="+usedCheckpoint;
+                    System.out.println(generating);events.emit(worker,slot,PipelineStage.VISUALS,generating);
                     comfy.generate(prompt,cfg.get("imageNegative","text, watermark, logo, captions, low quality, distorted"),usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",24),Double.parseDouble(cfg.get("imageCfg","5.0")));
                     imgs.set(replace,generated);
                     imageSources.set(replace,Map.of("type","comfyui-generated","path",generated.toString(),"checkpoint",usedCheckpoint,"prompt",prompt));
                     comfyGenerated++;
                     String comfyUsed="COMFYUI USED checkpoint="+usedCheckpoint+" image="+generated.getFileName()+" count="+comfyGenerated;
-                    events.emit(worker,slot,PipelineStage.VISUALS,comfyUsed);
+                    System.out.println(comfyUsed);events.emit(worker,slot,PipelineStage.VISUALS,comfyUsed);
                     logs.worker(worker,"slot="+slot+" "+comfyUsed);
                 }
 
@@ -194,7 +196,7 @@ public final class NewsPipeline {
         }
 
         List<String>kv=cfg.csv("kokoroVoices","af_heart");List<String>qv=cfg.csv("qwenVoices","Ryan");String kVoice=kv.get(Math.floorMod(c.id.hashCode(),kv.size()));String qVoice=qv.get(Math.floorMod(c.id.hashCode(),qv.size()));Path wav=slotDir.resolve("narration/narration.wav");NarrationEngine primary=new KokoroNarrator(root);NarrationEngine fallback=new QwenNarrator(root,cfg.get("qwenUrl","http://127.0.0.1:8765"));events.emit(worker,slot,PipelineStage.TTS,"KOKORO active");NarrationResult nr;
-        try{nr=primary.narrate(script.narration(),kVoice,wav);events.emit(worker,slot,PipelineStage.TTS,"KOKORO USED voice="+kVoice);logs.worker(worker,"slot="+slot+" TTS engine used: Kokoro voice="+kVoice);}catch(Exception e){String fail="KOKORO FAILED: "+e.getMessage();System.err.println(fail);logs.worker(worker,"slot="+slot+" "+fail);events.emit(worker,slot,PipelineStage.TTS,fail);events.emit(worker,slot,PipelineStage.TTS,"QWEN3 FALLBACK active");nr=fallback.narrate(script.narration(),qVoice,wav);events.emit(worker,slot,PipelineStage.TTS,"QWEN3 FALLBACK USED voice="+qVoice);logs.worker(worker,"slot="+slot+" TTS engine used: Qwen3 fallback voice="+qVoice);}
+        try{nr=primary.narrate(script.narration(),kVoice,wav);String used="KOKORO USED voice="+kVoice;System.out.println(used);events.emit(worker,slot,PipelineStage.TTS,used);logs.worker(worker,"slot="+slot+" TTS engine used: Kokoro voice="+kVoice);}catch(Exception e){String fail="KOKORO FAILED: "+e.getMessage();System.err.println(fail);logs.worker(worker,"slot="+slot+" "+fail);events.emit(worker,slot,PipelineStage.TTS,fail);events.emit(worker,slot,PipelineStage.TTS,"QWEN3 FALLBACK active");nr=fallback.narrate(script.narration(),qVoice,wav);String used="QWEN3 FALLBACK USED voice="+qVoice;System.out.println(used);events.emit(worker,slot,PipelineStage.TTS,used);logs.worker(worker,"slot="+slot+" TTS engine used: Qwen3 fallback voice="+qVoice);}
 
         Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));VideoRenderer.RenderResult rr=renderer.render(imgs,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration());
         Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);Json.write(slotDir.resolve("audit.json"),audit);
