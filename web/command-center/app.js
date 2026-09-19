@@ -32,10 +32,13 @@ async function loadState(){
 function render(){
   const c=state.counts||{};
   $("#feedsOnline").textContent=c.feedsOk||0;$("#feedsFailed").textContent=(c.feedsFailed||0)+" failed";
-  $("#storiesTracked").textContent=c.stories||0;$("#verifiedCount").textContent=(c.verified||0)+" verified";
+  $("#storiesTracked").textContent=c.stories||0;$("#verifiedCount").textContent=(c.worthy||0)+" worthy / "+(c.verified||0)+" verified";
   $("#queuedCount").textContent=c.queued||0;$("#producingCount").textContent=(c.producing||0)+" active";
   $("#completeCount").textContent=c.complete||0;$("#workersOnline").textContent=c.workersOnline||0;
-  $("#autoThreshold").textContent=Math.round(num(state.autoThreshold)*100)+"%";$("#autoQueueState").textContent=state.autoQueue?"AUTO QUEUE ARMED":"MANUAL QUEUE";
+  $("#autoThreshold").textContent=Math.round(num(state.autoThreshold)*100)+"%";
+  $("#autoQueueState").textContent=state.autoQueue
+    ? "SOFT "+Math.round(num(state.softWorthThreshold)*100)+"% // 1-SRC AUTO "+Math.round(num(state.singleSourceAutoQueueThreshold)*100)+"%"
+    : "MANUAL QUEUE";
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
   renderRails();renderWorkers();renderStories();renderFeeds();renderVideos();drawRadar();
@@ -44,7 +47,7 @@ function renderRails(){
   const ss=state.stories||[];
   $("#railAll").textContent=ss.length;
   $("#railFound").textContent=ss.filter(x=>x.status==="DISCOVERED").length;
-  $("#railVerified").textContent=ss.filter(x=>x.status==="VERIFIED").length;
+  $("#railVerified").textContent=ss.filter(x=>!!x.worthy && x.status!=="SKIPPED").length;
   $("#railQueued").textContent=ss.filter(x=>x.status==="QUEUED").length;
   $("#railProducing").textContent=ss.filter(x=>x.status==="PRODUCING").length;
   $("#railComplete").textContent=ss.filter(x=>String(x.status).startsWith("COMPLETE")).length;
@@ -72,7 +75,11 @@ function renderWorkers(){
 function storyMatches(s){
   const q=$("#search").value.trim().toLowerCase(),filter=$("#statusFilter").value!=="ALL"?$("#statusFilter").value:activeFilter;
   const status=String(s.status||"");
-  if(filter!=="ALL" && !(filter==="COMPLETE"?status.startsWith("COMPLETE"):status===filter))return false;
+  if(filter!=="ALL"){
+    if(filter==="COMPLETE"){if(!status.startsWith("COMPLETE"))return false;}
+    else if(filter==="WORTHY"){if(!s.worthy||status==="SKIPPED")return false;}
+    else if(status!==filter)return false;
+  }
   if(!q)return true;
   return [s.topic,s.category,...(s.publishers||[])].join(" ").toLowerCase().includes(q);
 }
@@ -86,7 +93,7 @@ function storyCard(s){
   const bar=k=>Math.round(num(mix[k])/total*100);
   const pubs=(s.publishers||[]).slice(0,8).map(p=>`<span class="sourceChip">${esc(p)}</span>`).join("");
   const cls=status==="PRODUCING"?" producing":status==="FAILED"?" failed":"";
-  const makeDisabled=!verified||status==="PRODUCING"||status==="COMPLETE";
+  const makeDisabled=status==="PRODUCING"||status==="COMPLETE";
   const engine=esc(s.ttsEngine||"pending");
   const voice=esc(s.ttsVoice||"");
   const visual=esc(s.visualMode||((s.stage==="VISUALS"&&s.detail)?s.detail:"pending"));
@@ -104,11 +111,13 @@ function storyCard(s){
     <div class="storyTop">
       <div class="scoreRing" style="--score:${score}"><div><b>${score}</b><small>WORTH</small></div></div>
       <div><div class="storyTitle">${esc(s.topic)}</div>
-        <div class="storyMeta"><span class="statusTag ${verified?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
+        <div class="storyMeta"><span class="statusTag ${verified||s.worthy?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
+        ${s.manualVerificationOverride?'<span class="statusTag failed">MANUAL VERIFY OVERRIDE</span>':""}
+        ${s.softVerificationOverride?'<span class="statusTag">RELAXED 1-SOURCE</span>':""}
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
       </div>
     </div>
-    <div class="verifyReason">${verified?"✓ ":"⚠ "}${esc(s.verificationReason||"")}</div>
+    <div class="verifyReason">${verified?"✓ VERIFIED // ":s.worthy?"★ WORTHY // ":"⚠ "}${esc(s.verificationReason||"")}</div>
     <div class="sources">${pubs||'<span class="sourceChip">NO SOURCE LABELS</span>'}</div>
     <div class="progressWrap"><div class="progressText"><span>${esc(s.stage||status)}</span><span>${Math.round(num(s.progress))}%</span></div><div class="progress"><i style="width:${pct(s.progress)}%"></i></div></div>
     ${liveDetail}
@@ -119,7 +128,8 @@ function storyCard(s){
       <div class="mixLabels"><span>LEFT ${num(mix.left)}</span><span>CENTER ${num(mix.center)}</span><span>RIGHT ${num(mix.right)}</span><span>UNKNOWN ${num(mix.unknown)}</span></div>
     </div>
     <div class="storyActions">
-      <button class="btn good" onclick="storyAction('${esc(s.id)}','MAKE')" ${makeDisabled?"disabled":""}>▶ MAKE VIDEO</button>
+      <button class="btn good" onclick="storyAction('${esc(s.id)}','WORTH')" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
+      <button class="btn primary" onclick="storyAction('${esc(s.id)}','MAKE')" ${makeDisabled?"disabled":""}>▶ MAKE VIDEO</button>
       <button class="btn warn" onclick="storyAction('${esc(s.id)}','HOLD')">Ⅱ HOLD</button>
       <button class="btn bad" onclick="storyAction('${esc(s.id)}','SKIP')">× NOT WORTH</button>
       <button class="btn ghost" onclick="storyAction('${esc(s.id)}','AUTO')">↻ AUTO</button>
@@ -141,8 +151,13 @@ function renderVideos(){
   }).join("");
 }
 async function storyAction(id,action){
-  try{await api("/api/stories/"+encodeURIComponent(id)+"/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});toast(action==="MAKE"?"Queued for video production.":action+" saved.");await loadState()}
-  catch(e){toast(e.message,true)}
+  try{
+    const result=await api("/api/stories/"+encodeURIComponent(id)+"/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
+    if((action==="MAKE"||action==="WORTH")&&result&&result.manualVerificationOverride)toast(action==="WORTH"?"Marked WORTH IT and queued with a one-source override.":"Force-queued. Manual verification override recorded.");
+    else if(action==="WORTH")toast("Marked WORTH IT and queued for production.");
+    else toast(action==="MAKE"?"Queued for video production.":action+" saved.");
+    await loadState();
+  }catch(e){toast(e.message,true)}
 }
 window.storyAction=storyAction;
 

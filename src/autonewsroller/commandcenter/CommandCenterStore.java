@@ -18,6 +18,8 @@ public final class CommandCenterStore {
     private final double autoThreshold;
     private final int maxQueued;
     private final int leaseSeconds;
+    private final double softWorthThreshold;
+    private final double singleSourceAutoQueueThreshold;
     private final Consumer<Map<String,Object>>eventSink;
     private final Map<String,Map<String,Object>>stories=new LinkedHashMap<>();
     private final Map<String,Map<String,Object>>feeds=new LinkedHashMap<>();
@@ -27,10 +29,15 @@ public final class CommandCenterStore {
     private boolean scanning;
 
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink){
-        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,75);
+        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,75,0.74,0.82);
     }
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink,int leaseSeconds){
+        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,leaseSeconds,0.74,0.82);
+    }
+    public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink,int leaseSeconds,double softWorthThreshold,double singleSourceAutoQueueThreshold){
         this.statePath=statePath;this.bias=bias;this.autoQueue=autoQueue;this.autoThreshold=autoThreshold;this.maxQueued=Math.max(1,maxQueued);this.eventSink=eventSink;this.leaseSeconds=Math.max(30,leaseSeconds);
+        this.softWorthThreshold=Math.max(0.0,Math.min(1.0,softWorthThreshold));
+        this.singleSourceAutoQueueThreshold=Math.max(this.softWorthThreshold,Math.min(1.0,singleSourceAutoQueueThreshold));
         load();
     }
 
@@ -80,10 +87,18 @@ public final class CommandCenterStore {
             m.put("score",item.score());
             m.put("verified",item.verified());
             m.put("verificationReason",item.verificationReason());
+            if(item.verified()){m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");}
             m.put("previouslyGenerated",item.previouslyGenerated());
             m.put("independentSources",item.factPackage().independentSourceCount());
             m.put("sourceCount",item.factPackage().sourceCount());
             m.put("confidence",item.factPackage().confidence());
+            boolean softWorthy=!item.previouslyGenerated()
+                    &&item.factPackage().independentSourceCount()>=1
+                    &&item.score()>=softWorthThreshold;
+            boolean manualWorth=Boolean.TRUE.equals(m.get("manualWorth"))||"WORTH".equals(decision)||"MAKE".equals(decision);
+            boolean suppressed="SKIP".equals(decision);
+            m.put("softWorthy",softWorthy&&!item.verified());
+            m.put("worthy",!suppressed&&(item.verified()||softWorthy||manualWorth));
             m.put("publishers",new ArrayList<>(item.cluster().publishers()));
             m.put("category",item.cluster().articles.isEmpty()?"general":item.cluster().articles.get(0).category());
             m.put("sourceUrls",item.cluster().articles.stream().map(Article::url).distinct().toList());
@@ -95,11 +110,16 @@ public final class CommandCenterStore {
 
             if(priorStatus.isBlank()){
                 if(item.previouslyGenerated())m.put("status","COMPLETE_HISTORY");
-                else m.put("status",item.verified()?"VERIFIED":"DISCOVERED");
-                m.put("stage","DISCOVERED");m.put("progress",item.verified()?12:6);
+                else if(item.verified())m.put("status","VERIFIED");
+                else if(softWorthy)m.put("status","WORTHY");
+                else m.put("status","DISCOVERED");
+                m.put("stage","DISCOVERED");m.put("progress",item.verified()?12:softWorthy?10:6);
                 m.put("firstSeen",Instant.now().toString());
             }else if(!terminalOrManual(priorStatus)){
-                m.put("status",item.previouslyGenerated()?"COMPLETE_HISTORY":item.verified()?"VERIFIED":"DISCOVERED");
+                if(item.previouslyGenerated())m.put("status","COMPLETE_HISTORY");
+                else if(item.verified())m.put("status","VERIFIED");
+                else if(softWorthy)m.put("status","WORTHY");
+                else m.put("status","DISCOVERED");
             }
         }
 
@@ -107,15 +127,24 @@ public final class CommandCenterStore {
             int depth=queueDepth();
             List<Map<String,Object>>eligible=stories.values().stream()
                     .filter(x->"AUTO".equals(String.valueOf(x.getOrDefault("decision","AUTO"))))
-                    .filter(x->Boolean.TRUE.equals(x.get("verified")))
                     .filter(x->!Boolean.TRUE.equals(x.get("previouslyGenerated")))
-                    .filter(x->"VERIFIED".equals(String.valueOf(x.get("status"))))
-                    .filter(x->number(x.get("score"))>=autoThreshold)
+                    .filter(x->{
+                        boolean verified=Boolean.TRUE.equals(x.get("verified"));
+                        boolean soft=Boolean.TRUE.equals(x.get("softWorthy"));
+                        double score=number(x.get("score"));
+                        return (verified&&"VERIFIED".equals(String.valueOf(x.get("status")))&&score>=autoThreshold)
+                                ||(soft&&"WORTHY".equals(String.valueOf(x.get("status")))&&score>=singleSourceAutoQueueThreshold);
+                    })
                     .sorted(Comparator.comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed())
                     .toList();
             for(Map<String,Object>m:eligible){
                 if(depth>=maxQueued)break;
+                boolean verified=Boolean.TRUE.equals(m.get("verified"));
                 m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);
+                if(!verified){
+                    m.put("softVerificationOverride",true);
+                    m.put("verificationOverrideReason","High-scoring single-source story auto-queued under the relaxed Command Center rule.");
+                }
                 depth++;emit("story",publicStory(m));
             }
         }
@@ -128,16 +157,51 @@ public final class CommandCenterStore {
         String a=action==null?"":action.trim().toUpperCase(Locale.ROOT);
         switch(a){
             case "MAKE","QUEUE"->{
-                if(!Boolean.TRUE.equals(m.get("verified")))throw new IllegalStateException("Story is not verified yet. Use HOLD while waiting for confirmation.");
-                m.put("decision","MAKE");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);
+                boolean verified=Boolean.TRUE.equals(m.get("verified"));
+                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","MAKE");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);
+                m.remove("softVerificationOverride");
+                if(!verified){
+                    m.put("manualVerificationOverride",true);
+                    m.put("verificationOverrideReason","User explicitly selected MAKE VIDEO before automatic independent-source verification passed.");
+                }else{
+                    m.remove("manualVerificationOverride");m.remove("verificationOverrideReason");
+                }
             }
-            case "HOLD"->{m.put("decision","HOLD");m.put("status","HOLD");m.put("stage","HOLD");m.put("progress",10);}
-            case "SKIP","NOT_WORTH","NOT-WORTH"->{m.put("decision","SKIP");m.put("status","SKIPPED");m.put("stage","SKIPPED");m.put("progress",0);}
+            case "WORTH","WORTH_IT","WORTH-IT"->{
+                boolean verified=Boolean.TRUE.equals(m.get("verified"));
+                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","WORTH");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);
+                m.remove("softVerificationOverride");
+                if(!verified){
+                    m.put("manualVerificationOverride",true);
+                    m.put("verificationOverrideReason","User marked this story WORTH IT before automatic independent-source verification passed.");
+                }else{
+                    m.remove("manualVerificationOverride");m.remove("verificationOverrideReason");
+                }
+            }
+            case "HOLD"->{
+                m.put("decision","HOLD");m.put("status","HOLD");m.put("stage","HOLD");m.put("progress",10);
+                m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
+            }
+            case "SKIP","NOT_WORTH","NOT-WORTH"->{
+                m.put("manualWorth",false);m.put("worthy",false);m.put("decision","SKIP");m.put("status","SKIPPED");m.put("stage","SKIPPED");m.put("progress",0);
+                m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
+            }
             case "AUTO"->{
-                m.put("decision","AUTO");m.remove("error");
+                m.put("manualWorth",false);m.put("decision","AUTO");m.remove("error");m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
+                boolean verified=Boolean.TRUE.equals(m.get("verified"));
+                boolean soft=Boolean.TRUE.equals(m.get("softWorthy"));
+                boolean worthy=verified||soft;
+                m.put("worthy",worthy);
                 if(Boolean.TRUE.equals(m.get("previouslyGenerated")))m.put("status","COMPLETE_HISTORY");
-                else if(Boolean.TRUE.equals(m.get("verified"))&&autoQueue&&number(m.get("score"))>=autoThreshold&&queueDepth()<maxQueued){m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);}
-                else {m.put("status",Boolean.TRUE.equals(m.get("verified"))?"VERIFIED":"DISCOVERED");m.put("stage","DISCOVERED");m.put("progress",Boolean.TRUE.equals(m.get("verified"))?12:6);}
+                else if(autoQueue&&queueDepth()<maxQueued&&((verified&&number(m.get("score"))>=autoThreshold)||(soft&&number(m.get("score"))>=singleSourceAutoQueueThreshold))){
+                    m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);
+                    if(!verified){
+                        m.put("softVerificationOverride",true);
+                        m.put("verificationOverrideReason","High-scoring single-source story auto-queued under the relaxed Command Center rule.");
+                    }
+                }else if(verified){m.put("status","VERIFIED");m.put("stage","DISCOVERED");m.put("progress",12);}
+                else if(soft){m.put("status","WORTHY");m.put("stage","DISCOVERED");m.put("progress",10);}
+                else {m.put("status","DISCOVERED");m.put("stage","DISCOVERED");m.put("progress",6);}
             }
             default->throw new IllegalArgumentException("Unknown action: "+action);
         }
@@ -155,7 +219,7 @@ public final class CommandCenterStore {
         m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",Instant.now().toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");
         m.put("claimCount",integer(m.get("claimCount"))+1);renewLease(m);
         persistQuiet();emit("story",publicStory(m));
-        Map<String,Object>job=new LinkedHashMap<>();job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);return job;
+        Map<String,Object>job=new LinkedHashMap<>();job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));return job;
     }
 
     public synchronized void progress(String jobId,WorkerState state){
@@ -231,10 +295,12 @@ public final class CommandCenterStore {
         List<Map<String,Object>>ww=workers.values().stream().map(x->{Map<String,Object>c=publicCopy(x);c.put("online",isOnline(x));return c;}).toList();
         List<Map<String,Object>>vv=videos.values().stream().map(CommandCenterStore::publicCopy).toList();
         Map<String,Object>counts=new LinkedHashMap<>();
-        counts.put("stories",stories.size());counts.put("verified",countStatus("VERIFIED")+countStatus("QUEUED")+countStatus("PRODUCING")+countStatus("COMPLETE"));
+        counts.put("stories",stories.size());
+        counts.put("verified",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("verified"))).count());
+        counts.put("worthy",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("worthy"))).filter(x->!"SKIPPED".equals(String.valueOf(x.get("status")))).count());
         counts.put("queued",countStatus("QUEUED"));counts.put("producing",countStatus("PRODUCING"));counts.put("complete",countStatus("COMPLETE")+countStatus("COMPLETE_HISTORY"));counts.put("hold",countStatus("HOLD"));counts.put("skipped",countStatus("SKIPPED"));counts.put("failed",countStatus("FAILED"));
         counts.put("feedsOk",feeds.values().stream().filter(x->"OK".equals(x.get("status"))).count());counts.put("feedsFailed",feeds.values().stream().filter(x->"FAILED".equals(x.get("status"))).count());counts.put("workersOnline",ww.stream().filter(x->Boolean.TRUE.equals(x.get("online"))).count());
-        Map<String,Object>out=new LinkedHashMap<>();out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("maxQueued",maxQueued);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
+        Map<String,Object>out=new LinkedHashMap<>();out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
     }
 
     private Map<String,Object>feed(SourceConfig s){
