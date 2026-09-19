@@ -141,12 +141,13 @@ public final class NewsPipeline {
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI CHECK starting");
             ComfyImageGenerator comfy=new ComfyImageGenerator(root,cfg.get("comfyUrl","http://127.0.0.1:8188"),cfg.get("qwenUrl","http://127.0.0.1:8765"));
             try{
+                ComfyRuntime.ensureRunning(root,cfg);
                 if(!comfy.reachable())throw new IllegalStateException("ComfyUI is not reachable at "+cfg.get("comfyUrl","http://127.0.0.1:8188"));
                 List<String>available=comfy.checkpoints();
                 String configured=cfg.get("imageCheckpoint","");
                 if(!configured.isBlank()){
-                    if(!available.contains(configured))throw new IllegalStateException("configured checkpoint is unavailable: "+configured+"; available="+available);
-                    usedCheckpoint=configured;
+                    usedCheckpoint=available.stream().filter(x->checkpointMatches(x,configured)).findFirst().orElse("");
+                    if(usedCheckpoint.isBlank())throw new IllegalStateException("configured checkpoint is unavailable: "+configured+"; available="+available);
                 }else if(cfg.getBool("comfyAutoPickCheckpoint",true)&&!available.isEmpty()){
                     usedCheckpoint=available.get(0);
                 }else throw new IllegalStateException("no imageCheckpoint configured and ComfyUI returned no usable checkpoints");
@@ -206,6 +207,13 @@ public final class NewsPipeline {
     }
 
     public void rejected(int worker,int slot,String detail){events.emit(worker,slot,PipelineStage.REJECTED,detail);logs.worker(worker,"slot="+slot+" rejected "+detail);}
+
+    private static boolean checkpointMatches(String available,String configured){
+        if(available==null||configured==null)return false;
+        String a=available.replace('\\','/').toLowerCase(Locale.ROOT);
+        String c=configured.replace('\\','/').toLowerCase(Locale.ROOT);
+        return a.equals(c)||a.endsWith("/"+c);
+    }
 
     private static boolean categoryMatches(String requested,String articleCategory){
         return requested==null||requested.isBlank()||"general".equalsIgnoreCase(requested)||requested.equalsIgnoreCase(articleCategory);
