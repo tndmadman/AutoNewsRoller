@@ -20,6 +20,7 @@ videoFps=30
 captions=sentence
 workers=4
 articleFetchTimeout=30
+articleEnrichmentEnabled=false
 feedRefreshMinutes=30
 ffmpegCommand=ffmpeg
 ffprobeCommand=ffprobe
