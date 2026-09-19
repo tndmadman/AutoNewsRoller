@@ -5,18 +5,18 @@ import java.nio.file.*;
 import java.util.*;
 
 public final class BiasRegistry {
-    private final Map<String,String> labels=new HashMap<>();
+    private final Map<String,String> labels;
     private final String provider,asOf,note;
 
-    private BiasRegistry(String provider,String asOf,String note){this.provider=provider;this.asOf=asOf;this.note=note;}
+    private BiasRegistry(String provider,String asOf,String note,Map<String,String>labels){
+        this.provider=provider;this.asOf=asOf;this.note=note;this.labels=new HashMap<>(labels);
+    }
 
     public static BiasRegistry load(Path path){
-        String provider="unconfigured",asOf="",note="No political source classifications configured.";
-        BiasRegistry out=new BiasRegistry(provider,asOf,note);
-        if(!Files.isRegularFile(path))return out;
+        if(!Files.isRegularFile(path))return new BiasRegistry("unconfigured","","No political source classifications configured.",Map.of());
         try{
             Map<String,Object>root=Json.object(Json.read(path));
-            out.labels.clear();
+            Map<String,String>labels=new HashMap<>();
             Object src=root.get("sources");
             if(src instanceof Map<?,?>m){
                 for(var e:m.entrySet()){
@@ -24,17 +24,16 @@ public final class BiasRegistry {
                     String value;
                     if(e.getValue() instanceof Map<?,?>detail)value=String.valueOf(detail.get("classification"));
                     else value=String.valueOf(e.getValue());
-                    value=normalize(value);
-                    if(!key.isBlank())out.labels.put(key,value);
+                    if(!key.isBlank())labels.put(key,normalize(value));
                 }
             }
-            return new BiasRegistryWithLabels(
+            return new BiasRegistry(
                     String.valueOf(root.getOrDefault("provider","unconfigured")),
                     String.valueOf(root.getOrDefault("asOf","")),
                     String.valueOf(root.getOrDefault("note","Political source labels are optional external metadata.")),
-                    out.labels
+                    labels
             );
-        }catch(Exception e){return out;}
+        }catch(Exception e){return new BiasRegistry("unconfigured","","Could not load source classification metadata.",Map.of());}
     }
 
     public Map<String,Object> mix(Collection<String>publishers){
@@ -54,9 +53,5 @@ public final class BiasRegistry {
     private static String normalize(String v){
         if(v==null)return "unknown";String x=v.trim().toLowerCase(Locale.ROOT);
         return switch(x){case "left","center","right"->x;default->"unknown";};
-    }
-
-    private static final class BiasRegistryWithLabels extends BiasRegistry{
-        BiasRegistryWithLabels(String provider,String asOf,String note,Map<String,String>src){super(provider,asOf,note);super.labels.putAll(src);}
     }
 }
