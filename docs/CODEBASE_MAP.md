@@ -40,17 +40,45 @@ Interactive batch launcher and self-test entry point.
 
 ### watch_news_windows.bat
 
-Infinite polling loop around the one-video launcher.
+Compatibility launcher for the new Command Center. It forwards its scan-interval argument to command_center_windows.bat.
+
+### command_center_windows.bat
+
+Builds Java, starts a local remote-worker process, opens the browser dashboard, and runs the local controller.
+
+### run_gpu_worker_windows.bat
+
+Connects a Windows production worker to a local or remote Command Center.
+
+### build_linux.sh
+
+Dependency-light JDK build script for headless Linux.
+
+### run_command_center_linux.sh
+
+Builds and launches the headless controller on Linux.
+
+### run_gpu_worker_linux.sh
+
+Optional Linux remote-worker launcher.
 
 ## .github/workflows
 
 ### windows-validation.yml
 
-Windows CI using JDK 21 and Python 3.12.
+Cross-platform validation workflow.
 
-Runs:
+Windows job:
 
     batch_create_news_videos_windows.bat --self-test
+
+Linux job:
+
+- builds with JDK 21;
+- runs Java self-tests;
+- runs the fixture dry run;
+- boots the headless Command Center;
+- checks /api/health, /api/state, and the dashboard HTML.
 
 ## config
 
@@ -65,6 +93,10 @@ Known/default category labels.
 ### config/ranking.json
 
 Story-ranking weights.
+
+### config/source_bias.json
+
+Optional externally sourced political publisher classifications used only for the dashboard source-mix display. It ships unconfigured so AutoNewsRoller does not invent political labels.
 
 ## data
 
@@ -98,6 +130,28 @@ Responsibilities:
 ## SelfTest.java
 
 Offline deterministic Java self-test.
+
+## commandcenter package
+
+### BiasRegistry.java
+
+Loads optional attributed left/center/right/unknown publisher classifications from config/source_bias.json.
+
+### CommandCenterStore.java
+
+Persistent controller state, story decisions, auto-queueing, worker/job state, feed health, and video archive metadata.
+
+### CommandCenterServer.java
+
+Headless HTTP controller, RSS scan scheduler, browser API, SSE event stream, worker/job endpoints, MP4 upload endpoint, and static dashboard server.
+
+### RemoteWorker.java
+
+Remote production-node client. Claims controller jobs, reconstructs candidates, runs NewsPipeline, streams progress, uploads final MP4s, and reports completion/failure.
+
+### SystemMetrics.java
+
+CPU/RAM/JVM metrics plus optional NVIDIA telemetry from nvidia-smi.
 
 ## audit package
 
@@ -238,7 +292,7 @@ Whole-video parallelism, candidate assignment, target reservation, approval/reje
 
 ### EventLog.java
 
-Append-only structured events.jsonl writer.
+Append-only structured events.jsonl writer. It can also forward live WorkerState callbacks to remote-worker/controller integrations.
 
 ### RuntimeLog.java
 
@@ -370,6 +424,30 @@ Java2D procedural vertical cards.
 
 Optional local ComfyUI workflow, checkpoint validation, output retrieval, GPU release coordination.
 
+## web/command-center
+
+### index.html
+
+Command Center dashboard shell.
+
+### styles.css
+
+Mission-control visual design, responsive layout, status animations, story/worker/feed/video presentation.
+
+### app.js
+
+Live state rendering, SSE subscription, feed radar animation, story actions, worker telemetry, source-mix bars, scan control, and video links.
+
+## deploy/systemd
+
+### autonewsroller-command-center.service
+
+Example always-on headless Linux systemd service.
+
+### autonewsroller.env.example
+
+Example protected environment file for AUTONEWS_TOKEN.
+
 ## tools
 
 ### tools/kokoro_tts.py
@@ -441,7 +519,11 @@ Current defaults and source/ranking config behavior.
 
 ### WINDOWS_OPERATIONS.md
 
-Windows setup, build, execution, self-test, watch, and failure behavior.
+Windows setup, build, execution, self-test, Command Center watch mode, and failure behavior.
+
+### COMMAND_CENTER.md
+
+Controller/worker architecture, browser controls, Linux deployment, systemd, authentication, API, telemetry, source-mix behavior, and known limitations.
 
 ### NEWS_SOURCES_AND_CONTENT_USE.md
 
