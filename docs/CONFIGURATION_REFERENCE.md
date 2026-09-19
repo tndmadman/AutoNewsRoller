@@ -364,6 +364,39 @@ The repository ships with provider=unconfigured and no labels.
 
 AutoNewsRoller does not infer political classifications itself. See docs/COMMAND_CENTER.md.
 
+## Political framing settings
+
+### politicalAnalysisModel
+
+Default:
+
+    llama3.1:8b
+
+Local Ollama model used by remote workers for article-level political framing analysis.
+
+### politicalAnalysisOllamaUrl
+
+Default:
+
+    http://127.0.0.1:11434/api/generate
+
+Worker-local Ollama endpoint for political framing analysis.
+
+The controller queues analysis work but does not require Ollama. Video work has priority over political-analysis work.
+
+### config/source_bias.json
+
+Contains attributed publisher-level political baseline metadata used by the Command Center.
+
+Each configured publisher may contain:
+
+- classification: left, center, right, or unknown dashboard bucket;
+- originalClassification: the external provider's original label;
+- confidence;
+- url.
+
+The file also contains provider, providerUrl, asOf, and a note explaining the mapping.
+
 ## HTTP settings
 
 ### feedFetchTimeout
