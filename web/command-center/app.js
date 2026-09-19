@@ -35,7 +35,10 @@ function render(){
   $("#storiesTracked").textContent=c.stories||0;$("#verifiedCount").textContent=(c.worthy||0)+" worthy / "+(c.verified||0)+" verified";
   $("#queuedCount").textContent=c.queued||0;$("#producingCount").textContent=(c.producing||0)+" active";
   $("#completeCount").textContent=c.complete||0;$("#workersOnline").textContent=c.workersOnline||0;
-  $("#autoThreshold").textContent=Math.round(num(state.autoThreshold)*100)+"%";$("#autoQueueState").textContent=state.autoQueue?"AUTO QUEUE ARMED":"MANUAL QUEUE";
+  $("#autoThreshold").textContent=Math.round(num(state.autoThreshold)*100)+"%";
+  $("#autoQueueState").textContent=state.autoQueue
+    ? "SOFT "+Math.round(num(state.softWorthThreshold)*100)+"% // 1-SRC AUTO "+Math.round(num(state.singleSourceAutoQueueThreshold)*100)+"%"
+    : "MANUAL QUEUE";
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
   renderRails();renderWorkers();renderStories();renderFeeds();renderVideos();drawRadar();
@@ -108,13 +111,13 @@ function storyCard(s){
     <div class="storyTop">
       <div class="scoreRing" style="--score:${score}"><div><b>${score}</b><small>WORTH</small></div></div>
       <div><div class="storyTitle">${esc(s.topic)}</div>
-        <div class="storyMeta"><span class="statusTag ${verified?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
+        <div class="storyMeta"><span class="statusTag ${verified||s.worthy?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
         ${s.manualVerificationOverride?'<span class="statusTag failed">MANUAL VERIFY OVERRIDE</span>':""}
         ${s.softVerificationOverride?'<span class="statusTag">RELAXED 1-SOURCE</span>':""}
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
       </div>
     </div>
-    <div class="verifyReason">${verified?"✓ ":"⚠ "}${esc(s.verificationReason||"")}</div>
+    <div class="verifyReason">${verified?"✓ VERIFIED // ":s.worthy?"★ WORTHY // ":"⚠ "}${esc(s.verificationReason||"")}</div>
     <div class="sources">${pubs||'<span class="sourceChip">NO SOURCE LABELS</span>'}</div>
     <div class="progressWrap"><div class="progressText"><span>${esc(s.stage||status)}</span><span>${Math.round(num(s.progress))}%</span></div><div class="progress"><i style="width:${pct(s.progress)}%"></i></div></div>
     ${liveDetail}
