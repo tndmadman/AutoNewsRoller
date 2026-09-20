@@ -181,7 +181,7 @@ public final class CommandCenterStore {
         switch(a){
             case "MAKE","QUEUE"->{
                 boolean verified=Boolean.TRUE.equals(m.get("verified"));
-                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","MAKE");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);
+                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","MAKE");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);resetFailureRetryState(m);
                 m.remove("softVerificationOverride");
                 if(!verified){
                     m.put("manualVerificationOverride",true);
@@ -192,7 +192,7 @@ public final class CommandCenterStore {
             }
             case "WORTH","WORTH_IT","WORTH-IT"->{
                 boolean verified=Boolean.TRUE.equals(m.get("verified"));
-                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","WORTH");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);
+                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","WORTH");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);resetFailureRetryState(m);
                 m.remove("softVerificationOverride");
                 if(!verified){
                     m.put("manualVerificationOverride",true);
@@ -210,7 +210,7 @@ public final class CommandCenterStore {
                 m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
             }
             case "AUTO"->{
-                m.put("manualWorth",false);m.put("decision","AUTO");m.remove("error");m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
+                m.put("manualWorth",false);m.put("decision","AUTO");m.remove("error");resetFailureRetryState(m);m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
                 boolean verified=Boolean.TRUE.equals(m.get("verified"));
                 boolean soft=Boolean.TRUE.equals(m.get("softWorthy"));
                 boolean worthy=verified||soft;
@@ -414,6 +414,9 @@ public final class CommandCenterStore {
         if(raw==null)return true;
         try{return !Instant.parse(String.valueOf(raw)).isAfter(Instant.now());}
         catch(Exception ignored){return true;}
+    }
+    private static void resetFailureRetryState(Map<String,Object>m){
+        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");
     }
     private void renewLease(Map<String,Object>m){if("PRODUCING".equals(String.valueOf(m.get("status"))))m.put("leaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());}
     private static void clearLease(Map<String,Object>m){m.remove("leaseUntil");}
