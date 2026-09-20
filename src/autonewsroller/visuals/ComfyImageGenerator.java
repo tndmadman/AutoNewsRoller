@@ -35,10 +35,25 @@ public final class ComfyImageGenerator {
             if(filename.isBlank())throw new IllegalStateException("ComfyUI history did not contain an output filename");
             String q="?filename="+URLEncoder.encode(filename,java.nio.charset.StandardCharsets.UTF_8)+"&subfolder="+URLEncoder.encode(subfolder,java.nio.charset.StandardCharsets.UTF_8)+"&type="+URLEncoder.encode(type,java.nio.charset.StandardCharsets.UTF_8);
             HttpRequest view=HttpRequest.newBuilder(URI.create(baseUrl+"/view"+q)).timeout(Duration.ofSeconds(30)).GET().build();HttpResponse<byte[]>img=client.send(view,HttpResponse.BodyHandlers.ofByteArray());if(img.statusCode()/100!=2||img.body().length<1024)throw new IllegalStateException("ComfyUI /view failed HTTP "+img.statusCode());Files.write(output,img.body());
-            try{postJson("/free","{\"unload_models\":true,\"free_memory\":true}",5);}catch(Exception ignoredFree){}
             return output;
         }
     }
+    /**
+     * Normal successful generations intentionally keep the ComfyUI checkpoint,
+     * CLIP, and VAE warm. This recovery path is only for a confirmed CUDA OOM.
+     */
+    public void recoverFromOom(){
+        try{postJson("/free","{\"unload_models\":true,\"free_memory\":true}",8);}catch(Exception ignored){}
+    }
+
+    public static boolean looksLikeCudaOom(Throwable error){
+        for(Throwable t=error;t!=null;t=t.getCause()){
+            String m=String.valueOf(t.getMessage()).toLowerCase(Locale.ROOT);
+            if(m.contains("out of memory")||(m.contains("cuda")&&m.contains("memory"))||m.contains("allocation on device"))return true;
+        }
+        return false;
+    }
+
     private Map<String,Object> waitForImage(String promptId,int timeoutSeconds)throws Exception{long end=System.nanoTime()+Duration.ofSeconds(timeoutSeconds).toNanos();while(System.nanoTime()<end){HttpResponse<String>h=get("/history/"+URLEncoder.encode(promptId,java.nio.charset.StandardCharsets.UTF_8),10);if(h.statusCode()/100==2){Object rootObj=Json.parse(h.body());Map<String,Object>rootMap=Json.object(rootObj);Object entry=rootMap.get(promptId);if(entry instanceof Map<?,?>em){Object outputs=((Map<?,?>)em).get("outputs");if(outputs instanceof Map<?,?>om){for(Object ov:om.values())if(ov instanceof Map<?,?>node){Object images=node.get("images");if(images instanceof List<?>l&&!l.isEmpty()&&l.get(0) instanceof Map<?,?>m){Map<String,Object>out=new LinkedHashMap<>();for(var e:m.entrySet())out.put(String.valueOf(e.getKey()),e.getValue());return out;}}}}}Thread.sleep(750);}throw new IllegalStateException("ComfyUI timed out waiting for prompt "+promptId);}
     private void requestQwenRelease(){try{HttpRequest r=HttpRequest.newBuilder(URI.create(qwenUrl+"/release-gpu")).timeout(Duration.ofSeconds(15)).POST(HttpRequest.BodyPublishers.noBody()).build();client.send(r,HttpResponse.BodyHandlers.discarding());}catch(Exception ignored){}}
     private HttpResponse<String>get(String path,int seconds)throws Exception{return client.send(HttpRequest.newBuilder(URI.create(baseUrl+path)).timeout(Duration.ofSeconds(seconds)).GET().build(),HttpResponse.BodyHandlers.ofString());}
