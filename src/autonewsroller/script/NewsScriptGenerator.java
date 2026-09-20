@@ -207,6 +207,7 @@ Return one JSON object matching the provided expansion schema and nothing else.
 
         List<NewsScript.Segment>segs=new ArrayList<>(base.segments());
         Set<Integer>seen=new HashSet<>();
+        int applied=0;
         for(Object o:list){
             if(!(o instanceof Map<?,?>))continue;
             Map<String,Object>x=Json.object(o);
@@ -222,9 +223,10 @@ Return one JSON object matching the provided expansion schema and nothing else.
             segs.set(idx,new NewsScript.Segment(
                     old.index(),joined,old.purpose(),old.visualType(),old.visualPrompt(),old.durationTarget()
             ));
+            applied++;
         }
 
-        if(seen.isEmpty())throw new IllegalArgumentException("Ollama expansion contained no usable additions");
+        if(applied==0)throw new IllegalArgumentException("Ollama expansion contained no usable additions");
         return rebuild(fp,base.headline(),segs,target);
     }
 
