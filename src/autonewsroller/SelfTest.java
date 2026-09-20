@@ -10,6 +10,7 @@ import autonewsroller.script.*;
 import autonewsroller.util.*;
 import autonewsroller.verify.*;
 import autonewsroller.video.*;
+import autonewsroller.visuals.*;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.*;
@@ -36,6 +37,7 @@ public final class SelfTest {
         testAuthoritative(root);
         testMalformed(root);
         testScriptValidation(a);
+        testProductionVideoContract(root,a);
         testTtsFallback();
         testWorkerEvent();
         testFilename(root);
@@ -267,6 +269,41 @@ public final class SelfTest {
             VerificationResult v=new SourceVerifier().verify(c,2);
             ok(v.accepted()&&v.factPackage().authoritativePrimaryAccepted(),"authoritative primary-source exception");
         }
+    }
+
+    private void testProductionVideoContract(Path root,List<Article>a)throws Exception{
+        NewsConfig cfg=NewsConfig.load(root);
+        ok(cfg.duration()>=70&&cfg.getInt("commandCenterMinimumTargetSeconds",0)>=70&&cfg.getDouble("minimumFinalVideoSeconds",0)>60,
+                "production duration defaults require one-minute-plus output");
+        ok(cfg.getInt("commandCenterComfyImages",0)>=6&&cfg.getBool("comfyDisableDynamicVram",false),
+                "production defaults request six Comfy images with dynamic VRAM disabled");
+
+        StoryCluster cluster=new StoryClusterer().cluster(a.stream().filter(x->!x.title().contains("Old archive")).toList())
+                .stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
+        FactPackage fp=new SourceVerifier().verify(cluster,2).factPackage();
+        List<NewsScript.Segment>segments=new ArrayList<>();
+        for(int i=0;i<8;i++)segments.add(new NewsScript.Segment(i,"Verified narration beat "+(i+1),"detail","BACKGROUND","Documentary visual grounded in the supplied facts",8));
+        NewsScript visualScript=new NewsScript(fp.storyId(),fp.headline(),"Verified narration for visual planning.",segments,70,List.of());
+        VisualPlan plan=new VisualPlanner().plan(visualScript,fp);
+        ok(plan.items().size()>=9&&plan.items().size()<=10,"visual planner creates headline, 7-8 story beats, and source card");
+
+        NewsScript shortScript=new NewsScript(fp.storyId(),fp.headline(),"This narration is deliberately too short.",segments,3,List.of());
+        ok(new ScriptValidator().validate(shortScript,fp,70).stream().anyMatch(x->x.startsWith("narration too short")),
+                "script validator rejects short narration for production target");
+
+        Path ass=Files.createTempFile("autonews-captions-",".ass");
+        CaptionWriter.write(ass,
+                "This caption contains enough words to split cleanly across two compact lines for a vertical news video.",
+                7.0,"sentence");
+        String captionText=Files.readString(ass);
+        ok(captionText.contains("[V4+ Styles]")&&captionText.contains("Style: News,Arial,42")&&captionText.contains("\\N")&&captionText.contains("FFD86F"),
+                "captions use compact two-line ASS styling with restrained accent");
+
+        String comfySource=Files.readString(root.resolve("src/autonewsroller/visuals/ComfyImageGenerator.java"));
+        int recovery=comfySource.indexOf("public void recoverFromOom()");
+        int generate=comfySource.indexOf("public Path generate(");
+        ok(generate>=0&&recovery>generate&&!comfySource.substring(generate,recovery).contains("/free")&&comfySource.substring(recovery).contains("/free"),
+                "ComfyUI success path keeps models warm and only OOM recovery frees them");
     }
 
     private void testTtsFallback()throws Exception{
