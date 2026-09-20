@@ -199,6 +199,38 @@ public final class SelfTest {
         store.complete(cluster.id,Map.of("sidecar",sidecar));
         Map<String,Object>story=store.storyDetail(cluster.id);
         ok("Kokoro".equals(story.get("ttsEngine"))&&((Number)story.get("comfyImages")).intValue()==1&&"test.safetensors".equals(story.get("comfyCheckpoint")),"command center retains actual TTS and ComfyUI results");
+
+        Map<String,Object>completedSnapshot=store.snapshot();
+        Map<String,Object>completedCounts=Json.object(completedSnapshot.get("counts"));
+        Map<String,Object>completedPublic=Json.object(((List<?>)completedSnapshot.get("stories")).get(0));
+        ok(((Number)completedCounts.get("worthy")).intValue()==0&&!Boolean.TRUE.equals(completedPublic.get("actionableWorthy")),
+                "completed stories retain historical worth metadata but leave the actionable Worthy count");
+
+        Path filterDir=Files.createTempDirectory("autonews-worthy-filter-");
+        CommandCenterStore filterStore=new CommandCenterStore(
+                filterDir.resolve("state.json"),BiasRegistry.load(filterDir.resolve("bias.json")),
+                false,0.68,12,null,75,0.74,0.82
+        );
+        filterStore.applyDiscovery(result);
+        Map<String,Object>initialSnapshot=filterStore.snapshot();
+        Map<String,Object>initialCounts=Json.object(initialSnapshot.get("counts"));
+        Map<String,Object>initialPublic=Json.object(((List<?>)initialSnapshot.get("stories")).get(0));
+        ok(((Number)initialCounts.get("worthy")).intValue()==1&&Boolean.TRUE.equals(initialPublic.get("actionableWorthy")),
+                "verified unqueued story appears in actionable Worthy");
+
+        filterStore.action(cluster.id,"HOLD");
+        ok(((Number)Json.object(filterStore.snapshot().get("counts")).get("worthy")).intValue()==0,
+                "held story leaves actionable Worthy");
+
+        filterStore.action(cluster.id,"AUTO");
+        ok(((Number)Json.object(filterStore.snapshot().get("counts")).get("worthy")).intValue()==1,
+                "returning held story to auto restores actionable Worthy when still eligible");
+
+        filterStore.action(cluster.id,"MAKE");
+        Map<String,Object>queuedSnapshot=filterStore.snapshot();
+        Map<String,Object>queuedPublic=Json.object(((List<?>)queuedSnapshot.get("stories")).get(0));
+        ok(((Number)Json.object(queuedSnapshot.get("counts")).get("worthy")).intValue()==0&&!Boolean.TRUE.equals(queuedPublic.get("actionableWorthy")),
+                "queued story leaves actionable Worthy");
     }
 
     private void testCommandCenterLeaseRecovery(List<Article>a)throws Exception{
