@@ -1,12 +1,12 @@
 newsMaxAgeHours=24
 minimumIndependentSources=2
-targetDurationSeconds=60
+targetDurationSeconds=70
 ollamaModel=llama3.1:8b
 ollamaUrl=http://127.0.0.1:11434/api/generate
 ollamaRetries=3
 ollamaKeepAlive=30m
 ttsPrimary=kokoro
-ttsFallback=qwen3
+ttsFallback=qwen3\nkokoroSpeed=0.92
 kokoroVoices=af_heart,af_bella,af_nicole,bf_emma
 qwenVoices=Ryan,Aiden,Ono_Anna,Sohee
 qwenUrl=http://127.0.0.1:8765
@@ -47,7 +47,7 @@ commandCenterSingleSourceAutoQueueThreshold=0.82
 commandCenterMaxQueued=12
 commandCenterUseComfy=true
 commandCenterRequireComfy=true
-commandCenterComfyImages=3
+commandCenterComfyImages=6\ncommandCenterMinimumTargetSeconds=70\nminimumFinalVideoSeconds=61
 commandCenterJobLeaseSeconds=75
 commandCenterControllerUrl=http://127.0.0.1:8787
 
