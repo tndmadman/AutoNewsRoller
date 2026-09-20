@@ -42,7 +42,7 @@ function render(){
   $("#storiesTracked").textContent=c.stories||0;$("#verifiedCount").textContent=(c.worthy||0)+" worthy / "+(c.verified||0)+" verified";
   $("#queuedCount").textContent=c.queued||0;$("#producingCount").textContent=(c.producing||0)+" active";
   $("#completeCount").textContent=c.complete||0;
-  $("#completeSub").textContent=(c.toPost||0)+" to post // "+(c.uploaded||0)+" uploaded";
+  $("#completeSub").textContent=(c.toPost||0)+" to post // "+(c.uploaded||0)+" uploaded // "+(c.scrapped||0)+" scrapped";
   $("#workersOnline").textContent=c.workersOnline||0;
   $("#autoThreshold").textContent=Math.round(num(state.autoThreshold)*100)+"%";
   $("#autoQueueState").textContent=state.autoQueue
@@ -60,8 +60,9 @@ function renderRails(){
   $("#railQueued").textContent=ss.filter(x=>x.status==="QUEUED").length;
   $("#railProducing").textContent=ss.filter(x=>x.status==="PRODUCING").length;
   $("#railComplete").textContent=ss.filter(x=>String(x.status).startsWith("COMPLETE")).length;
-  $("#railToPost").textContent=ss.filter(x=>String(x.status)==="COMPLETE"&&!x.uploaded).length;
-  $("#railUploaded").textContent=ss.filter(x=>!!x.uploaded).length;
+  $("#railToPost").textContent=ss.filter(x=>String(x.status)==="COMPLETE"&&!x.uploaded&&!x.scrapped).length;
+  $("#railUploaded").textContent=ss.filter(x=>!!x.uploaded&&!x.scrapped).length;
+  $("#railScrapped").textContent=ss.filter(x=>!!x.scrapped).length;
 }
 function renderWorkers(){
   const root=$("#workers"),ws=state.workers||[];
@@ -88,13 +89,14 @@ function storyMatches(s){
   const status=String(s.status||"");
   if(filter!=="ALL"){
     if(filter==="COMPLETE"){if(!status.startsWith("COMPLETE"))return false;}
-    else if(filter==="TO_POST"){if(status!=="COMPLETE"||!!s.uploaded)return false;}
-    else if(filter==="UPLOADED"){if(!s.uploaded)return false;}
+    else if(filter==="TO_POST"){if(status!=="COMPLETE"||!!s.uploaded||!!s.scrapped)return false;}
+    else if(filter==="UPLOADED"){if(!s.uploaded||!!s.scrapped)return false;}
+    else if(filter==="SCRAPPED"){if(!s.scrapped)return false;}
     else if(filter==="WORTHY"){if(!isActionableWorthy(s))return false;}
     else if(status!==filter)return false;
   }
   if(!q)return true;
-  return [s.topic,s.category,s.uploadedPlatform,s.uploadNote,...(s.publishers||[])].join(" ").toLowerCase().includes(q);
+  return [s.topic,s.category,s.uploadedPlatform,s.uploadNote,s.scrapReason,...(s.publishers||[])].join(" ").toLowerCase().includes(q);
 }
 function renderStories(){
   const root=$("#stories"),ss=(state.stories||[]).filter(storyMatches);
@@ -149,9 +151,11 @@ function storyCard(s){
         ${num(s.leaseRecoveries)>0?`<span><b>RECOVERED</b> ${num(s.leaseRecoveries)} worker lease(s)</span>`:""}
       </div>`:"";
   const uploadState=status==="COMPLETE"
-    ?(s.uploaded
-      ?`<div class="uploadState uploaded"><b>✓ MANUALLY UPLOADED</b><span>${esc(s.uploadedPlatform||"platform not noted")}${s.uploadedAt?" // "+new Date(s.uploadedAt).toLocaleString():""}${s.uploadNote?" // "+esc(s.uploadNote):""}</span></div>`
-      :`<div class="uploadState pending"><b>⇧ READY TO POST</b><span>Not marked uploaded yet.</span></div>`)
+    ?(s.scrapped
+      ?`<div class="uploadState scrapped"><b>× SCRAPPED VERSION ${num(s.videoVersion)||""}</b><span>${s.scrappedAt?new Date(s.scrappedAt).toLocaleString():""}${s.scrapReason?" // "+esc(s.scrapReason):""}</span></div>`
+      :s.uploaded
+        ?`<div class="uploadState uploaded"><b>✓ MANUALLY UPLOADED // V${num(s.videoVersion)||1}</b><span>${esc(s.uploadedPlatform||"platform not noted")}${s.uploadedAt?" // "+new Date(s.uploadedAt).toLocaleString():""}${s.uploadNote?" // "+esc(s.uploadNote):""}</span></div>`
+        :`<div class="uploadState pending"><b>⇧ READY TO POST // V${num(s.videoVersion)||1}</b><span>Not marked uploaded yet.</span></div>`)
     :"";
   return `<article class="storyCard${cls}">
     <div class="storyTop">
@@ -160,7 +164,7 @@ function storyCard(s){
         <div class="storyMeta"><span class="statusTag ${verified||s.worthy?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
         ${s.manualVerificationOverride?'<span class="statusTag failed">MANUAL VERIFY OVERRIDE</span>':""}
         ${s.softVerificationOverride?'<span class="statusTag">RELAXED 1-SOURCE</span>':""}
-        ${s.uploaded?'<span class="statusTag uploaded">UPLOADED</span>':status==="COMPLETE"?'<span class="statusTag toPost">TO POST</span>':""}
+        ${s.scrapped?'<span class="statusTag scrapped">SCRAPPED</span>':s.uploaded?'<span class="statusTag uploaded">UPLOADED</span>':status==="COMPLETE"?'<span class="statusTag toPost">TO POST</span>':""}
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
       </div>
     </div>
@@ -184,9 +188,14 @@ function storyCard(s){
         <button class="btn warn" onclick="storyAction('${esc(s.id)}','HOLD')">Ⅱ HOLD</button>
         <button class="btn bad" onclick="storyAction('${esc(s.id)}','SKIP')">× NOT WORTH</button>
         <button class="btn ghost" onclick="storyAction('${esc(s.id)}','AUTO')">↻ AUTO</button>`:""}
-      ${status==="COMPLETE"?(s.uploaded
-        ?`<button class="btn uploadedBtn" onclick="setUploadStatus('${esc(s.id)}',false)">↩ UNMARK UPLOADED</button>`
-        :`<button class="btn publish" onclick="setUploadStatus('${esc(s.id)}',true)">⇧ MARK UPLOADED</button>`):""}
+      ${status==="COMPLETE"?`
+        <button class="btn primary" onclick="remakeVideo('${esc(s.id)}')">↻ RE-MAKE VIDEO</button>
+        ${s.scrapped
+          ?`<button class="btn ghost" onclick="setScrapStatus('${esc(s.id)}','',false)">↩ RESTORE VIDEO</button>`
+          :`<button class="btn bad" onclick="setScrapStatus('${esc(s.id)}','',true)">× SCRAP VIDEO</button>`}
+        ${!s.scrapped?(s.uploaded
+          ?`<button class="btn uploadedBtn" onclick="setUploadStatus('${esc(s.id)}','',false)">↩ UNMARK UPLOADED</button>`
+          :`<button class="btn publish" onclick="setUploadStatus('${esc(s.id)}','',true)">⇧ MARK UPLOADED</button>`):""}`:""}
     </div>
   </article>`
 }
@@ -199,19 +208,30 @@ function renderVideos(){
   if(!vs.length){root.className="videoList emptyState";root.textContent="No completed videos yet.";return}
   root.className="videoList";
   root.innerHTML=vs.slice().sort((a,b)=>{
-    const uploadOrder=Number(!!a.uploaded)-Number(!!b.uploaded);
-    if(uploadOrder!==0)return uploadOrder;
+    const stateRank=v=>v.scrapped?2:v.uploaded?1:0;
+    const stateOrder=stateRank(a)-stateRank(b);
+    if(stateOrder!==0)return stateOrder;
     return Date.parse(b.completedAt||0)-Date.parse(a.completedAt||0);
   }).map(v=>{
+    const storyId=v.storyId||v.jobId;
+    const versionId=v.versionId||"";
     const href="/videos/"+encodeURIComponent(v.filename||"")+(token?"?token="+encodeURIComponent(token):"");
     const tech=[v.ttsEngine?("TTS "+v.ttsEngine+(v.ttsVoice?" / "+v.ttsVoice:"")):"",v.visualMode?("VISUALS "+v.visualMode):"",num(v.comfyImages)>0?("COMFY "+num(v.comfyImages)+" IMG"):""].filter(Boolean).join(" // ");
-    const upload=v.uploaded
-      ?`<span class="uploadBadge uploaded">UPLOADED // ${esc(v.uploadedPlatform||"UNSPECIFIED")}${v.uploadedAt?" // "+new Date(v.uploadedAt).toLocaleDateString():""}</span>`
-      :`<span class="uploadBadge pending">TO POST</span>`;
-    const uploadButton=v.uploaded
-      ?`<button class="btn uploadedBtn" onclick="setUploadStatus('${esc(v.jobId)}',false)">UNMARK</button>`
-      :`<button class="btn publish" onclick="setUploadStatus('${esc(v.jobId)}',true)">MARK UPLOADED</button>`;
-    return `<div class="videoRow"><div class="videoInfo"><strong>${esc(v.topic||v.jobId)}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${upload}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions"><a href="${href}" target="_blank">OPEN MP4</a>${uploadButton}</div></div>`
+    const lifecycle=v.scrapped
+      ?`<span class="uploadBadge scrapped">SCRAPPED${v.scrappedAt?" // "+new Date(v.scrappedAt).toLocaleDateString():""}</span>`
+      :v.uploaded
+        ?`<span class="uploadBadge uploaded">UPLOADED // ${esc(v.uploadedPlatform||"UNSPECIFIED")}${v.uploadedAt?" // "+new Date(v.uploadedAt).toLocaleDateString():""}</span>`
+        :`<span class="uploadBadge pending">TO POST</span>`;
+    const uploadButton=v.scrapped?"":v.uploaded
+      ?`<button class="btn uploadedBtn" onclick="setUploadStatus('${esc(storyId)}','${esc(versionId)}',false)">UNMARK</button>`
+      :`<button class="btn publish" onclick="setUploadStatus('${esc(storyId)}','${esc(versionId)}',true)">MARK UPLOADED</button>`;
+    const scrapButton=v.scrapped
+      ?`<button class="btn ghost" onclick="setScrapStatus('${esc(storyId)}','${esc(versionId)}',false)">RESTORE</button>`
+      :`<button class="btn bad" onclick="setScrapStatus('${esc(storyId)}','${esc(versionId)}',true)">SCRAP</button>`;
+    const remakeButton=v.current
+      ?`<button class="btn primary" onclick="remakeVideo('${esc(storyId)}')">RE-MAKE</button>`
+      :"";
+    return `<div class="videoRow"><div class="videoInfo"><strong>${esc(v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${lifecycle}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions"><a href="${href}" target="_blank">OPEN MP4</a>${remakeButton}${uploadButton}${scrapButton}</div></div>`
   }).join("");
 }
 
@@ -220,12 +240,18 @@ async function storyAction(id,action){
     const result=await api("/api/stories/"+encodeURIComponent(id)+"/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
     if((action==="MAKE"||action==="WORTH")&&result&&result.manualVerificationOverride)toast(action==="WORTH"?"Marked WORTH IT and queued with a one-source override.":"Force-queued. Manual verification override recorded.");
     else if(action==="WORTH")toast("Marked WORTH IT and queued for production.");
+    else if(action==="REMAKE")toast("Re-make queued. Previous video version kept in archive.");
     else toast(action==="MAKE"?"Queued for video production.":action+" saved.");
     await loadState();
   }catch(e){toast(e.message,true)}
 }
 window.storyAction=storyAction;
-async function setUploadStatus(id,uploaded){
+async function remakeVideo(id){
+  if(!confirm("Queue a fresh re-make? The existing completed video will stay in the archive as its own version."))return;
+  await storyAction(id,"REMAKE");
+}
+window.remakeVideo=remakeVideo;
+async function setUploadStatus(id,versionId,uploaded){
   try{
     let platform="",note="";
     if(uploaded){
@@ -242,13 +268,32 @@ async function setUploadStatus(id,uploaded){
     await api("/api/stories/"+encodeURIComponent(id)+"/upload-status",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({uploaded,platform,note})
+      body:JSON.stringify({uploaded,platform,note,versionId})
     });
     toast(uploaded?"Marked manually uploaded.":"Upload mark removed.");
     await loadState();
   }catch(e){toast(e.message,true)}
 }
 window.setUploadStatus=setUploadStatus;
+async function setScrapStatus(id,versionId,scrapped){
+  try{
+    let reason="";
+    if(scrapped){
+      const r=prompt("Why are you scrapping this video? (optional)","");
+      if(r===null)return;
+      reason=r.trim();
+      if(!confirm("Scrap this completed video version? It will stay in the archive but leave TO POST / UPLOADED."))return;
+    }else if(!confirm("Restore this scrapped video version?"))return;
+    await api("/api/stories/"+encodeURIComponent(id)+"/scrap-status",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({scrapped,reason,versionId})
+    });
+    toast(scrapped?"Video marked SCRAPPED.":"Video restored.");
+    await loadState();
+  }catch(e){toast(e.message,true)}
+}
+window.setScrapStatus=setScrapStatus;
 async function analyzeBias(id){
   try{
     await api("/api/stories/"+encodeURIComponent(id)+"/analyze-bias",{method:"POST"});
