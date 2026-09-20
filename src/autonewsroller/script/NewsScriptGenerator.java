@@ -84,7 +84,7 @@ If previousValidationFailure or previousDraft is present, this is a repair attem
                 if(previousDraft!=null)input.put("previousDraft",previousDraft);
 
                 String raw=ollama.generateJson(basePrompt,Json.stringify(input),scriptSchema(desiredSegments));
-                NewsScript s=parse(raw,fp,targetSeconds);
+                NewsScript s=assembleFromModelJson(raw,fp,targetSeconds);
                 previousDraft=s.toMap();
 
                 List<String>problems=validator.validate(s,fp,targetSeconds);
@@ -103,7 +103,7 @@ If previousValidationFailure or previousDraft is present, this is a repair attem
         throw last;
     }
 
-    private static NewsScript parse(String raw,FactPackage fp,int target){
+    public static NewsScript assembleFromModelJson(String raw,FactPackage fp,int target){
         Map<String,Object>m=Json.object(Json.parse(raw));
         String h=String.valueOf(m.getOrDefault("headline",fp.headline()));
         if(h.isBlank())h=fp.headline();
