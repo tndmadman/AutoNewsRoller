@@ -475,9 +475,9 @@ public final class CommandCenterStore {
         counts.put("verified",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("verified"))).count());
         counts.put("worthy",stories.values().stream().filter(CommandCenterStore::isActionableWorthy).count());
         counts.put("queued",countStatus("QUEUED"));counts.put("producing",countStatus("PRODUCING"));counts.put("complete",countStatus("COMPLETE")+countStatus("COMPLETE_HISTORY"));counts.put("hold",countStatus("HOLD"));counts.put("skipped",countStatus("SKIPPED"));counts.put("failed",countStatus("FAILED"));
-        counts.put("toPost",stories.values().stream().filter(CommandCenterStore::isToPost).count());
-        counts.put("uploaded",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("uploaded"))&&!Boolean.TRUE.equals(x.get("scrapped"))).count());
-        counts.put("scrapped",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("scrapped"))).count());
+        counts.put("toPost",videos.values().stream().filter(v->!Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
+        counts.put("uploaded",videos.values().stream().filter(v->Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
+        counts.put("scrapped",videos.values().stream().filter(v->Boolean.TRUE.equals(v.get("scrapped"))).count());
         counts.put("videoVersions",videos.size());
         counts.put("feedsOk",feeds.values().stream().filter(x->"OK".equals(x.get("status"))).count());counts.put("feedsFailed",feeds.values().stream().filter(x->"FAILED".equals(x.get("status"))).count());counts.put("workersOnline",ww.stream().filter(x->Boolean.TRUE.equals(x.get("online"))).count());
         counts.put("biasQueued",stories.values().stream().filter(x->"QUEUED".equals(x.get("biasAnalysisStatus"))).count());
@@ -660,8 +660,10 @@ public final class CommandCenterStore {
             story.put("videoVersion",version);story.put("currentVideoVersionId",versionId);
             for(Map<String,Object>x:videos.values())if(storyId.equals(String.valueOf(x.get("storyId"))))x.put("current",x==v);
             if("COMPLETE".equals(String.valueOf(story.get("status")))){
-                if(story.containsKey("uploadHistory")&&!v.containsKey("uploadHistory"))v.put("uploadHistory",story.get("uploadHistory"));
-                copyPublicationState(story,v);copyPublicationState(v,story);
+                boolean storyHasPublicationState=story.containsKey("uploadedAt")||story.containsKey("uploadedPlatform")||story.containsKey("uploadHistory")
+                        ||story.containsKey("scrappedAt")||story.containsKey("scrapReason")||story.containsKey("scrapHistory");
+                if(storyHasPublicationState)copyPublicationState(story,v);
+                copyPublicationState(v,story);
             }
         }
         return changed;
