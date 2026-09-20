@@ -277,6 +277,8 @@ public final class SelfTest {
                 "production duration defaults require one-minute-plus output");
         ok(cfg.getInt("commandCenterComfyImages",0)>=6&&cfg.getBool("comfyDisableDynamicVram",false),
                 "production defaults request six Comfy images with dynamic VRAM disabled");
+        ok(cfg.getInt("ollamaContextTokens",0)>=8192&&cfg.getInt("ollamaMaxOutputTokens",0)>=1600,
+                "script Ollama budget reserves enough context and output tokens");
 
         StoryCluster cluster=new StoryClusterer().cluster(a.stream().filter(x->!x.title().contains("Old archive")).toList())
                 .stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
@@ -290,6 +292,25 @@ public final class SelfTest {
         NewsScript shortScript=new NewsScript(fp.storyId(),fp.headline(),"This narration is deliberately too short.",segments,3,List.of());
         ok(new ScriptValidator().validate(shortScript,fp,70).stream().anyMatch(x->x.startsWith("narration too short")),
                 "script validator rejects short narration for production target");
+
+        Map<String,Object>modelJson=new LinkedHashMap<>();
+        modelJson.put("headline",fp.headline());
+        modelJson.put("narration","too short and intentionally ignored");
+        List<Map<String,Object>>modelSegments=new ArrayList<>();
+        String segmentNarration="This verified segment restates supplied reporting in complete neutral sentences while preserving only facts already present in the verified package for narration.";
+        for(int i=0;i<8;i++)modelSegments.add(Map.of(
+                "narration",segmentNarration,
+                "purpose","verified detail",
+                "visualType","BACKGROUND",
+                "visualPrompt","Documentary visual grounded in verified source material"
+        ));
+        modelJson.put("segments",modelSegments);
+        NewsScript assembled=NewsScriptGenerator.assembleFromModelJson(Json.stringify(modelJson),fp,70);
+        Set<String>allowedPublishers=new HashSet<>();
+        for(Map<String,Object>source:fp.sources())allowedPublishers.add(String.valueOf(source.get("publisher")));
+        ok(assembled.segments().size()==8&&Text.words(assembled.narration())>=158&&
+                        assembled.sourceLabels().stream().allMatch(allowedPublishers::contains),
+                "script assembly uses combined segment narration and trusted publisher labels");
 
         Path ass=Files.createTempFile("autonews-captions-",".ass");
         CaptionWriter.write(ass,
