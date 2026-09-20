@@ -120,6 +120,13 @@ public final class CommandCenterServer {
             if(p.length>=2&&"action".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>body=bodyObject(x);String action=String.valueOf(body.getOrDefault("action",""));json(x,200,store.action(id,action));return;
             }
+            if(p.length>=2&&"upload-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
+                Map<String,Object>body=bodyObject(x);
+                boolean uploaded=Boolean.TRUE.equals(body.get("uploaded"));
+                String platform=String.valueOf(body.getOrDefault("platform",""));
+                String note=String.valueOf(body.getOrDefault("note",""));
+                json(x,200,store.setUploadStatus(id,uploaded,platform,note));return;
+            }
             if(p.length>=2&&"analyze-bias".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 json(x,202,store.queuePoliticalAnalysis(id));return;
             }
