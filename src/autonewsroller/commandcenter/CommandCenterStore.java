@@ -359,7 +359,7 @@ public final class CommandCenterStore {
         Map<String,Object>counts=new LinkedHashMap<>();
         counts.put("stories",stories.size());
         counts.put("verified",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("verified"))).count());
-        counts.put("worthy",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("worthy"))).filter(x->!"SKIPPED".equals(String.valueOf(x.get("status")))).count());
+        counts.put("worthy",stories.values().stream().filter(CommandCenterStore::isActionableWorthy).count());
         counts.put("queued",countStatus("QUEUED"));counts.put("producing",countStatus("PRODUCING"));counts.put("complete",countStatus("COMPLETE")+countStatus("COMPLETE_HISTORY"));counts.put("hold",countStatus("HOLD"));counts.put("skipped",countStatus("SKIPPED"));counts.put("failed",countStatus("FAILED"));
         counts.put("feedsOk",feeds.values().stream().filter(x->"OK".equals(x.get("status"))).count());counts.put("feedsFailed",feeds.values().stream().filter(x->"FAILED".equals(x.get("status"))).count());counts.put("workersOnline",ww.stream().filter(x->Boolean.TRUE.equals(x.get("online"))).count());
         counts.put("biasQueued",stories.values().stream().filter(x->"QUEUED".equals(x.get("biasAnalysisStatus"))).count());
@@ -415,7 +415,12 @@ public final class CommandCenterStore {
     private static String valueAfter(String text,String marker,String until){int i=text.indexOf(marker);if(i<0)return "";String tail=text.substring(i+marker.length());int j=tail.indexOf(until);return (j<0?tail:tail.substring(0,j)).trim();}
     private static String safe(String x){return x==null?"":x.length()>1000?x.substring(0,1000):x;}
     private static boolean isOnline(Map<String,Object>x){try{return Duration.between(Instant.parse(String.valueOf(x.get("lastSeen"))),Instant.now()).toSeconds()<45;}catch(Exception e){return false;}}
-    private Map<String,Object>publicStory(Map<String,Object>m){Map<String,Object>x=deepCopyMap(m);x.remove("candidate");return x;}
+    private Map<String,Object>publicStory(Map<String,Object>m){Map<String,Object>x=deepCopyMap(m);x.remove("candidate");x.put("actionableWorthy",isActionableWorthy(m));return x;}
+    private static boolean isActionableWorthy(Map<String,Object>m){
+        if(!Boolean.TRUE.equals(m.get("worthy")))return false;
+        String status=String.valueOf(m.getOrDefault("status",""));
+        return Set.of("DISCOVERED","VERIFIED","WORTHY").contains(status);
+    }
     private static Map<String,Object>publicCopy(Map<String,Object>m){return new LinkedHashMap<>(m);}
     @SuppressWarnings("unchecked") private static Map<String,Object>deepCopyMap(Map<String,Object>m){return Json.object(Json.parse(Json.stringify(m)));}
 
