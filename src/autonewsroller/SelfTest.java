@@ -151,8 +151,13 @@ public final class SelfTest {
         NewsPipeline.Candidate rebuilt=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
         ok(rebuilt.cluster().id.equals(cluster.id)&&rebuilt.factPackage().independentSourceCount()>=2,"remote worker candidate round trip");
         store.fail(cluster.id,"expected test failure");
+        Map<String,Object>failedRequeued=store.storyDetail(cluster.id);
+        ok("QUEUED".equals(failedRequeued.get("status"))&&((Number)failedRequeued.get("failureCount")).intValue()==1&&failedRequeued.get("retryNotBefore")!=null,
+                "failed video job automatically returns to queue with retry metadata");
         store.action(cluster.id,"MAKE");
-        ok("QUEUED".equals(store.storyDetail(cluster.id).get("status")),"command center manual MAKE requeues verified story");
+        Map<String,Object>manualRequeued=store.storyDetail(cluster.id);
+        ok("QUEUED".equals(manualRequeued.get("status"))&&manualRequeued.get("failureCount")==null&&manualRequeued.get("retryNotBefore")==null,
+                "manual MAKE resets automatic failure retry budget");
 
         Article single=fresh.get(0);
         StoryCluster unverifiedCluster=new StoryCluster("manual-override-story",single.title(),List.of(single),Set.of(),"manual-override-fingerprint");
@@ -176,11 +181,27 @@ public final class SelfTest {
         relaxedAuto.applyDiscovery(new NewsPipeline.DiscoveryResult(List.of(autoItem),1,1,0,1,1,1,1,Instant.now()));
         Map<String,Object>autoQueued=relaxedAuto.storyDetail(autoCluster.id);
         ok("QUEUED".equals(autoQueued.get("status"))&&Boolean.TRUE.equals(autoQueued.get("softVerificationOverride")),"exceptional one-source story can auto-queue under relaxed threshold");
+
+        CommandCenterStore retryCapStore=new CommandCenterStore(
+                dir.resolve("retry-cap-state.json"),BiasRegistry.load(dir.resolve("bias.json")),
+                true,0.68,12,null,75,0.74,0.82,1,0
+        );
+        retryCapStore.applyDiscovery(result);
+        ok(retryCapStore.claim("retry-worker-1",Map.of("duration",60))!=null,"retry-cap fixture job can be claimed");
+        retryCapStore.fail(cluster.id,"first production failure");
+        ok("QUEUED".equals(retryCapStore.storyDetail(cluster.id).get("status")),"first production failure is automatically requeued");
+        ok(retryCapStore.claim("retry-worker-2",Map.of("duration",60))!=null,"automatically requeued failure can be claimed again");
+        retryCapStore.fail(cluster.id,"second production failure");
+        Map<String,Object>terminalFailure=retryCapStore.storyDetail(cluster.id);
+        ok("FAILED".equals(terminalFailure.get("status"))&&((Number)terminalFailure.get("failureCount")).intValue()==2,
+                "job becomes terminal FAILED only after configured automatic retry budget is exhausted");
     }
 
     private void testCommandCenterMediaReporting(Path root,List<Article>a)throws Exception{
         NewsConfig cfg=NewsConfig.load(root);
         ok(cfg.getBool("commandCenterUseComfy",false)&&cfg.getBool("commandCenterRequireComfy",false)&&cfg.getInt("commandCenterComfyImages",0)>=3&&cfg.getBool("comfyAutoPickCheckpoint",false),"command center requires multiple ComfyUI images by default");
+        ok(cfg.getInt("commandCenterFailureMaxRetries",0)>=1&&cfg.getInt("commandCenterFailureRetryDelaySeconds",-1)>=0,
+                "command center failed video jobs have an automatic retry policy");
 
         List<Article>fresh=a.stream().filter(x->!x.title().contains("Old archive")).toList();
         StoryCluster cluster=new StoryClusterer().cluster(fresh).stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();

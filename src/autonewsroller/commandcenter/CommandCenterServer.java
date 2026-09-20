@@ -40,7 +40,9 @@ public final class CommandCenterServer {
                 this::broadcast,
                 cfg.getInt("commandCenterJobLeaseSeconds",75),
                 cfg.getDouble("commandCenterSoftWorthThreshold",0.74),
-                cfg.getDouble("commandCenterSingleSourceAutoQueueThreshold",0.82)
+                cfg.getDouble("commandCenterSingleSourceAutoQueueThreshold",0.82),
+                cfg.getInt("commandCenterFailureMaxRetries",3),
+                cfg.getInt("commandCenterFailureRetryDelaySeconds",20)
         );
     }
 
