@@ -37,7 +37,7 @@
         <div class="metric"><span>FEEDS ONLINE</span><strong id="feedsOnline">0</strong><small id="feedsFailed">0 failed</small></div>
         <div class="metric"><span>STORIES TRACKED</span><strong id="storiesTracked">0</strong><small id="verifiedCount">0 verified</small></div>
         <div class="metric accent"><span>PRODUCTION QUEUE</span><strong id="queuedCount">0</strong><small id="producingCount">0 active</small></div>
-        <div class="metric"><span>VIDEOS COMPLETE</span><strong id="completeCount">0</strong><small>controller archive</small></div>
+        <div class="metric"><span>VIDEOS COMPLETE</span><strong id="completeCount">0</strong><small id="completeSub">0 to post // 0 uploaded</small></div>
         <div class="metric"><span>WORKERS ONLINE</span><strong id="workersOnline">0</strong><small>remote GPU nodes</small></div>
         <div class="metric"><span>AUTO THRESHOLD</span><strong id="autoThreshold">--</strong><small id="autoQueueState">auto queue</small></div>
       </div>
@@ -63,6 +63,8 @@
             <option value="HOLD">HOLD</option>
             <option value="FAILED">FAILED</option>
             <option value="COMPLETE">COMPLETE</option>
+            <option value="TO_POST">TO POST</option>
+            <option value="UPLOADED">UPLOADED</option>
             <option value="SKIPPED">SKIPPED</option>
           </select>
         </div>
@@ -74,6 +76,8 @@
         <button class="rail" data-filter="QUEUED">QUEUE <b id="railQueued">0</b></button>
         <button class="rail" data-filter="PRODUCING">MAKING <b id="railProducing">0</b></button>
         <button class="rail" data-filter="COMPLETE">DONE <b id="railComplete">0</b></button>
+        <button class="rail" data-filter="TO_POST">TO POST <b id="railToPost">0</b></button>
+        <button class="rail" data-filter="UPLOADED">UPLOADED <b id="railUploaded">0</b></button>
       </div>
       <div id="stories" class="storyGrid"></div>
     </section>
@@ -84,7 +88,7 @@
         <div id="feeds" class="feedGrid"></div>
       </div>
       <div class="panel">
-        <div class="panelTitle"><span>VIDEO ARCHIVE</span><small>UPLOADED FROM WORKERS</small></div>
+        <div class="panelTitle"><span>VIDEO ARCHIVE</span><small>MANUAL POSTING TRACKER</small></div>
         <div id="videos" class="videoList emptyState">No completed videos yet.</div>
       </div>
     </section>
