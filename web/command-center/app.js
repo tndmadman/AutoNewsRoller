@@ -107,6 +107,7 @@ function storyCard(s){
   const pubs=(s.publishers||[]).slice(0,8).map(p=>`<span class="sourceChip">${esc(p)}</span>`).join("");
   const cls=status==="PRODUCING"?" producing":status==="FAILED"?" failed":"";
   const makeDisabled=["QUEUED","PRODUCING","COMPLETE","COMPLETE_HISTORY"].includes(status);
+  const completeLike=status.startsWith("COMPLETE");
   const engine=esc(s.ttsEngine||"pending");
   const voice=esc(s.ttsVoice||"");
   const visual=esc(s.visualMode||((s.stage==="VISUALS"&&s.detail)?s.detail:"pending"));
@@ -177,11 +178,12 @@ function storyCard(s){
     </div>
     ${framingPanel}
     <div class="storyActions">
-      <button class="btn good" onclick="storyAction('${esc(s.id)}','WORTH')" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
-      <button class="btn primary" onclick="storyAction('${esc(s.id)}','MAKE')" ${makeDisabled?"disabled":""}>▶ MAKE VIDEO</button>
-      <button class="btn warn" onclick="storyAction('${esc(s.id)}','HOLD')">Ⅱ HOLD</button>
-      <button class="btn bad" onclick="storyAction('${esc(s.id)}','SKIP')">× NOT WORTH</button>
-      <button class="btn ghost" onclick="storyAction('${esc(s.id)}','AUTO')">↻ AUTO</button>
+      ${!completeLike?`
+        <button class="btn good" onclick="storyAction('${esc(s.id)}','WORTH')" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
+        <button class="btn primary" onclick="storyAction('${esc(s.id)}','MAKE')" ${makeDisabled?"disabled":""}>▶ MAKE VIDEO</button>
+        <button class="btn warn" onclick="storyAction('${esc(s.id)}','HOLD')">Ⅱ HOLD</button>
+        <button class="btn bad" onclick="storyAction('${esc(s.id)}','SKIP')">× NOT WORTH</button>
+        <button class="btn ghost" onclick="storyAction('${esc(s.id)}','AUTO')">↻ AUTO</button>`:""}
       ${status==="COMPLETE"?(s.uploaded
         ?`<button class="btn uploadedBtn" onclick="setUploadStatus('${esc(s.id)}',false)">↩ UNMARK UPLOADED</button>`
         :`<button class="btn publish" onclick="setUploadStatus('${esc(s.id)}',true)">⇧ MARK UPLOADED</button>`):""}
@@ -196,7 +198,11 @@ function renderVideos(){
   const root=$("#videos"),vs=state.videos||[];
   if(!vs.length){root.className="videoList emptyState";root.textContent="No completed videos yet.";return}
   root.className="videoList";
-  root.innerHTML=vs.slice().reverse().map(v=>{
+  root.innerHTML=vs.slice().sort((a,b)=>{
+    const uploadOrder=Number(!!a.uploaded)-Number(!!b.uploaded);
+    if(uploadOrder!==0)return uploadOrder;
+    return Date.parse(b.completedAt||0)-Date.parse(a.completedAt||0);
+  }).map(v=>{
     const href="/videos/"+encodeURIComponent(v.filename||"")+(token?"?token="+encodeURIComponent(token):"");
     const tech=[v.ttsEngine?("TTS "+v.ttsEngine+(v.ttsVoice?" / "+v.ttsVoice:"")):"",v.visualMode?("VISUALS "+v.visualMode):"",num(v.comfyImages)>0?("COMFY "+num(v.comfyImages)+" IMG"):""].filter(Boolean).join(" // ");
     const upload=v.uploaded
