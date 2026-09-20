@@ -128,7 +128,15 @@ public final class NewsPipeline {
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,boolean dryRun)throws Exception{
         Files.createDirectories(slotDir);StoryCluster c=cand.cluster();FactPackage fp=cand.factPackage();logs.worker(worker,"slot="+slot+" story="+c.topic+" started");events.emit(worker,slot,PipelineStage.VERIFY,fp.independentSourceCount()+" independent sources");
         Json.write(slotDir.resolve("story.json"),c.toMap());Path articleDir=slotDir.resolve("articles");Files.createDirectories(articleDir);int articleIndex=0;for(Article a:c.articles)Json.write(articleDir.resolve(String.format("%02d.json",articleIndex++)),a.toMap());Json.write(slotDir.resolve("fact_package.json"),fp.toMap());
-        OllamaClient oc=dryRun?null:new OllamaClient(cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate"),cfg.get("ollamaModel","llama3.1:8b"),cfg.get("ollamaKeepAlive","30m"),root.resolve("output/runtime/ollama.lock"));NewsScript script=new NewsScriptGenerator(oc,cfg.getInt("ollamaRetries",3)).generate(fp,targetSeconds,dryRun);Json.write(slotDir.resolve("script.json"),script.toMap());events.emit(worker,slot,PipelineStage.SCRIPT,"script ready");
+        OllamaClient oc=dryRun?null:new OllamaClient(
+                cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate"),
+                cfg.get("ollamaModel","llama3.1:8b"),
+                cfg.get("ollamaKeepAlive","30m"),
+                root.resolve("output/runtime/ollama.lock"),
+                cfg.getInt("ollamaContextTokens",8192),
+                cfg.getInt("ollamaMaxOutputTokens",2200),
+                cfg.getDouble("ollamaTemperature",0.2)
+        );NewsScript script=new NewsScriptGenerator(oc,cfg.getInt("ollamaRetries",3)).generate(fp,targetSeconds,dryRun);Json.write(slotDir.resolve("script.json"),script.toMap());events.emit(worker,slot,PipelineStage.SCRIPT,"script ready");
         VisualPlan plan=new VisualPlanner().plan(script,fp);Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
         if(dryRun){Map<String,Object>audit=new LinkedHashMap<>();audit.put("status","approved-dry-run");audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());Json.write(slotDir.resolve("audit.json"),audit);events.emit(worker,slot,PipelineStage.APPROVED,"dry-run complete");logs.worker(worker,"slot="+slot+" dry-run approved");return slotDir.resolve("script.json");}
 
