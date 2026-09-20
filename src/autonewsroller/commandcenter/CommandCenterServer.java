@@ -125,7 +125,15 @@ public final class CommandCenterServer {
                 boolean uploaded=Boolean.TRUE.equals(body.get("uploaded"));
                 String platform=String.valueOf(body.getOrDefault("platform",""));
                 String note=String.valueOf(body.getOrDefault("note",""));
-                json(x,200,store.setUploadStatus(id,uploaded,platform,note));return;
+                String versionId=String.valueOf(body.getOrDefault("versionId",""));
+                json(x,200,store.setUploadStatus(id,versionId,uploaded,platform,note));return;
+            }
+            if(p.length>=2&&"scrap-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
+                Map<String,Object>body=bodyObject(x);
+                boolean scrapped=Boolean.TRUE.equals(body.get("scrapped"));
+                String reason=String.valueOf(body.getOrDefault("reason",""));
+                String versionId=String.valueOf(body.getOrDefault("versionId",""));
+                json(x,200,store.setScrapStatus(id,versionId,scrapped,reason));return;
             }
             if(p.length>=2&&"analyze-bias".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 json(x,202,store.queuePoliticalAnalysis(id));return;

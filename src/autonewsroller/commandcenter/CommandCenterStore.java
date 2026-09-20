@@ -201,6 +201,17 @@ public final class CommandCenterStore {
                     m.remove("manualVerificationOverride");m.remove("verificationOverrideReason");
                 }
             }
+            case "REMAKE","RE-MAKE"->{
+                if(!"COMPLETE".equals(String.valueOf(m.get("status"))))
+                    throw new IllegalStateException("Only a completed video can be re-made.");
+                if(currentVideo(m)==null)
+                    throw new IllegalStateException("No completed local video version is available to re-make.");
+                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","REMAKE");
+                m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);
+                m.put("remakeCount",integer(m.get("remakeCount"))+1);m.put("remakeQueuedAt",Instant.now().toString());
+                m.put("detail","Re-make queued; previous completed video retained in archive");
+                m.remove("error");clearLease(m);resetFailureRetryState(m);clearCurrentPublicationState(m);clearCurrentMediaResult(m);
+            }
             case "HOLD"->{
                 m.put("decision","HOLD");m.put("status","HOLD");m.put("stage","HOLD");m.put("progress",10);
                 m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
@@ -329,8 +340,12 @@ public final class CommandCenterStore {
     }
 
     public synchronized void complete(String jobId,Map<String,Object>metadata){
-        Map<String,Object>m=requireStory(jobId);m.put("status","COMPLETE");m.put("stage","COMPLETE");m.put("progress",100);clearLease(m);m.put("completedAt",Instant.now().toString());m.put("result",new LinkedHashMap<>(metadata));m.remove("error");
-        m.putIfAbsent("uploaded",false);
+        Map<String,Object>m=requireStory(jobId);
+        int version=nextVideoVersion(jobId);
+        String versionId=videoVersionId(jobId,version);
+        m.put("status","COMPLETE");m.put("stage","COMPLETE");m.put("progress",100);clearLease(m);m.put("completedAt",Instant.now().toString());m.put("result",new LinkedHashMap<>(metadata));m.remove("error");
+        m.put("videoVersion",version);m.put("currentVideoVersionId",versionId);
+        clearCurrentPublicationState(m);m.put("uploaded",false);m.put("scrapped",false);
         Object sidecarObj=metadata.get("sidecar");
         if(sidecarObj instanceof Map<?,?>){
             Map<String,Object>sidecar=Json.object(sidecarObj);
@@ -351,49 +366,74 @@ public final class CommandCenterStore {
             m.put("comfyImages",comfyImages);m.put("proceduralImages",proceduralImages);
             m.put("visualMode",comfyImages>0?"ComfyUI + procedural cards":"Procedural cards");
         }
-        Map<String,Object>v=new LinkedHashMap<>();v.put("jobId",jobId);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));copyUploadState(m,v);videos.put(jobId,v);
+        for(Map<String,Object>existing:videos.values())if(jobId.equals(String.valueOf(existing.get("storyId"))))existing.put("current",false);
+        Map<String,Object>v=new LinkedHashMap<>();v.put("versionId",versionId);v.put("storyId",jobId);v.put("jobId",jobId);v.put("version",version);v.put("current",true);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));copyPublicationState(m,v);videos.put(versionId,v);
         persistQuiet();emit("story",publicStory(m));emit("video",publicCopy(v));
     }
 
     public synchronized Map<String,Object> setUploadStatus(String storyId,boolean uploaded,String platform,String note){
+        return setUploadStatus(storyId,"",uploaded,platform,note);
+    }
+
+    public synchronized Map<String,Object> setUploadStatus(String storyId,String versionId,boolean uploaded,String platform,String note){
         Map<String,Object>m=requireStory(storyId);
-        if(!"COMPLETE".equals(String.valueOf(m.get("status")))&&!videos.containsKey(storyId))
-            throw new IllegalStateException("Only completed local videos can be marked uploaded.");
+        Map<String,Object>v=resolveVideo(storyId,versionId);
+        if(v==null)throw new IllegalStateException("No completed local video version is available.");
+        if(uploaded&&Boolean.TRUE.equals(v.get("scrapped")))
+            throw new IllegalStateException("A scrapped video cannot be marked uploaded until it is restored.");
 
         Instant now=Instant.now();
         String cleanPlatform=safeText(platform,80);
         String cleanNote=safeText(note,500);
 
-        List<Object>history=new ArrayList<>();
-        Object existingHistory=m.get("uploadHistory");
-        if(existingHistory instanceof List<?>list)history.addAll(list);
+        appendStateHistory(v,"uploadHistory",now,Map.of(
+                "uploaded",uploaded,
+                "platform",cleanPlatform,
+                "note",cleanNote
+        ));
 
-        Map<String,Object>event=new LinkedHashMap<>();
-        event.put("at",now.toString());
-        event.put("uploaded",uploaded);
-        if(!cleanPlatform.isBlank())event.put("platform",cleanPlatform);
-        if(!cleanNote.isBlank())event.put("note",cleanNote);
-        history.add(event);
-        while(history.size()>50)history.remove(0);
-
-        m.put("uploaded",uploaded);
-        m.put("uploadUpdatedAt",now.toString());
-        m.put("uploadHistory",history);
+        v.put("uploaded",uploaded);
+        v.put("uploadUpdatedAt",now.toString());
         if(uploaded){
-            m.put("uploadedAt",now.toString());
-            if(cleanPlatform.isBlank())m.remove("uploadedPlatform");else m.put("uploadedPlatform",cleanPlatform);
-            if(cleanNote.isBlank())m.remove("uploadNote");else m.put("uploadNote",cleanNote);
+            v.put("uploadedAt",now.toString());
+            if(cleanPlatform.isBlank())v.remove("uploadedPlatform");else v.put("uploadedPlatform",cleanPlatform);
+            if(cleanNote.isBlank())v.remove("uploadNote");else v.put("uploadNote",cleanNote);
         }else{
-            m.remove("uploadedAt");m.remove("uploadedPlatform");m.remove("uploadNote");
+            v.remove("uploadedAt");v.remove("uploadedPlatform");v.remove("uploadNote");
         }
 
-        Map<String,Object>v=videos.get(storyId);
-        if(v!=null)copyUploadState(m,v);
+        if(isCurrentVideo(m,v))copyPublicationState(v,m);
 
         persistQuiet();
-        Map<String,Object>pub=publicStory(m);
-        emit("story",pub);
-        if(v!=null)emit("video",publicCopy(v));
+        Map<String,Object>pub=publicStory(m);emit("story",pub);emit("video",publicCopy(v));
+        return pub;
+    }
+
+    public synchronized Map<String,Object> setScrapStatus(String storyId,String versionId,boolean scrapped,String reason){
+        Map<String,Object>m=requireStory(storyId);
+        Map<String,Object>v=resolveVideo(storyId,versionId);
+        if(v==null)throw new IllegalStateException("No completed local video version is available.");
+
+        Instant now=Instant.now();
+        String cleanReason=safeText(reason,500);
+        Map<String,Object>event=new LinkedHashMap<>();
+        event.put("scrapped",scrapped);
+        if(!cleanReason.isBlank())event.put("reason",cleanReason);
+        appendStateHistory(v,"scrapHistory",now,event);
+
+        v.put("scrapped",scrapped);
+        v.put("scrapUpdatedAt",now.toString());
+        if(scrapped){
+            v.put("scrappedAt",now.toString());
+            if(cleanReason.isBlank())v.remove("scrapReason");else v.put("scrapReason",cleanReason);
+        }else{
+            v.remove("scrappedAt");v.remove("scrapReason");
+        }
+
+        if(isCurrentVideo(m,v))copyPublicationState(v,m);
+
+        persistQuiet();
+        Map<String,Object>pub=publicStory(m);emit("story",pub);emit("video",publicCopy(v));
         return pub;
     }
 
@@ -435,8 +475,10 @@ public final class CommandCenterStore {
         counts.put("verified",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("verified"))).count());
         counts.put("worthy",stories.values().stream().filter(CommandCenterStore::isActionableWorthy).count());
         counts.put("queued",countStatus("QUEUED"));counts.put("producing",countStatus("PRODUCING"));counts.put("complete",countStatus("COMPLETE")+countStatus("COMPLETE_HISTORY"));counts.put("hold",countStatus("HOLD"));counts.put("skipped",countStatus("SKIPPED"));counts.put("failed",countStatus("FAILED"));
-        counts.put("toPost",stories.values().stream().filter(CommandCenterStore::isToPost).count());
-        counts.put("uploaded",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("uploaded"))).count());
+        counts.put("toPost",videos.values().stream().filter(v->!Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
+        counts.put("uploaded",videos.values().stream().filter(v->Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
+        counts.put("scrapped",videos.values().stream().filter(v->Boolean.TRUE.equals(v.get("scrapped"))).count());
+        counts.put("videoVersions",videos.size());
         counts.put("feedsOk",feeds.values().stream().filter(x->"OK".equals(x.get("status"))).count());counts.put("feedsFailed",feeds.values().stream().filter(x->"FAILED".equals(x.get("status"))).count());counts.put("workersOnline",ww.stream().filter(x->Boolean.TRUE.equals(x.get("online"))).count());
         counts.put("biasQueued",stories.values().stream().filter(x->"QUEUED".equals(x.get("biasAnalysisStatus"))).count());
         counts.put("biasAnalyzing",stories.values().stream().filter(x->"ANALYZING".equals(x.get("biasAnalysisStatus"))).count());
@@ -464,15 +506,57 @@ public final class CommandCenterStore {
         m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");
     }
     private static boolean isToPost(Map<String,Object>m){
-        return "COMPLETE".equals(String.valueOf(m.get("status")))&&!Boolean.TRUE.equals(m.get("uploaded"));
+        return "COMPLETE".equals(String.valueOf(m.get("status")))
+                &&!Boolean.TRUE.equals(m.get("uploaded"))
+                &&!Boolean.TRUE.equals(m.get("scrapped"));
     }
-    private static void copyUploadState(Map<String,Object>from,Map<String,Object>to){
+    private Map<String,Object>currentVideo(Map<String,Object>story){
+        String current=String.valueOf(story.getOrDefault("currentVideoVersionId",""));
+        if(!current.isBlank()&&videos.containsKey(current))return videos.get(current);
+        String storyId=String.valueOf(story.getOrDefault("id",""));
+        return videos.values().stream()
+                .filter(v->storyId.equals(String.valueOf(v.get("storyId"))))
+                .max(Comparator.comparingInt(v->integer(v.get("version"))))
+                .orElse(null);
+    }
+    private Map<String,Object>resolveVideo(String storyId,String versionId){
+        if(versionId!=null&&!versionId.isBlank()){
+            Map<String,Object>v=videos.get(versionId);
+            return v!=null&&storyId.equals(String.valueOf(v.get("storyId")))?v:null;
+        }
+        return currentVideo(requireStory(storyId));
+    }
+    private static boolean isCurrentVideo(Map<String,Object>story,Map<String,Object>video){
+        return String.valueOf(video.getOrDefault("versionId","")).equals(String.valueOf(story.getOrDefault("currentVideoVersionId","")));
+    }
+    private int nextVideoVersion(String storyId){
+        return videos.values().stream()
+                .filter(v->storyId.equals(String.valueOf(v.get("storyId"))))
+                .mapToInt(v->integer(v.get("version"))).max().orElse(0)+1;
+    }
+    private static String videoVersionId(String storyId,int version){return storyId+"#v"+version;}
+    private static void copyPublicationState(Map<String,Object>from,Map<String,Object>to){
         to.put("uploaded",Boolean.TRUE.equals(from.get("uploaded")));
-        copyOrRemove(from,to,"uploadedAt");
-        copyOrRemove(from,to,"uploadedPlatform");
-        copyOrRemove(from,to,"uploadNote");
-        copyOrRemove(from,to,"uploadUpdatedAt");
-        copyOrRemove(from,to,"uploadHistory");
+        to.put("scrapped",Boolean.TRUE.equals(from.get("scrapped")));
+        for(String key:List.of("uploadedAt","uploadedPlatform","uploadNote","uploadUpdatedAt","uploadHistory","scrappedAt","scrapReason","scrapUpdatedAt","scrapHistory"))
+            copyOrRemove(from,to,key);
+    }
+    private static void clearCurrentPublicationState(Map<String,Object>m){
+        m.put("uploaded",false);m.put("scrapped",false);
+        for(String key:List.of("uploadedAt","uploadedPlatform","uploadNote","uploadUpdatedAt","uploadHistory","scrappedAt","scrapReason","scrapUpdatedAt","scrapHistory"))m.remove(key);
+    }
+    private static void clearCurrentMediaResult(Map<String,Object>m){
+        for(String key:List.of("serverVideo","videoFilename","videoBytes","completedAt","result","ttsEngine","ttsVoice","visualMode","comfyCheckpoint","comfyImages","proceduralImages","comfyStatus","kokoroFailure"))m.remove(key);
+    }
+    private static void appendStateHistory(Map<String,Object>target,String key,Instant now,Map<String,Object>values){
+        List<Object>history=new ArrayList<>();
+        Object existing=target.get(key);
+        if(existing instanceof List<?>list)history.addAll(list);
+        Map<String,Object>event=new LinkedHashMap<>();event.put("at",now.toString());
+        for(var e:values.entrySet())if(e.getValue()!=null&&!String.valueOf(e.getValue()).isBlank())event.put(e.getKey(),e.getValue());
+        if(values.containsKey("uploaded"))event.put("uploaded",values.get("uploaded"));
+        if(values.containsKey("scrapped"))event.put("scrapped",values.get("scrapped"));
+        history.add(event);while(history.size()>50)history.remove(0);target.put(key,history);
     }
     private static void copyOrRemove(Map<String,Object>from,Map<String,Object>to,String key){
         if(from.containsKey(key))to.put(key,from.get(key));else to.remove(key);
@@ -537,8 +621,52 @@ public final class CommandCenterStore {
         try{
             Map<String,Object>root=Json.object(Json.read(statePath));copyMap(root.get("stories"),stories);copyMap(root.get("feeds"),feeds);copyMap(root.get("videos"),videos);
             Object scan=root.get("lastScan");if(scan instanceof Map<?,?>)lastScan=new LinkedHashMap<>(Json.object(scan));
-            if(recoverExpiredLeases(false)+recoverExpiredBiasLeases(false)>0)persistQuiet();
+            boolean migrated=migrateVideoArchive();
+            if(migrated||recoverExpiredLeases(false)+recoverExpiredBiasLeases(false)>0)persistQuiet();
         }catch(Exception e){System.err.println("Command center state load failed: "+e.getMessage());}
+    }
+
+    private boolean migrateVideoArchive(){
+        boolean changed=false;
+        Map<String,Map<String,Object>>rebuilt=new LinkedHashMap<>();
+        for(var entry:videos.entrySet()){
+            Map<String,Object>v=new LinkedHashMap<>(entry.getValue());
+            String storyId=String.valueOf(v.getOrDefault("storyId",v.getOrDefault("jobId",entry.getKey())));
+            int version=integer(v.get("version"));
+            if(version<=0){
+                Map<String,Object>story=stories.get(storyId);
+                version=story==null?1:Math.max(1,integer(story.get("videoVersion")));
+                changed=true;
+            }
+            String versionId=String.valueOf(v.getOrDefault("versionId",videoVersionId(storyId,version)));
+            if(!v.containsKey("storyId")||!v.containsKey("versionId")||!v.containsKey("version"))changed=true;
+            v.put("storyId",storyId);v.put("jobId",storyId);v.put("version",version);v.put("versionId",versionId);
+            v.putIfAbsent("scrapped",false);v.putIfAbsent("uploaded",false);
+            rebuilt.put(versionId,v);
+        }
+        if(!rebuilt.keySet().equals(videos.keySet()))changed=true;
+        videos.clear();videos.putAll(rebuilt);
+
+        for(Map<String,Object>story:stories.values()){
+            String storyId=String.valueOf(story.getOrDefault("id",""));
+            Optional<Map<String,Object>>latest=videos.values().stream()
+                    .filter(v->storyId.equals(String.valueOf(v.get("storyId"))))
+                    .max(Comparator.comparingInt(v->integer(v.get("version"))));
+            if(latest.isEmpty())continue;
+            Map<String,Object>v=latest.get();
+            int version=integer(v.get("version"));
+            String versionId=String.valueOf(v.get("versionId"));
+            if(integer(story.get("videoVersion"))!=version||!versionId.equals(String.valueOf(story.getOrDefault("currentVideoVersionId",""))))changed=true;
+            story.put("videoVersion",version);story.put("currentVideoVersionId",versionId);
+            for(Map<String,Object>x:videos.values())if(storyId.equals(String.valueOf(x.get("storyId"))))x.put("current",x==v);
+            if("COMPLETE".equals(String.valueOf(story.get("status")))){
+                boolean storyHasPublicationState=story.containsKey("uploadedAt")||story.containsKey("uploadedPlatform")||story.containsKey("uploadHistory")
+                        ||story.containsKey("scrappedAt")||story.containsKey("scrapReason")||story.containsKey("scrapHistory");
+                if(storyHasPublicationState)copyPublicationState(story,v);
+                copyPublicationState(v,story);
+            }
+        }
+        return changed;
     }
 
     private static void copyMap(Object source,Map<String,Map<String,Object>>target){

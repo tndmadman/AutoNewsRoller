@@ -257,6 +257,70 @@ public final class SelfTest {
                         ((Number)unmarkedCounts.get("toPost")).intValue()==1,
                 "unmarking returns video to TO POST while retaining manual upload history");
 
+        String version1=String.valueOf(unmarkedStory.get("currentVideoVersionId"));
+        reloadedUploadStore.setUploadStatus(cluster.id,version1,true,"TikTok","version one posted");
+        reloadedUploadStore.setScrapStatus(cluster.id,version1,true,"bad pacing");
+        Map<String,Object>scrappedSnapshot=reloadedUploadStore.snapshot();
+        Map<String,Object>scrappedCounts=Json.object(scrappedSnapshot.get("counts"));
+        Map<String,Object>scrappedStory=Json.object(((List<?>)scrappedSnapshot.get("stories")).get(0));
+        Map<String,Object>scrappedVideo=Json.object(((List<?>)scrappedSnapshot.get("videos")).get(0));
+        ok(Boolean.TRUE.equals(scrappedStory.get("scrapped"))&&Boolean.TRUE.equals(scrappedVideo.get("scrapped"))&&
+                        "bad pacing".equals(scrappedVideo.get("scrapReason")),
+                "completed video version can be scrapped with a retained reason");
+        ok(((Number)scrappedCounts.get("scrapped")).intValue()==1&&((Number)scrappedCounts.get("uploaded")).intValue()==0&&
+                        ((Number)scrappedCounts.get("toPost")).intValue()==0,
+                "scrapped video leaves TO POST and UPLOADED counts without deleting its archive record");
+
+        reloadedUploadStore.setScrapStatus(cluster.id,version1,false,"");
+        Map<String,Object>restoredCounts=Json.object(reloadedUploadStore.snapshot().get("counts"));
+        ok(((Number)restoredCounts.get("scrapped")).intValue()==0&&((Number)restoredCounts.get("uploaded")).intValue()==1,
+                "restoring a scrapped uploaded version restores its prior upload state");
+
+        reloadedUploadStore.action(cluster.id,"REMAKE");
+        Map<String,Object>remakeQueued=reloadedUploadStore.storyDetail(cluster.id);
+        ok("QUEUED".equals(remakeQueued.get("status"))&&((Number)remakeQueued.get("remakeCount")).intValue()==1&&
+                        !Boolean.TRUE.equals(remakeQueued.get("uploaded"))&&!Boolean.TRUE.equals(remakeQueued.get("scrapped")),
+                "REMAKE queues a fresh render and clears only the current story publication state");
+        Map<String,Object>remakeArchiveBefore=Json.object(((List<?>)reloadedUploadStore.snapshot().get("videos")).get(0));
+        ok(version1.equals(remakeArchiveBefore.get("versionId"))&&Boolean.TRUE.equals(remakeArchiveBefore.get("uploaded")),
+                "REMAKE preserves the previous completed video version and its publication metadata");
+
+        ok(reloadedUploadStore.claim("remake-worker",Map.of("duration",70))!=null,"queued remake can be claimed by a worker");
+        reloadedUploadStore.videoUploaded(cluster.id,dir.resolve("version2.mp4"),"version2.mp4",1234);
+        reloadedUploadStore.complete(cluster.id,Map.of("sidecar",sidecar));
+        Map<String,Object>remadeSnapshot=reloadedUploadStore.snapshot();
+        Map<String,Object>remadeCounts=Json.object(remadeSnapshot.get("counts"));
+        Map<String,Object>remadeStory=Json.object(((List<?>)remadeSnapshot.get("stories")).get(0));
+        List<?>versions=(List<?>)remadeSnapshot.get("videos");
+        ok(versions.size()==2&&((Number)remadeCounts.get("videoVersions")).intValue()==2&&
+                        ((Number)remadeStory.get("videoVersion")).intValue()==2&&!Boolean.TRUE.equals(remadeStory.get("uploaded")),
+                "completed remake creates a separate version two instead of overwriting version one");
+        ok(((Number)remadeCounts.get("uploaded")).intValue()==1&&((Number)remadeCounts.get("toPost")).intValue()==1,
+                "version one remains uploaded while fresh version two enters TO POST");
+
+        String version2=String.valueOf(remadeStory.get("currentVideoVersionId"));
+        reloadedUploadStore.setScrapStatus(cluster.id,version2,true,"visual issue");
+        CommandCenterStore reloadedVersions=new CommandCenterStore(mediaState,BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null);
+        Map<String,Object>persistedVersionStory=reloadedVersions.storyDetail(cluster.id);
+        Map<String,Object>persistedVersionCounts=Json.object(reloadedVersions.snapshot().get("counts"));
+        ok(Boolean.TRUE.equals(persistedVersionStory.get("scrapped"))&&((Number)persistedVersionStory.get("videoVersion")).intValue()==2&&
+                        ((Number)persistedVersionCounts.get("videoVersions")).intValue()==2&&((Number)persistedVersionCounts.get("scrapped")).intValue()==1,
+                "remake versions and current scrap state survive command center restart");
+
+        Path legacyDir=Files.createTempDirectory("autonews-video-migration-");
+        Path legacyState=legacyDir.resolve("state.json");
+        Map<String,Object>legacyStory=new LinkedHashMap<>();
+        legacyStory.put("id","legacy-story");legacyStory.put("topic","Legacy video");legacyStory.put("status","COMPLETE");legacyStory.put("uploaded",true);legacyStory.put("uploadedAt",Instant.now().toString());
+        Map<String,Object>legacyVideo=new LinkedHashMap<>();
+        legacyVideo.put("jobId","legacy-story");legacyVideo.put("topic","Legacy video");legacyVideo.put("filename","legacy.mp4");legacyVideo.put("uploaded",true);legacyVideo.put("uploadedAt",Instant.now().toString());
+        Json.write(legacyState,Map.of("stories",Map.of("legacy-story",legacyStory),"feeds",Map.of(),"videos",Map.of("legacy-story",legacyVideo),"lastScan",Map.of()));
+        CommandCenterStore migratedStore=new CommandCenterStore(legacyState,BiasRegistry.load(legacyDir.resolve("bias.json")),false,0.68,12,null);
+        Map<String,Object>migratedStory=migratedStore.storyDetail("legacy-story");
+        List<?>migratedVideos=(List<?>)migratedStore.snapshot().get("videos");
+        ok(migratedVideos.size()==1&&String.valueOf(Json.object(migratedVideos.get(0)).get("versionId")).endsWith("#v1")&&
+                        ((Number)migratedStory.get("videoVersion")).intValue()==1,
+                "legacy single-entry video archives migrate to versioned video records");
+
         Path filterDir=Files.createTempDirectory("autonews-worthy-filter-");
         CommandCenterStore filterStore=new CommandCenterStore(
                 filterDir.resolve("state.json"),BiasRegistry.load(filterDir.resolve("bias.json")),
