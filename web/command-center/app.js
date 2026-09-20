@@ -17,6 +17,12 @@ function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&l
 function pct(v){return Math.max(0,Math.min(100,Number(v)||0))}
 function age(t){if(!t)return "";const d=(Date.now()-Date.parse(t))/60000;if(d<60)return Math.max(0,Math.round(d))+"m";if(d<1440)return Math.round(d/60)+"h";return Math.round(d/1440)+"d"}
 function num(v,d=0){return Number.isFinite(Number(v))?Number(v):d}
+const ACTIONABLE_WORTHY_STATUSES=new Set(["DISCOVERED","VERIFIED","WORTHY"]);
+function isActionableWorthy(s){
+  if(!s)return false;
+  if(s.actionableWorthy!==undefined&&s.actionableWorthy!==null)return !!s.actionableWorthy;
+  return !!s.worthy&&ACTIONABLE_WORTHY_STATUSES.has(String(s.status||""));
+}
 function safeHttpUrl(v){try{const u=new URL(String(v||""));return (u.protocol==="https:"||u.protocol==="http:")?u.href:""}catch{return ""}}
 function toast(msg,error=false){const t=$("#toast");t.textContent=msg;t.className="toast show"+(error?" error":"");clearTimeout(t._timer);t._timer=setTimeout(()=>t.className="toast",3500)}
 
@@ -48,7 +54,7 @@ function renderRails(){
   const ss=state.stories||[];
   $("#railAll").textContent=ss.length;
   $("#railFound").textContent=ss.filter(x=>x.status==="DISCOVERED").length;
-  $("#railVerified").textContent=ss.filter(x=>!!x.worthy && x.status!=="SKIPPED").length;
+  $("#railVerified").textContent=ss.filter(isActionableWorthy).length;
   $("#railQueued").textContent=ss.filter(x=>x.status==="QUEUED").length;
   $("#railProducing").textContent=ss.filter(x=>x.status==="PRODUCING").length;
   $("#railComplete").textContent=ss.filter(x=>String(x.status).startsWith("COMPLETE")).length;
@@ -78,7 +84,7 @@ function storyMatches(s){
   const status=String(s.status||"");
   if(filter!=="ALL"){
     if(filter==="COMPLETE"){if(!status.startsWith("COMPLETE"))return false;}
-    else if(filter==="WORTHY"){if(!s.worthy||status==="SKIPPED")return false;}
+    else if(filter==="WORTHY"){if(!isActionableWorthy(s))return false;}
     else if(status!==filter)return false;
   }
   if(!q)return true;
@@ -94,7 +100,7 @@ function storyCard(s){
   const bar=k=>Math.round(num(mix[k])/total*100);
   const pubs=(s.publishers||[]).slice(0,8).map(p=>`<span class="sourceChip">${esc(p)}</span>`).join("");
   const cls=status==="PRODUCING"?" producing":status==="FAILED"?" failed":"";
-  const makeDisabled=status==="PRODUCING"||status==="COMPLETE";
+  const makeDisabled=["QUEUED","PRODUCING","COMPLETE","COMPLETE_HISTORY"].includes(status);
   const engine=esc(s.ttsEngine||"pending");
   const voice=esc(s.ttsVoice||"");
   const visual=esc(s.visualMode||((s.stage==="VISUALS"&&s.detail)?s.detail:"pending"));
