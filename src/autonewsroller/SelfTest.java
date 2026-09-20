@@ -209,7 +209,8 @@ public final class SelfTest {
         NewsPipeline.DiscoveryItem item=new NewsPipeline.DiscoveryItem(cluster,verified.factPackage(),true,verified.reason(),0.91,false);
         NewsPipeline.DiscoveryResult result=new NewsPipeline.DiscoveryResult(List.of(item),3,3,0,fresh.size(),fresh.size(),fresh.size(),fresh.size(),Instant.now());
         Path dir=Files.createTempDirectory("autonews-command-media-");
-        CommandCenterStore store=new CommandCenterStore(dir.resolve("state.json"),BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null);
+        Path mediaState=dir.resolve("state.json");
+        CommandCenterStore store=new CommandCenterStore(mediaState,BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null);
         store.applyDiscovery(result);
         store.claim("test-worker",Map.of("duration",60));
         store.progress(cluster.id,new WorkerState(1,1,PipelineStage.TTS,"KOKORO USED voice=af_heart",Instant.now()));
@@ -226,6 +227,35 @@ public final class SelfTest {
         Map<String,Object>completedPublic=Json.object(((List<?>)completedSnapshot.get("stories")).get(0));
         ok(((Number)completedCounts.get("worthy")).intValue()==0&&!Boolean.TRUE.equals(completedPublic.get("actionableWorthy")),
                 "completed stories retain historical worth metadata but leave the actionable Worthy count");
+        ok(((Number)completedCounts.get("toPost")).intValue()==1&&((Number)completedCounts.get("uploaded")).intValue()==0,
+                "newly completed local video enters the manual TO POST queue");
+
+        store.setUploadStatus(cluster.id,true,"TikTok","main account");
+        Map<String,Object>uploadedSnapshot=store.snapshot();
+        Map<String,Object>uploadedCounts=Json.object(uploadedSnapshot.get("counts"));
+        Map<String,Object>uploadedStory=Json.object(((List<?>)uploadedSnapshot.get("stories")).get(0));
+        Map<String,Object>uploadedVideo=Json.object(((List<?>)uploadedSnapshot.get("videos")).get(0));
+        ok(Boolean.TRUE.equals(uploadedStory.get("uploaded"))&&"TikTok".equals(uploadedStory.get("uploadedPlatform"))&&
+                        "main account".equals(uploadedStory.get("uploadNote"))&&uploadedStory.get("uploadedAt")!=null,
+                "manual upload mark records platform, note, and timestamp on story");
+        ok(Boolean.TRUE.equals(uploadedVideo.get("uploaded"))&&"TikTok".equals(uploadedVideo.get("uploadedPlatform")),
+                "manual upload mark mirrors into video archive");
+        ok(((Number)uploadedCounts.get("toPost")).intValue()==0&&((Number)uploadedCounts.get("uploaded")).intValue()==1,
+                "manual upload mark moves video from TO POST to UPLOADED");
+
+        CommandCenterStore reloadedUploadStore=new CommandCenterStore(mediaState,BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null);
+        Map<String,Object>reloadedUpload=reloadedUploadStore.storyDetail(cluster.id);
+        ok(Boolean.TRUE.equals(reloadedUpload.get("uploaded"))&&"TikTok".equals(reloadedUpload.get("uploadedPlatform")),
+                "manual upload tracking survives command center restart");
+
+        reloadedUploadStore.setUploadStatus(cluster.id,false,"","");
+        Map<String,Object>unmarkedSnapshot=reloadedUploadStore.snapshot();
+        Map<String,Object>unmarkedStory=Json.object(((List<?>)unmarkedSnapshot.get("stories")).get(0));
+        Map<String,Object>unmarkedCounts=Json.object(unmarkedSnapshot.get("counts"));
+        ok(!Boolean.TRUE.equals(unmarkedStory.get("uploaded"))&&unmarkedStory.get("uploadedAt")==null&&
+                        unmarkedStory.get("uploadHistory") instanceof List<?> history&&history.size()>=2&&
+                        ((Number)unmarkedCounts.get("toPost")).intValue()==1,
+                "unmarking returns video to TO POST while retaining manual upload history");
 
         Path filterDir=Files.createTempDirectory("autonews-worthy-filter-");
         CommandCenterStore filterStore=new CommandCenterStore(
