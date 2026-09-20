@@ -24,7 +24,8 @@ Its core jobs are:
 8. allow remote workers to claim verified stories;
 9. receive live worker telemetry and pipeline stage updates;
 10. receive completed MP4 files back from workers;
-11. keep a controller-side video archive.
+11. keep a controller-side video archive;
+12. track which completed videos the user has manually posted, without automating publication.
 
 ## Architecture
 
@@ -198,9 +199,9 @@ The controller keeps the record but does not automatically return it to producti
 
 ### FAILED
 
-A worker attempted the job and failed.
+A worker exhausted the configured automatic production retry budget. Ordinary production failures are returned to QUEUED first, with the last error and retry count retained.
 
-MAKE VIDEO can explicitly requeue a still-verified failed story.
+A manual MAKE VIDEO / WORTH IT / AUTO action can reset the retry budget for another clean attempt.
 
 ### COMPLETE
 
@@ -235,6 +236,32 @@ Marks the story skipped.
 Returns the story to automatic controller decisions.
 
 If it is verified, meets the automatic threshold, and queue capacity is available, it can immediately return to the queue.
+
+## Manual upload tracking
+
+Publishing remains a user action. The Command Center does not log in to or post to social platforms.
+
+When a local video reaches COMPLETE, it enters the dashboard's **TO POST** view. After you manually publish it, use **MARK UPLOADED** on either the story card or the Video Archive row.
+
+The mark records:
+
+- current uploaded/not-uploaded state;
+- timestamp;
+- platform label, such as TikTok;
+- optional operator note;
+- a bounded status-change history for accidental unmarks/corrections.
+
+The same state is mirrored on the story and its Video Archive record and is persisted in `data/command_center_state.json`.
+
+The board provides separate **DONE**, **TO POST**, and **UPLOADED** views:
+
+- DONE = every completed/generated story state;
+- TO POST = locally completed video not currently marked uploaded;
+- UPLOADED = video manually marked as posted.
+
+**UNMARK UPLOADED** returns a video to TO POST while retaining the history entry.
+
+This is tracking only; it does not automate social publishing.
 
 ## Automatic queueing
 
@@ -356,6 +383,20 @@ Other values:
 - SKIP
 - AUTO
 
+### Manual upload status
+
+    POST /api/stories/{storyId}/upload-status
+
+Mark posted:
+
+    {"uploaded":true,"platform":"TikTok","note":"main account"}
+
+Return it to TO POST:
+
+    {"uploaded":false,"platform":"","note":""}
+
+Only completed local videos can be marked through this endpoint.
+
 ### Worker heartbeat
 
     POST /api/workers/heartbeat
@@ -432,6 +473,7 @@ It preserves:
 - queue state;
 - feed state;
 - completed-video metadata;
+- manual upload state, timestamp, platform, note, and upload-state history;
 - last scan summary.
 
 Transient worker heartbeats are not relied on for job persistence.
@@ -539,7 +581,7 @@ Current limitations include:
 - workers currently poll for jobs instead of using a long-lived worker WebSocket;
 - there is no user-account/role system; one shared API token protects the controller;
 - controller state uses JSON persistence rather than SQLite;
-- automatic publishing to social platforms is still separate roadmap work.
+- social publishing is intentionally manual; the Command Center tracks manual upload state but does not post to external platforms.
 
 These choices keep the initial distributed architecture dependency-light and usable on a small headless server.
 

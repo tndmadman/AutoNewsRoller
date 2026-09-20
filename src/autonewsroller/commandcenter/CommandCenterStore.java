@@ -330,6 +330,7 @@ public final class CommandCenterStore {
 
     public synchronized void complete(String jobId,Map<String,Object>metadata){
         Map<String,Object>m=requireStory(jobId);m.put("status","COMPLETE");m.put("stage","COMPLETE");m.put("progress",100);clearLease(m);m.put("completedAt",Instant.now().toString());m.put("result",new LinkedHashMap<>(metadata));m.remove("error");
+        m.putIfAbsent("uploaded",false);
         Object sidecarObj=metadata.get("sidecar");
         if(sidecarObj instanceof Map<?,?>){
             Map<String,Object>sidecar=Json.object(sidecarObj);
@@ -350,8 +351,50 @@ public final class CommandCenterStore {
             m.put("comfyImages",comfyImages);m.put("proceduralImages",proceduralImages);
             m.put("visualMode",comfyImages>0?"ComfyUI + procedural cards":"Procedural cards");
         }
-        Map<String,Object>v=new LinkedHashMap<>();v.put("jobId",jobId);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));videos.put(jobId,v);
+        Map<String,Object>v=new LinkedHashMap<>();v.put("jobId",jobId);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));copyUploadState(m,v);videos.put(jobId,v);
         persistQuiet();emit("story",publicStory(m));emit("video",publicCopy(v));
+    }
+
+    public synchronized Map<String,Object> setUploadStatus(String storyId,boolean uploaded,String platform,String note){
+        Map<String,Object>m=requireStory(storyId);
+        if(!"COMPLETE".equals(String.valueOf(m.get("status")))&&!videos.containsKey(storyId))
+            throw new IllegalStateException("Only completed local videos can be marked uploaded.");
+
+        Instant now=Instant.now();
+        String cleanPlatform=safeText(platform,80);
+        String cleanNote=safeText(note,500);
+
+        List<Object>history=new ArrayList<>();
+        Object existingHistory=m.get("uploadHistory");
+        if(existingHistory instanceof List<?>list)history.addAll(list);
+
+        Map<String,Object>event=new LinkedHashMap<>();
+        event.put("at",now.toString());
+        event.put("uploaded",uploaded);
+        if(!cleanPlatform.isBlank())event.put("platform",cleanPlatform);
+        if(!cleanNote.isBlank())event.put("note",cleanNote);
+        history.add(event);
+        while(history.size()>50)history.remove(0);
+
+        m.put("uploaded",uploaded);
+        m.put("uploadUpdatedAt",now.toString());
+        m.put("uploadHistory",history);
+        if(uploaded){
+            m.put("uploadedAt",now.toString());
+            if(cleanPlatform.isBlank())m.remove("uploadedPlatform");else m.put("uploadedPlatform",cleanPlatform);
+            if(cleanNote.isBlank())m.remove("uploadNote");else m.put("uploadNote",cleanNote);
+        }else{
+            m.remove("uploadedAt");m.remove("uploadedPlatform");m.remove("uploadNote");
+        }
+
+        Map<String,Object>v=videos.get(storyId);
+        if(v!=null)copyUploadState(m,v);
+
+        persistQuiet();
+        Map<String,Object>pub=publicStory(m);
+        emit("story",pub);
+        if(v!=null)emit("video",publicCopy(v));
+        return pub;
     }
 
     public synchronized void fail(String jobId,String error){
@@ -392,6 +435,8 @@ public final class CommandCenterStore {
         counts.put("verified",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("verified"))).count());
         counts.put("worthy",stories.values().stream().filter(CommandCenterStore::isActionableWorthy).count());
         counts.put("queued",countStatus("QUEUED"));counts.put("producing",countStatus("PRODUCING"));counts.put("complete",countStatus("COMPLETE")+countStatus("COMPLETE_HISTORY"));counts.put("hold",countStatus("HOLD"));counts.put("skipped",countStatus("SKIPPED"));counts.put("failed",countStatus("FAILED"));
+        counts.put("toPost",stories.values().stream().filter(CommandCenterStore::isToPost).count());
+        counts.put("uploaded",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("uploaded"))).count());
         counts.put("feedsOk",feeds.values().stream().filter(x->"OK".equals(x.get("status"))).count());counts.put("feedsFailed",feeds.values().stream().filter(x->"FAILED".equals(x.get("status"))).count());counts.put("workersOnline",ww.stream().filter(x->Boolean.TRUE.equals(x.get("online"))).count());
         counts.put("biasQueued",stories.values().stream().filter(x->"QUEUED".equals(x.get("biasAnalysisStatus"))).count());
         counts.put("biasAnalyzing",stories.values().stream().filter(x->"ANALYZING".equals(x.get("biasAnalysisStatus"))).count());
@@ -417,6 +462,25 @@ public final class CommandCenterStore {
     }
     private static void resetFailureRetryState(Map<String,Object>m){
         m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");
+    }
+    private static boolean isToPost(Map<String,Object>m){
+        return "COMPLETE".equals(String.valueOf(m.get("status")))&&!Boolean.TRUE.equals(m.get("uploaded"));
+    }
+    private static void copyUploadState(Map<String,Object>from,Map<String,Object>to){
+        to.put("uploaded",Boolean.TRUE.equals(from.get("uploaded")));
+        copyOrRemove(from,to,"uploadedAt");
+        copyOrRemove(from,to,"uploadedPlatform");
+        copyOrRemove(from,to,"uploadNote");
+        copyOrRemove(from,to,"uploadUpdatedAt");
+        copyOrRemove(from,to,"uploadHistory");
+    }
+    private static void copyOrRemove(Map<String,Object>from,Map<String,Object>to,String key){
+        if(from.containsKey(key))to.put(key,from.get(key));else to.remove(key);
+    }
+    private static String safeText(String x,int max){
+        if(x==null)return "";
+        String s=x.replaceAll("\\s+"," ").trim();
+        return s.length()<=max?s:s.substring(0,max);
     }
     private void renewLease(Map<String,Object>m){if("PRODUCING".equals(String.valueOf(m.get("status"))))m.put("leaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());}
     private static void clearLease(Map<String,Object>m){m.remove("leaseUntil");}
