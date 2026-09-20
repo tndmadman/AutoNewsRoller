@@ -41,7 +41,7 @@ function render(){
   $("#feedsOnline").textContent=c.feedsOk||0;$("#feedsFailed").textContent=(c.feedsFailed||0)+" failed";
   $("#storiesTracked").textContent=c.stories||0;$("#verifiedCount").textContent=(c.worthy||0)+" worthy / "+(c.verified||0)+" verified";
   $("#queuedCount").textContent=c.queued||0;$("#producingCount").textContent=(c.producing||0)+" active";
-  $("#completeCount").textContent=c.complete||0;
+  $("#completeCount").textContent=c.videoVersions!=null?c.videoVersions:(c.complete||0);
   $("#completeSub").textContent=(c.toPost||0)+" to post // "+(c.uploaded||0)+" uploaded // "+(c.scrapped||0)+" scrapped";
   $("#workersOnline").textContent=c.workersOnline||0;
   $("#autoThreshold").textContent=Math.round(num(state.autoThreshold)*100)+"%";
