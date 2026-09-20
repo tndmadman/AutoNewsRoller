@@ -205,7 +205,9 @@ A manual MAKE VIDEO / WORTH IT / AUTO action can reset the retry budget for anot
 
 ### COMPLETE
 
-The remote worker uploaded the final MP4 and marked the job complete.
+The remote worker uploaded a final MP4 and marked the current render complete.
+
+Each completed render is stored as its own numbered video version (V1, V2, and so on). Re-making a story creates a new version and keeps every older completed MP4 in the archive.
 
 ### COMPLETE_HISTORY
 
@@ -231,6 +233,18 @@ Prevents automatic queueing but keeps the story active on the board.
 
 Marks the story skipped.
 
+### RE-MAKE VIDEO
+
+Available after a local video completes.
+
+It queues a fresh production run for the same story while retaining the previous completed version in the archive. A successful remake becomes the next numbered video version.
+
+### SCRAP VIDEO
+
+Available on completed video versions.
+
+It marks that specific version as intentionally rejected without deleting the MP4. An optional reason can be recorded. Scrapped versions can be restored later.
+
 ### AUTO
 
 Returns the story to automatic controller decisions.
@@ -253,13 +267,20 @@ The mark records:
 
 The same state is mirrored on the story and its Video Archive record and is persisted in `data/command_center_state.json`.
 
-The board provides separate **DONE**, **TO POST**, and **UPLOADED** views:
+The board provides separate **DONE**, **TO POST**, **UPLOADED**, and **SCRAPPED** views:
 
-- DONE = every completed/generated story state;
-- TO POST = locally completed video not currently marked uploaded;
-- UPLOADED = video manually marked as posted.
+- DONE = current completed story state;
+- TO POST = current completed video not marked uploaded or scrapped;
+- UPLOADED = current video manually marked as posted;
+- SCRAPPED = current completed video intentionally rejected after generation.
 
-**UNMARK UPLOADED** returns a video to TO POST while retaining the history entry.
+The Video Archive is version-aware and can contain multiple completed renders for the same story. Archive rows are labeled V1, V2, and so on.
+
+**UNMARK UPLOADED** returns a non-scrapped version to TO POST while retaining the history entry.
+
+**SCRAP VIDEO** does not delete the MP4. It records a reversible scrapped state, timestamp, optional reason, and history entry. A scrapped version is excluded from TO POST and UPLOADED counts. **RESTORE** removes the current scrap flag while preserving scrap history.
+
+**RE-MAKE VIDEO** queues the same story for a fresh production run. The existing completed version remains in the archive with all of its upload/scrap metadata. When the new render completes it becomes the next numbered version and starts as TO POST.
 
 This is tracking only; it does not automate social publishing.
 
@@ -387,15 +408,33 @@ Other values:
 
     POST /api/stories/{storyId}/upload-status
 
-Mark posted:
+Mark the current completed version posted:
 
     {"uploaded":true,"platform":"TikTok","note":"main account"}
 
-Return it to TO POST:
+Target a specific archived version:
 
-    {"uploaded":false,"platform":"","note":""}
+    {"uploaded":true,"platform":"TikTok","note":"main account","versionId":"STORY_ID#v1"}
 
-Only completed local videos can be marked through this endpoint.
+Return a version to TO POST:
+
+    {"uploaded":false,"platform":"","note":"","versionId":"STORY_ID#v1"}
+
+A scrapped version must be restored before it can be newly marked uploaded.
+
+### Scrap status
+
+    POST /api/stories/{storyId}/scrap-status
+
+Scrap a specific version:
+
+    {"scrapped":true,"reason":"bad pacing","versionId":"STORY_ID#v1"}
+
+Restore it:
+
+    {"scrapped":false,"reason":"","versionId":"STORY_ID#v1"}
+
+Omit versionId to operate on the current completed version.
 
 ### Worker heartbeat
 
@@ -473,7 +512,9 @@ It preserves:
 - queue state;
 - feed state;
 - completed-video metadata;
-- manual upload state, timestamp, platform, note, and upload-state history;
+- versioned completed-video metadata;
+- manual upload state, timestamp, platform, note, and upload-state history per video version;
+- scrapped/restored state, reason, timestamp, and scrap-state history per video version;
 - last scan summary.
 
 Transient worker heartbeats are not relied on for job persistence.
