@@ -312,6 +312,22 @@ public final class SelfTest {
                         assembled.sourceLabels().stream().allMatch(allowedPublishers::contains),
                 "script assembly uses combined segment narration and trusted publisher labels");
 
+        List<NewsScript.Segment>retrySegments=new ArrayList<>();
+        String retryLine="Verified reporting describes the event using facts already present in the supplied package while keeping the narration neutral and factual.";
+        for(int i=0;i<8;i++)retrySegments.add(new NewsScript.Segment(i,retryLine,"detail","BACKGROUND","Verified documentary visual",8));
+        String retryNarration=retrySegments.stream().map(NewsScript.Segment::narration).reduce("",(x,y)->x.isBlank()?y:x+" "+y);
+        NewsScript retryBase=new NewsScript(fp.storyId(),fp.headline(),retryNarration,retrySegments,58,List.copyOf(allowedPublishers));
+        int beforeRepair=Text.words(retryBase.narration());
+
+        Map<String,Object>expansionJson=new LinkedHashMap<>();
+        expansionJson.put("additions",List.of(
+                Map.of("segmentIndex",0,"text","Additional verified context from the supplied reporting extends this beat without introducing any unsupported factual claim."),
+                Map.of("segmentIndex",1,"text","The available verified material also supports this added neutral context while staying within the same documented facts.")
+        ));
+        NewsScript expanded=NewsScriptGenerator.applyExpansions(retryBase,Json.stringify(expansionJson),fp,70);
+        ok(Text.words(expanded.narration())>beforeRepair&&expanded.segments().size()==8,
+                "short-script repair appends targeted continuation text instead of regenerating the same draft");
+
         Path ass=Files.createTempFile("autonews-captions-",".ass");
         CaptionWriter.write(ass,
                 "This caption contains enough words to split cleanly across two compact lines for a vertical news video.",
