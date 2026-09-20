@@ -59,14 +59,15 @@ public final class RemoteWorker {
         try{
             NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
             Map<String,Object>settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
-            int duration=settings.get("duration") instanceof Number n?n.intValue():cfg.duration();
+            int requestedDuration=settings.get("duration") instanceof Number n?n.intValue():cfg.duration();
+            int duration=Math.max(cfg.getInt("commandCenterMinimumTargetSeconds",70),requestedDuration);
             String encoder=String.valueOf(settings.getOrDefault("encoder",cfg.get("videoEncoder","auto")));
             boolean controllerComfy=settings.containsKey("useComfy")?bool(settings.get("useComfy")):true;
             boolean useComfy=cfg.getBool("commandCenterUseComfy",true)||controllerComfy;
             boolean requireComfy=cfg.getBool("commandCenterRequireComfy",true)||(settings.containsKey("requireComfy")&&bool(settings.get("requireComfy")));
             int comfyImages=settings.get("comfyImages") instanceof Number n?Math.max(1,n.intValue()):cfg.getInt("commandCenterComfyImages",3);
             boolean dryRun=bool(settings.get("dryRun"));
-            System.out.println("Claimed job: "+currentTopic+" | comfy="+useComfy+" required="+requireComfy+" images="+comfyImages+" | encoder="+encoder);
+            System.out.println("Claimed job: "+currentTopic+" | durationTarget="+duration+"s | comfy="+useComfy+" required="+requireComfy+" images="+comfyImages+" | encoder="+encoder);
             String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
             Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+stamp);
             NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,event->progressSafe(jobId,event));
