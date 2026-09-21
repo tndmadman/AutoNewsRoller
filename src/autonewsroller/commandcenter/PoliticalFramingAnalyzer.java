@@ -90,7 +90,7 @@ The three weights are heuristic framing weights, not probabilities of truth, and
 Confidence must reflect the amount and clarity of supplied evidence.
 """;
 
-        String raw=ollama.generateJson(system,Json.stringify(payload));
+        String raw=ollama.generateJson(system,Json.stringify(payload),analysisSchema(cluster),0.15,1200);
         Map<String,Object>parsed=Json.object(Json.parse(raw));
         Map<String,Object>result=new LinkedHashMap<>();
         result.put("model",model);result.put("analyzedAt",Instant.now().toString());
@@ -112,7 +112,12 @@ Confidence must reflect the amount and clarity of supplied evidence.
                 if(!(o instanceof Map<?,?>))continue;
                 Map<String,Object>x=Json.object(o);
                 String id=String.valueOf(x.getOrDefault("id",""));
-                Article a=byId.get(id);if(a==null)continue;
+                Article a=byId.get(id);
+                if(a==null&&cluster.articles.size()==1&&items.size()==1){
+                    a=cluster.articles.get(0);
+                    id=a.id();
+                }
+                if(a==null)continue;
                 String classification=normalize(x.get("classification"));
                 Map<String,Object>clean=new LinkedHashMap<>();
                 clean.put("id",id);clean.put("publisher",a.publisher());clean.put("title",a.title());
@@ -130,6 +135,70 @@ Confidence must reflect the amount and clarity of supplied evidence.
         result.put("articlesAnalyzed",articleResults.size());
         result.put("left",left);result.put("center",center);result.put("right",right);result.put("mixed",mixed);result.put("uncertain",uncertain);result.put("notPolitical",notPolitical);
         return result;
+    }
+
+    private static Map<String,Object>analysisSchema(StoryCluster cluster){
+        Map<String,Object>number=new LinkedHashMap<>();
+        number.put("type","number");
+        number.put("minimum",0);
+        number.put("maximum",1);
+
+        Map<String,Object>classification=new LinkedHashMap<>();
+        classification.put("type","string");
+        classification.put("enum",new ArrayList<>(ALLOWED));
+
+        Map<String,Object>weightProps=new LinkedHashMap<>();
+        weightProps.put("left",number);
+        weightProps.put("center",number);
+        weightProps.put("right",number);
+        Map<String,Object>weights=new LinkedHashMap<>();
+        weights.put("type","object");
+        weights.put("properties",weightProps);
+        weights.put("required",List.of("left","center","right"));
+        weights.put("additionalProperties",false);
+
+        Map<String,Object>id=new LinkedHashMap<>();
+        id.put("type","string");
+        id.put("enum",cluster.articles.stream().map(Article::id).toList());
+
+        Map<String,Object>signals=new LinkedHashMap<>();
+        signals.put("type","array");
+        signals.put("items",Map.of("type","string"));
+
+        Map<String,Object>articleProps=new LinkedHashMap<>();
+        articleProps.put("id",id);
+        articleProps.put("classification",classification);
+        articleProps.put("confidence",number);
+        articleProps.put("weights",weights);
+        articleProps.put("rationale",Map.of("type","string"));
+        articleProps.put("signals",signals);
+
+        Map<String,Object>article=new LinkedHashMap<>();
+        article.put("type","object");
+        article.put("properties",articleProps);
+        article.put("required",List.of("id","classification","confidence","weights","rationale","signals"));
+        article.put("additionalProperties",false);
+
+        Map<String,Object>articles=new LinkedHashMap<>();
+        articles.put("type","array");
+        articles.put("items",article);
+        articles.put("minItems",cluster.articles.size());
+        articles.put("maxItems",cluster.articles.size());
+
+        Map<String,Object>rootProps=new LinkedHashMap<>();
+        rootProps.put("politicalRelevance",number);
+        rootProps.put("overallClassification",classification);
+        rootProps.put("overallConfidence",number);
+        rootProps.put("overallWeights",weights);
+        rootProps.put("summary",Map.of("type","string"));
+        rootProps.put("articles",articles);
+
+        Map<String,Object>root=new LinkedHashMap<>();
+        root.put("type","object");
+        root.put("properties",rootProps);
+        root.put("required",List.of("politicalRelevance","overallClassification","overallConfidence","overallWeights","summary","articles"));
+        root.put("additionalProperties",false);
+        return root;
     }
 
     private static Map<String,Object>weights(Object raw,String classification,double confidence){
