@@ -41,14 +41,19 @@ public final class OllamaClient {
     }
 
     public String generateJson(String system,String payload,Object format,double requestedTemperature) throws Exception {
+        return generateJson(system,payload,format,requestedTemperature,numPredict);
+    }
+
+    public String generateJson(String system,String payload,Object format,double requestedTemperature,int requestedNumPredict) throws Exception {
         double callTemperature=Math.max(0.0,Math.min(2.0,requestedTemperature));
+        int callNumPredict=Math.max(128,Math.min(numPredict,requestedNumPredict));
         Files.createDirectories(gate.toAbsolutePath().getParent());
         try(FileChannel ch=FileChannel.open(gate,StandardOpenOption.CREATE,StandardOpenOption.WRITE);
             FileLock ignored=ch.lock()){
 
             Map<String,Object> options=new LinkedHashMap<>();
             options.put("num_ctx",numCtx);
-            options.put("num_predict",numPredict);
+            options.put("num_predict",callNumPredict);
             options.put("temperature",callTemperature);
             options.put("top_p",0.9);
 
