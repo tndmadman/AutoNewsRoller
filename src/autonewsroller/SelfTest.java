@@ -38,6 +38,7 @@ public final class SelfTest {
         testMalformed(root);
         testScriptValidation(a);
         testProductionVideoContract(root,a);
+        testWorthyHourFilterContract(root);
         testTtsFallback();
         testWorkerEvent();
         testFilename(root);
@@ -488,6 +489,16 @@ public final class SelfTest {
         int generate=comfySource.indexOf("public Path generate(");
         ok(generate>=0&&recovery>generate&&!comfySource.substring(generate,recovery).contains("/free")&&comfySource.substring(recovery).contains("/free"),
                 "ComfyUI success path keeps models warm and only OOM recovery frees them");
+    }
+
+    private void testWorthyHourFilterContract(Path root)throws Exception{
+        String html=Files.readString(root.resolve("web/command-center/index.html"));
+        String js=Files.readString(root.resolve("web/command-center/app.js"));
+        ok(html.contains("id=\"worthyAgeFilter\"")&&html.contains("WORTHY: LAST 1H")&&html.contains("WORTHY: LAST 72H"),
+                "dashboard exposes Worthy publication-age presets");
+        ok(js.contains("autonewsWorthyAgeHours")&&js.contains("latestPublishedAt")&&js.contains("withinWorthyAge")&&
+                        js.contains("currentStoryFilter()===\"WORTHY\""),
+                "dashboard Worthy hour filter persists and filters by latest publication time");
     }
 
     private void testTtsFallback()throws Exception{
