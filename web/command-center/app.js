@@ -1,5 +1,8 @@
 const $=s=>document.querySelector(s);
 let state={stories:[],feeds:[],workers:[],videos:[],counts:{}}, token="", activeFilter="ALL", eventSource=null, refreshTimer=null;
+const WORTHY_AGE_OPTIONS=new Set([0,1,2,3,4,6,8,12,24,48,72]);
+let worthyAgeHours=Number(localStorage.getItem("autonewsWorthyAgeHours")||0);
+if(!WORTHY_AGE_OPTIONS.has(worthyAgeHours))worthyAgeHours=0;
 const qp=new URLSearchParams(location.search);
 token=qp.get("token")||localStorage.getItem("autonewsToken")||"";
 if(qp.get("token")) localStorage.setItem("autonewsToken",token);
@@ -22,6 +25,28 @@ function isActionableWorthy(s){
   if(!s)return false;
   if(s.actionableWorthy!==undefined&&s.actionableWorthy!==null)return !!s.actionableWorthy;
   return !!s.worthy&&ACTIONABLE_WORTHY_STATUSES.has(String(s.status||""));
+}
+function currentStoryFilter(){return $("#statusFilter").value!=="ALL"?$("#statusFilter").value:activeFilter}
+function storyAgeHours(s){
+  const t=Date.parse(String((s&&s.latestPublishedAt)||""));
+  if(!Number.isFinite(t))return null;
+  return Math.max(0,(Date.now()-t)/3600000);
+}
+function withinWorthyAge(s){
+  if(worthyAgeHours<=0)return true;
+  const h=storyAgeHours(s);
+  return h!==null&&h<=worthyAgeHours;
+}
+function syncWorthyAgeControl(){
+  const el=$("#worthyAgeFilter");
+  if(!el)return;
+  el.value=String(worthyAgeHours);
+  const worthyView=currentStoryFilter()==="WORTHY";
+  el.disabled=!worthyView;
+  el.classList.toggle("activeFilterControl",worthyView&&worthyAgeHours>0);
+  el.title=worthyView
+    ?(worthyAgeHours>0?"Showing worthy stories published within the last "+worthyAgeHours+" hour(s).":"Showing worthy stories of any age.")
+    :"Worthy age filter becomes active when the WORTHY view is selected.";
 }
 function safeHttpUrl(v){try{const u=new URL(String(v||""));return (u.protocol==="https:"||u.protocol==="http:")?u.href:""}catch{return ""}}
 function toast(msg,error=false){const t=$("#toast");t.textContent=msg;t.className="toast show"+(error?" error":"");clearTimeout(t._timer);t._timer=setTimeout(()=>t.className="toast",3500)}
@@ -50,13 +75,17 @@ function render(){
     : "MANUAL QUEUE";
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
-  renderRails();renderWorkers();renderStories();renderFeeds();renderVideos();drawRadar();
+  syncWorthyAgeControl();renderRails();renderWorkers();renderStories();renderFeeds();renderVideos();drawRadar();
 }
 function renderRails(){
   const ss=state.stories||[];
   $("#railAll").textContent=ss.length;
   $("#railFound").textContent=ss.filter(x=>x.status==="DISCOVERED").length;
-  $("#railVerified").textContent=ss.filter(isActionableWorthy).length;
+  const worthyAll=ss.filter(isActionableWorthy);
+  const worthyVisible=worthyAll.filter(withinWorthyAge);
+  $("#railVerified").textContent=currentStoryFilter()==="WORTHY"&&worthyAgeHours>0
+    ?worthyVisible.length+"/"+worthyAll.length
+    :worthyAll.length;
   $("#railQueued").textContent=ss.filter(x=>x.status==="QUEUED").length;
   $("#railProducing").textContent=ss.filter(x=>x.status==="PRODUCING").length;
   $("#railComplete").textContent=ss.filter(x=>String(x.status).startsWith("COMPLETE")).length;
@@ -85,14 +114,14 @@ function renderWorkers(){
   }).join("");
 }
 function storyMatches(s){
-  const q=$("#search").value.trim().toLowerCase(),filter=$("#statusFilter").value!=="ALL"?$("#statusFilter").value:activeFilter;
+  const q=$("#search").value.trim().toLowerCase(),filter=currentStoryFilter();
   const status=String(s.status||"");
   if(filter!=="ALL"){
     if(filter==="COMPLETE"){if(!status.startsWith("COMPLETE"))return false;}
     else if(filter==="TO_POST"){if(status!=="COMPLETE"||!!s.uploaded||!!s.scrapped)return false;}
     else if(filter==="UPLOADED"){if(!s.uploaded||!!s.scrapped)return false;}
     else if(filter==="SCRAPPED"){if(!s.scrapped)return false;}
-    else if(filter==="WORTHY"){if(!isActionableWorthy(s))return false;}
+    else if(filter==="WORTHY"){if(!isActionableWorthy(s)||!withinWorthyAge(s))return false;}
     else if(status!==filter)return false;
   }
   if(!q)return true;
@@ -100,7 +129,12 @@ function storyMatches(s){
 }
 function renderStories(){
   const root=$("#stories"),ss=(state.stories||[]).filter(storyMatches);
-  if(!ss.length){root.innerHTML='<div class="emptyState">No stories match this view.</div>';return}
+  if(!ss.length){
+    if(currentStoryFilter()==="WORTHY"&&worthyAgeHours>0)
+      root.innerHTML='<div class="emptyState">No worthy stories were published within the last '+worthyAgeHours+' hour(s).</div>';
+    else root.innerHTML='<div class="emptyState">No stories match this view.</div>';
+    return;
+  }
   root.innerHTML=ss.map(s=>storyCard(s)).join("");
 }
 function storyCard(s){
@@ -306,8 +340,25 @@ window.analyzeBias=analyzeBias;
 $("#scanBtn").onclick=async()=>{try{await api("/api/scan",{method:"POST"});toast("Full RSS scan started.")}catch(e){toast(e.message,true)}};
 $("#authBtn").onclick=authPrompt;
 function authPrompt(){const v=prompt("Command Center API token (leave blank for localhost/no-token):",token);if(v===null)return;token=v.trim();localStorage.setItem("autonewsToken",token);connectEvents();loadState()}
-$("#search").addEventListener("input",renderStories);$("#statusFilter").addEventListener("change",()=>{activeFilter="ALL";document.querySelectorAll(".rail").forEach(x=>x.classList.remove("active"));renderStories()});
-document.querySelectorAll(".rail").forEach(b=>b.onclick=()=>{activeFilter=b.dataset.filter;$("#statusFilter").value="ALL";document.querySelectorAll(".rail").forEach(x=>x.classList.toggle("active",x===b));renderStories()});
+$("#search").addEventListener("input",renderStories);
+$("#statusFilter").addEventListener("change",()=>{
+  activeFilter="ALL";
+  document.querySelectorAll(".rail").forEach(x=>x.classList.remove("active"));
+  syncWorthyAgeControl();renderRails();renderStories();
+});
+$("#worthyAgeFilter").value=String(worthyAgeHours);
+$("#worthyAgeFilter").addEventListener("change",()=>{
+  const next=Number($("#worthyAgeFilter").value||0);
+  worthyAgeHours=WORTHY_AGE_OPTIONS.has(next)?next:0;
+  localStorage.setItem("autonewsWorthyAgeHours",String(worthyAgeHours));
+  syncWorthyAgeControl();renderRails();renderStories();
+});
+document.querySelectorAll(".rail").forEach(b=>b.onclick=()=>{
+  activeFilter=b.dataset.filter;
+  $("#statusFilter").value="ALL";
+  document.querySelectorAll(".rail").forEach(x=>x.classList.toggle("active",x===b));
+  syncWorthyAgeControl();renderRails();renderStories();
+});
 
 function connectEvents(){
   if(eventSource)eventSource.close();
