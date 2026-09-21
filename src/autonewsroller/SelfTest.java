@@ -425,8 +425,10 @@ public final class SelfTest {
                 "production duration defaults require one-minute-plus output");
         ok(cfg.getInt("commandCenterComfyImages",0)>=6&&cfg.getBool("comfyDisableDynamicVram",false),
                 "production defaults request six Comfy images with dynamic VRAM disabled");
-        ok(cfg.getInt("ollamaContextTokens",0)>=8192&&cfg.getInt("ollamaMaxOutputTokens",0)>=1600,
-                "script Ollama budget reserves enough context and output tokens");
+        ok(cfg.getInt("ollamaContextTokens",0)>=8192&&cfg.getInt("ollamaMaxOutputTokens",0)>=1600&&cfg.getInt("ollamaRetries",0)>=5,
+                "script Ollama budget reserves enough context, output tokens, and surgical retries");
+        ok(cfg.getBool("articleEnrichmentEnabled",false),
+                "production defaults enable article enrichment before script generation");
 
         StoryCluster cluster=new StoryClusterer().cluster(a.stream().filter(x->!x.title().contains("Old archive")).toList())
                 .stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
@@ -461,20 +463,34 @@ public final class SelfTest {
                 "script assembly uses combined segment narration and trusted publisher labels");
 
         List<NewsScript.Segment>retrySegments=new ArrayList<>();
-        String retryLine="Verified reporting describes the event using facts already present in the supplied package while keeping the narration neutral and factual.";
+        String retryLine="Verified reporting describes the event using facts already present in the supplied package while keeping narration neutral.";
         for(int i=0;i<8;i++)retrySegments.add(new NewsScript.Segment(i,retryLine,"detail","BACKGROUND","Verified documentary visual",8));
         String retryNarration=retrySegments.stream().map(NewsScript.Segment::narration).reduce("",(x,y)->x.isBlank()?y:x+" "+y);
         NewsScript retryBase=new NewsScript(fp.storyId(),fp.headline(),retryNarration,retrySegments,58,List.copyOf(allowedPublishers));
-        int beforeRepair=Text.words(retryBase.narration());
 
-        Map<String,Object>expansionJson=new LinkedHashMap<>();
-        expansionJson.put("additions",List.of(
-                Map.of("segmentIndex",0,"text","Additional verified context from the supplied reporting extends this beat without introducing any unsupported factual claim."),
-                Map.of("segmentIndex",1,"text","The available verified material also supports this added neutral context while staying within the same documented facts.")
+        List<NewsScriptGenerator.RepairTarget>repairPlan=List.of(
+                new NewsScriptGenerator.RepairTarget(0,18,24,21,retrySegments.get(0).narration()),
+                new NewsScriptGenerator.RepairTarget(1,18,24,21,retrySegments.get(1).narration())
+        );
+        Map<String,Object>repairJson=new LinkedHashMap<>();
+        repairJson.put("replacements",List.of(
+                Map.of("segmentIndex",0,"narration","Verified reporting explains the event using supplied facts while adding careful context that remains neutral, factual, concise, and directly grounded in source material."),
+                Map.of("segmentIndex",1,"narration","The replacement narration keeps the documented facts intact while giving this beat enough detail for a clear broadcast-style explanation without unsupported additions.")
         ));
-        NewsScript expanded=NewsScriptGenerator.applyExpansions(retryBase,Json.stringify(expansionJson),fp,70);
-        ok(Text.words(expanded.narration())>beforeRepair&&expanded.segments().size()==8,
-                "short-script repair appends targeted continuation text instead of regenerating the same draft");
+        NewsScript repaired=NewsScriptGenerator.applyReplacements(retryBase,Json.stringify(repairJson),fp,70,repairPlan);
+        ok(repaired.segments().size()==8&&Text.words(repaired.segments().get(0).narration())>=18&&Text.words(repaired.segments().get(0).narration())<=24,
+                "script repair replaces targeted segments within hard Java word bounds");
+
+        boolean rejectedOversize=false;
+        try{
+            Map<String,Object>oversize=new LinkedHashMap<>();
+            oversize.put("replacements",List.of(
+                    Map.of("segmentIndex",0,"narration","This deliberately oversized replacement contains far too many words for the requested repair target and should be rejected before it can corrupt the otherwise usable current draft with an uncontrolled expansion response from the model."),
+                    Map.of("segmentIndex",1,"narration","The replacement narration keeps the documented facts intact while giving this beat enough detail for a clear broadcast-style explanation without unsupported additions.")
+            ));
+            NewsScriptGenerator.applyReplacements(retryBase,Json.stringify(oversize),fp,70,repairPlan);
+        }catch(IllegalArgumentException expected){rejectedOversize=true;}
+        ok(rejectedOversize,"script repair rejects model replacements outside hard word bounds");
 
         Path ass=Files.createTempFile("autonews-captions-",".ass");
         CaptionWriter.write(ass,
