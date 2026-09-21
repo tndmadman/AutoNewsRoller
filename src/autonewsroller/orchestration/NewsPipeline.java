@@ -126,8 +126,20 @@ public final class NewsPipeline {
     }
 
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,boolean dryRun)throws Exception{
-        Files.createDirectories(slotDir);StoryCluster c=cand.cluster();FactPackage fp=cand.factPackage();logs.worker(worker,"slot="+slot+" story="+c.topic+" started");events.emit(worker,slot,PipelineStage.VERIFY,fp.independentSourceCount()+" independent sources");
-        Json.write(slotDir.resolve("story.json"),c.toMap());Path articleDir=slotDir.resolve("articles");Files.createDirectories(articleDir);int articleIndex=0;for(Article a:c.articles)Json.write(articleDir.resolve(String.format("%02d.json",articleIndex++)),a.toMap());Json.write(slotDir.resolve("fact_package.json"),fp.toMap());
+        Files.createDirectories(slotDir);
+        StoryCluster c=enrichForProduction(cand.cluster());
+        VerificationResult refreshed=new SourceVerifier().verify(c,cfg.minimumIndependentSources());
+        FactPackage fp=refreshed.factPackage();
+        logs.worker(worker,"slot="+slot+" story="+c.topic+" started facts="+fp.facts().size()+" enrichedBodies="+c.articles.stream().filter(a->a.bodyText()!=null&&!a.bodyText().isBlank()).count());
+        events.emit(worker,slot,PipelineStage.VERIFY,fp.independentSourceCount()+" independent sources; "+fp.facts().size()+" narration facts");
+
+        Json.write(slotDir.resolve("story.json"),c.toMap());
+        Path articleDir=slotDir.resolve("articles");
+        Files.createDirectories(articleDir);
+        int articleIndex=0;
+        for(Article a:c.articles)Json.write(articleDir.resolve(String.format("%02d.json",articleIndex++)),a.toMap());
+        Json.write(slotDir.resolve("fact_package.json"),fp.toMap());
+
         OllamaClient oc=dryRun?null:new OllamaClient(
                 cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate"),
                 cfg.get("ollamaModel","llama3.1:8b"),
@@ -136,9 +148,51 @@ public final class NewsPipeline {
                 cfg.getInt("ollamaContextTokens",8192),
                 cfg.getInt("ollamaMaxOutputTokens",2200),
                 cfg.getDouble("ollamaTemperature",0.2)
-        );NewsScript script=new NewsScriptGenerator(oc,cfg.getInt("ollamaRetries",3)).generate(fp,targetSeconds,dryRun);Json.write(slotDir.resolve("script.json"),script.toMap());events.emit(worker,slot,PipelineStage.SCRIPT,"script ready");
-        VisualPlan plan=new VisualPlanner().plan(script,fp);Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
-        if(dryRun){Map<String,Object>audit=new LinkedHashMap<>();audit.put("status","approved-dry-run");audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());Json.write(slotDir.resolve("audit.json"),audit);events.emit(worker,slot,PipelineStage.APPROVED,"dry-run complete");logs.worker(worker,"slot="+slot+" dry-run approved");return slotDir.resolve("script.json");}
+        );
+        NewsScriptGenerator scriptGenerator=new NewsScriptGenerator(oc,cfg.getInt("ollamaRetries",5));
+        NewsScript script=scriptGenerator.generate(fp,targetSeconds,dryRun);
+        Json.write(slotDir.resolve("script.json"),script.toMap());
+        events.emit(worker,slot,PipelineStage.SCRIPT,"script ready; words="+Text.words(script.narration()));
+
+        if(dryRun){
+            VisualPlan plan=new VisualPlanner().plan(script,fp);
+            Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
+            Map<String,Object>audit=new LinkedHashMap<>();
+            audit.put("status","approved-dry-run");
+            audit.put("sourceCount",fp.sourceCount());
+            audit.put("independentSources",fp.independentSourceCount());
+            audit.put("verifiedFacts",fp.facts().size());
+            Json.write(slotDir.resolve("audit.json"),audit);
+            events.emit(worker,slot,PipelineStage.APPROVED,"dry-run complete");
+            logs.worker(worker,"slot="+slot+" dry-run approved");
+            return slotDir.resolve("script.json");
+        }
+
+        Path wav=slotDir.resolve("narration/narration.wav");
+        NarrationResult nr=narrate(c,script,wav,worker,slot);
+        double narrationSeconds=audioDuration(nr.wav());
+        double minimumFinalSeconds=cfg.getDouble("minimumFinalVideoSeconds",61.0);
+        logs.worker(worker,String.format(Locale.ROOT,"slot=%d narration duration=%.2fs words=%d",slot,narrationSeconds,Text.words(script.narration())));
+
+        if(narrationSeconds<minimumFinalSeconds){
+            double desiredAudio=Math.max(minimumFinalSeconds+4.0,65.0);
+            int adjustedTarget=Math.min(95,Math.max(targetSeconds+5,(int)Math.ceil(targetSeconds*desiredAudio/Math.max(1.0,narrationSeconds))));
+            String retry=String.format(Locale.ROOT,"TTS duration %.2fs is below %.2fs; regenerating narration for %ds target before images",narrationSeconds,minimumFinalSeconds,adjustedTarget);
+            System.err.println(retry);
+            events.emit(worker,slot,PipelineStage.SCRIPT,retry);
+            logs.worker(worker,"slot="+slot+" "+retry);
+
+            script=scriptGenerator.generate(fp,adjustedTarget,false);
+            Json.write(slotDir.resolve("script.json"),script.toMap());
+            nr=narrate(c,script,wav,worker,slot);
+            narrationSeconds=audioDuration(nr.wav());
+            logs.worker(worker,String.format(Locale.ROOT,"slot=%d repaired narration duration=%.2fs words=%d",slot,narrationSeconds,Text.words(script.narration())));
+            if(narrationSeconds<minimumFinalSeconds)
+                throw new IllegalStateException(String.format(Locale.ROOT,"Narration audio still too short after repair: %.2fs; minimum is %.2fs",narrationSeconds,minimumFinalSeconds));
+        }
+
+        VisualPlan plan=new VisualPlanner().plan(script,fp);
+        Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
         Path visuals=slotDir.resolve("visuals");List<Path>imgs=new ArrayList<>();List<Map<String,Object>>imageSources=new ArrayList<>();CardRenderer cards=new CardRenderer();int i=0;
         for(VisualPlan.Item item:plan.items()){Path p=visuals.resolve(String.format("%02d_%s.png",i++,item.type().toLowerCase(Locale.ROOT)));cards.render(item,p,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));imgs.add(p);imageSources.add(Map.of("type","procedural-card","path",p.toString(),"visualType",item.type()));}
@@ -214,17 +268,105 @@ public final class NewsPipeline {
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI DISABLED for this job");
         }
 
-        List<String>kv=cfg.csv("kokoroVoices","af_heart");List<String>qv=cfg.csv("qwenVoices","Ryan");String kVoice=kv.get(Math.floorMod(c.id.hashCode(),kv.size()));String qVoice=qv.get(Math.floorMod(c.id.hashCode(),qv.size()));Path wav=slotDir.resolve("narration/narration.wav");NarrationEngine primary=new KokoroNarrator(root,cfg.getDouble("kokoroSpeed",0.92));NarrationEngine fallback=new QwenNarrator(root,cfg.get("qwenUrl","http://127.0.0.1:8765"));events.emit(worker,slot,PipelineStage.TTS,"KOKORO active");NarrationResult nr;
-        try{nr=primary.narrate(script.narration(),kVoice,wav);String used="KOKORO USED voice="+kVoice;System.out.println(used);events.emit(worker,slot,PipelineStage.TTS,used);logs.worker(worker,"slot="+slot+" TTS engine used: Kokoro voice="+kVoice);}catch(Exception e){String fail="KOKORO FAILED: "+e.getMessage();System.err.println(fail);logs.worker(worker,"slot="+slot+" "+fail);events.emit(worker,slot,PipelineStage.TTS,fail);events.emit(worker,slot,PipelineStage.TTS,"QWEN3 FALLBACK active");nr=fallback.narrate(script.narration(),qVoice,wav);String used="QWEN3 FALLBACK USED voice="+qVoice;System.out.println(used);events.emit(worker,slot,PipelineStage.TTS,used);logs.worker(worker,"slot="+slot+" TTS engine used: Qwen3 fallback voice="+qVoice);}
-
         Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));List<Double>sceneWeights=plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(imgs,sceneWeights,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration());
-        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();double minimumFinalSeconds=cfg.getDouble("minimumFinalVideoSeconds",61.0);if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);Json.write(slotDir.resolve("audit.json"),audit);
+        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);Json.write(slotDir.resolve("audit.json"),audit);
         Path finalDir=slotDir.getParent().resolve("final_videos");Path finalVideo=FileNames.unique(finalDir,c.topic,".mp4");Files.createDirectories(finalDir);Files.copy(render,finalVideo,StandardCopyOption.REPLACE_EXISTING);
         Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
         history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
     }
 
     public void rejected(int worker,int slot,String detail){events.emit(worker,slot,PipelineStage.REJECTED,detail);logs.worker(worker,"slot="+slot+" rejected "+detail);}
+
+    private StoryCluster enrichForProduction(StoryCluster original){
+        if(!cfg.getBool("articleEnrichmentEnabled",true))return original;
+
+        ArticleFetcher fetcher=new ArticleFetcher(
+                cfg.getInt("articleFetchTimeout",30),
+                cfg.get("userAgent","AutoNewsRoller/0.1")
+        );
+        List<Article>enriched=new ArrayList<>();
+        boolean changed=false;
+
+        for(Article a:original.articles){
+            if(a.bodyText()!=null&&!a.bodyText().isBlank()){
+                enriched.add(a);
+                continue;
+            }
+            String url=a.url()==null?"":a.url().trim();
+            if(!(url.startsWith("http://")||url.startsWith("https://"))){
+                enriched.add(a);
+                continue;
+            }
+            try{
+                String html=fetcher.fetch(url);
+                String body=ArticleParser.extractText(html);
+                if(body.length()>20000)body=body.substring(0,20000);
+                if(body.isBlank()){
+                    enriched.add(a);
+                    continue;
+                }
+                enriched.add(new Article(
+                        a.id(),a.publisher(),a.title(),a.url(),a.canonicalUrl(),
+                        a.publishedAt(),a.discoveredAt(),a.author(),a.category(),
+                        a.description(),body,a.language(),a.sourceTrustTier(),a.authoritativePrimary()
+                ));
+                changed=true;
+                logs.debug("Production article enrichment succeeded publisher="+a.publisher()+" bodyChars="+body.length());
+            }catch(Exception e){
+                enriched.add(a);
+                logs.debug("Production article enrichment failed url="+url+" reason="+e.getMessage());
+            }
+        }
+
+        return changed
+                ?new StoryCluster(original.id,original.topic,enriched,original.entities,original.fingerprint)
+                :original;
+    }
+
+    private NarrationResult narrate(StoryCluster c,NewsScript script,Path wav,int worker,int slot)throws Exception{
+        List<String>kv=cfg.csv("kokoroVoices","af_heart");
+        List<String>qv=cfg.csv("qwenVoices","Ryan");
+        String kVoice=kv.get(Math.floorMod(c.id.hashCode(),kv.size()));
+        String qVoice=qv.get(Math.floorMod(c.id.hashCode(),qv.size()));
+        NarrationEngine primary=new KokoroNarrator(root,cfg.getDouble("kokoroSpeed",0.92));
+        NarrationEngine fallback=new QwenNarrator(root,cfg.get("qwenUrl","http://127.0.0.1:8765"));
+        events.emit(worker,slot,PipelineStage.TTS,"KOKORO active");
+
+        try{
+            NarrationResult nr=primary.narrate(script.narration(),kVoice,wav);
+            String used="KOKORO USED voice="+kVoice;
+            System.out.println(used);
+            events.emit(worker,slot,PipelineStage.TTS,used);
+            logs.worker(worker,"slot="+slot+" TTS engine used: Kokoro voice="+kVoice);
+            return nr;
+        }catch(Exception e){
+            String fail="KOKORO FAILED: "+e.getMessage();
+            System.err.println(fail);
+            logs.worker(worker,"slot="+slot+" "+fail);
+            events.emit(worker,slot,PipelineStage.TTS,fail);
+            events.emit(worker,slot,PipelineStage.TTS,"QWEN3 FALLBACK active");
+            NarrationResult nr=fallback.narrate(script.narration(),qVoice,wav);
+            String used="QWEN3 FALLBACK USED voice="+qVoice;
+            System.out.println(used);
+            events.emit(worker,slot,PipelineStage.TTS,used);
+            logs.worker(worker,"slot="+slot+" TTS engine used: Qwen3 fallback voice="+qVoice);
+            return nr;
+        }
+    }
+
+    private double audioDuration(Path wav)throws Exception{
+        String dur=FfmpegRunner.run(List.of(
+                cfg.get("ffprobeCommand","ffprobe"),
+                "-v","error",
+                "-show_entries","format=duration",
+                "-of","default=noprint_wrappers=1:nokey=1",
+                wav.toString()
+        ),30).trim();
+        if(dur.isBlank())throw new IllegalStateException("ffprobe returned no narration duration");
+        double seconds=Double.parseDouble(dur.split("\\R")[0]);
+        if(seconds<=0)throw new IllegalStateException("invalid narration duration: "+seconds);
+        return seconds;
+    }
 
     private static boolean checkpointMatches(String available,String configured){
         if(available==null||configured==null)return false;
