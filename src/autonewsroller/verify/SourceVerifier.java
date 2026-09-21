@@ -74,7 +74,7 @@ public final class SourceVerifier {
         return out;
     }
 
-    private static boolean Similarity(Set<String>a,Set<String>b){
+    private static double Similarity(Set<String>a,Set<String>b){
         Set<String>i=new HashSet<>(a);i.retainAll(b);
         Set<String>u=new HashSet<>(a);u.addAll(b);
         return u.isEmpty()?0:(double)i.size()/u.size();
