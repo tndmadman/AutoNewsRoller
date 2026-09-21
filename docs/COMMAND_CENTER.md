@@ -301,6 +301,19 @@ A verified story is auto-queued when:
 
 Manual MAKE can queue a verified story below the threshold.
 
+## Worthy age filter
+
+The **WORTHY** board has a browser-side publication-age filter. It uses each story's `latestPublishedAt` timestamp and does not change queueing, scoring, or persisted story state.
+
+Available presets are:
+
+- any age;
+- last 1, 2, 3, 4, 6, 8, 12, 24, 48, or 72 hours.
+
+The control is enabled only while the active board view is WORTHY. When a time limit is active, stories without a usable publication timestamp are excluded. The selected limit is stored in browser localStorage and is restored on the next visit.
+
+The WORTHY rail count shows `visible/total` while an hour limit is active so the operator can see how much of the worthy pool is currently hidden.
+
 ## Worthiness score
 
 The dashboard uses the existing StoryRanker score.
