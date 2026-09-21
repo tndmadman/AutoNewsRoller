@@ -53,6 +53,19 @@
         <span>STORY OPERATIONS BOARD</span>
         <div class="controls">
           <input id="search" type="search" placeholder="Search stories, publishers, category…">
+          <select id="worthyAgeFilter" title="Maximum age for stories shown in the WORTHY view" disabled>
+            <option value="0">WORTHY: ANY AGE</option>
+            <option value="1">WORTHY: LAST 1H</option>
+            <option value="2">WORTHY: LAST 2H</option>
+            <option value="3">WORTHY: LAST 3H</option>
+            <option value="4">WORTHY: LAST 4H</option>
+            <option value="6">WORTHY: LAST 6H</option>
+            <option value="8">WORTHY: LAST 8H</option>
+            <option value="12">WORTHY: LAST 12H</option>
+            <option value="24">WORTHY: LAST 24H</option>
+            <option value="48">WORTHY: LAST 48H</option>
+            <option value="72">WORTHY: LAST 72H</option>
+          </select>
           <select id="statusFilter">
             <option value="ALL">ALL STATUS</option>
             <option value="DISCOVERED">DISCOVERED</option>
