@@ -454,7 +454,7 @@ public final class SelfTest {
                         false
                 )),
                 List.of(),
-                List.of(Map.of("publisher","Fixture News")),
+                List.of(Map.<String,Object>of("publisher","Fixture News")),
                 2,2,0.9,false
         );
         HookPlanner.Selection hookSelection=new HookPlanner(null,1).select(hookFacts);
