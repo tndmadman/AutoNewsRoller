@@ -232,7 +232,36 @@ Return one JSON object matching the repair schema and nothing else.
                 ));
             }
         }
-        return rebuild(fp,h,segs,target);
+        return rebuild(fp,h,segs,target,Map.of());
+    }
+
+    private static NewsScript lockHook(NewsScript base,HookPlanner.Selection hook,FactPackage fp,int target){
+        if(base.segments().isEmpty())return base;
+        List<NewsScript.Segment>segs=new ArrayList<>(base.segments());
+
+        NewsScript.Segment first=segs.get(0);
+        segs.set(0,new NewsScript.Segment(
+                0,
+                hook.text(),
+                "retention hook",
+                "HOOK",
+                HookPlanner.visualPrompt(hook,fp),
+                Math.max(2.2,Text.words(hook.text())/2.5)
+        ));
+
+        if(segs.size()>1){
+            NewsScript.Segment second=segs.get(1);
+            segs.set(1,new NewsScript.Segment(
+                    second.index(),
+                    second.narration(),
+                    "immediate hook payoff",
+                    second.visualType(),
+                    second.visualPrompt(),
+                    second.durationTarget()
+            ));
+        }
+
+        return rebuild(fp,base.headline(),segs,target,hook.toMap());
     }
 
     public static NewsScript applyReplacements(NewsScript base,String raw,FactPackage fp,int target,List<RepairTarget>plan){
@@ -276,11 +305,27 @@ Return one JSON object matching the repair schema and nothing else.
 
         if(applied!=targets.size())
             throw new IllegalArgumentException("Ollama repair returned "+applied+" usable replacements; required "+targets.size());
-        return rebuild(fp,base.headline(),segs,target);
+        return rebuild(fp,base.headline(),segs,target,base.hook());
     }
 
     private static NewsScript rebuild(FactPackage fp,String headline,List<NewsScript.Segment>segs,int target){
-        String narration=segs.stream()
+        return rebuild(fp,headline,segs,target,Map.of());
+    }
+
+    private static NewsScript rebuild(FactPackage fp,String headline,List<NewsScript.Segment>segs,int target,Map<String,Object>hook){
+        int totalSegmentWords=segs.stream().mapToInt(x->Text.words(x.narration())).sum();
+        List<NewsScript.Segment>timed=new ArrayList<>();
+        for(NewsScript.Segment s:segs){
+            int words=Math.max(1,Text.words(s.narration()));
+            double duration=totalSegmentWords<=0
+                    ?Math.max(1.0,target/(double)Math.max(1,segs.size()))
+                    :Math.max(1.0,target*words/(double)totalSegmentWords);
+            timed.add(new NewsScript.Segment(
+                    s.index(),s.narration(),s.purpose(),s.visualType(),s.visualPrompt(),duration
+            ));
+        }
+
+        String narration=timed.stream()
                 .map(NewsScript.Segment::narration)
                 .filter(x->x!=null&&!x.isBlank())
                 .reduce("",(a,b)->a.isBlank()?b:a+" "+b)
@@ -293,7 +338,7 @@ Return one JSON object matching the repair schema and nothing else.
                 .toList();
 
         double est=Math.max(1,Text.words(narration)/2.5);
-        return new NewsScript(fp.storyId(),headline,narration,List.copyOf(segs),est,labels);
+        return new NewsScript(fp.storyId(),headline,narration,List.copyOf(timed),est,labels,hook);
     }
 
     private static Map<String,Object> narrationInput(FactPackage fp){
