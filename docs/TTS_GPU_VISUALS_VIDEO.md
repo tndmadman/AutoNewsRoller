@@ -4,7 +4,9 @@
 
 The media side of AutoNewsRoller was designed around a predictable fallback chain:
 
-    script
+    verified facts
+      -> hook candidate generation / validation
+      -> locked eight-segment script
       -> Kokoro narration
       -> Qwen3-TTS fallback if needed
       -> procedural visual plan
@@ -13,6 +15,39 @@ The media side of AutoNewsRoller was designed around a predictable fallback chai
       -> ffprobe/FFmpeg audit
 
 The most important production rule is that logs and provenance should identify what actually happened, not only what was configured.
+
+## Retention hook system
+
+Production scripts no longer treat all eight narration segments equally.
+
+Before the main script is generated, HookPlanner asks Ollama for three short opening candidates grounded in explicit FACT IDs. Java validates and selects the hook before the rest of the narration is accepted.
+
+The hook contract is:
+
+- 6-11 spoken words, targeting about 8;
+- the first 4-6 words must already communicate a concrete verified actor, event, change, conflict, place, or verified number;
+- declarative statement, not a rhetorical question;
+- no generic throat-clearing such as "Breaking news", "Here's what happened", or "According to reports";
+- no unsupported clickbait language such as "shocking", "unbelievable", or "you won't believe";
+- numeric claims must already exist in the verified FactPackage;
+- model candidates must cite supporting FACT IDs.
+
+Java scores valid candidates for concise length, grounding overlap, multi-source support, early concrete wording, and distance from a simple headline restatement.
+
+If hook generation fails, a deterministic fact-based fallback is used so a hook-model formatting error does not kill an otherwise valid video.
+
+The selected hook is locked into narration segment 0. The main script model is told to copy it exactly, but Java overwrites segment 0 with the selected hook regardless, so prompt noncompliance cannot silently expand or rewrite it.
+
+For a roughly 175-word / 70-second script, the intended shape is approximately:
+
+    segment 0: 6-11 words // retention hook
+    segments 1-7: roughly 23-24 words each
+
+Segment 1 is explicitly the immediate payoff. It should explain the hook instead of restarting the story with another introduction.
+
+Normal short/long narration repair intentionally excludes segment 0. Unsupported-number repair also operates on body segments because HookPlanner already validates hook numbers against the FactPackage.
+
+Hook diagnostics are written into script.json, audit.json, and the final MP4 sidecar, including selected text, hook type, cited fact IDs, word count, estimated spoken duration, fallback state, score, and candidate diagnostics.
 
 ## Kokoro primary TTS
 
@@ -240,7 +275,7 @@ ComfyUI is optional.
 
 The pipeline always has procedural cards available.
 
-When enabled, it attempts to replace one eligible non-headline/non-source visual with a generated image.
+When enabled, it replaces eligible non-source story visuals up to the configured image limit. The opening HOOK visual is first in the eligible order, so it is generated before later story beats.
 
 ## Checkpoint validation
 
@@ -322,15 +357,19 @@ The procedural path is important because it provides a deterministic fallback wh
 
 ## Visual planning
 
-VisualPlanner creates:
+VisualPlanner now starts directly on the story instead of spending the opening seconds on a standalone headline card.
 
-1. headline card;
-2. up to five segment-driven visual items;
-3. source card.
+It creates:
 
-Segment visual types come from the generated script but headline-card collisions are normalized to other visual types after the first card.
+1. segment 0 as a HOOK visual at frame zero;
+2. the remaining segment-driven visual items;
+3. a short source card at the end.
 
-The source card lists up to four distinct publisher names.
+The old 3.5-second opening HEADLINE_CARD is intentionally removed from production plans. The hook scene receives a short duration weight tied to its narration word count, while later scenes receive proportionally larger weights.
+
+The hook visual prompt is grounded in the FACT IDs selected by HookPlanner and asks for a concrete editorial/documentary subject or action rather than a generic newsroom image. CardRenderer also gives HOOK images a larger image-first layout.
+
+The source card lists distinct publisher names.
 
 ## Caption generation
 
