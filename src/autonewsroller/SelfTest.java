@@ -39,6 +39,7 @@ public final class SelfTest {
         testScriptValidation(a);
         testProductionVideoContract(root,a);
         testWorthyHourFilterContract(root);
+        testFeedCardIdentityContract(root);
         testTtsFallback();
         testWorkerEvent();
         testFilename(root);
@@ -563,6 +564,15 @@ public final class SelfTest {
         ok(js.contains("autonewsWorthyAgeHours")&&js.contains("latestPublishedAt")&&js.contains("withinWorthyAge")&&
                         js.contains("currentStoryFilter()===\"WORTHY\""),
                 "dashboard Worthy hour filter persists and filters by latest publication time");
+    }
+
+    private void testFeedCardIdentityContract(Path root)throws Exception{
+        String js=Files.readString(root.resolve("web/command-center/app.js"));
+        String css=Files.readString(root.resolve("web/command-center/styles.css"));
+        ok(js.contains("feedEndpointLabel")&&js.contains("feedCategoryClass")&&js.contains("feedCategory")&&js.contains("feedEndpoint"),
+                "dashboard feed cards expose publisher, category, and endpoint identity");
+        ok(css.contains(".feedCategory")&&css.contains(".feed.cat-politics")&&css.contains(".feed.cat-health")&&css.contains(".feed.cat-science"),
+                "dashboard visually differentiates major RSS categories");
     }
 
     private void testTtsFallback()throws Exception{
