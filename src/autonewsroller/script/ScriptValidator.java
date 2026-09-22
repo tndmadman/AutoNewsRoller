@@ -20,8 +20,11 @@ public final class ScriptValidator {
             problems.add("expected 7-10 narration segments");
 
         if(s.segments()!=null&&!s.segments().isEmpty()){
-            for(String p:HookPlanner.validationProblems(s.segments().get(0).narration(),facts,s.headline()))
+            boolean fallbackHook=s.hook()!=null&&Boolean.TRUE.equals(s.hook().get("fallback"));
+            for(String p:HookPlanner.validationProblems(s.segments().get(0).narration(),facts,s.headline())){
+                if(fallbackHook&&"hook duplicates headline".equals(p))continue;
                 problems.add("hook "+p);
+            }
         }
 
         for(String n:unsupportedNumbers(s,facts))
