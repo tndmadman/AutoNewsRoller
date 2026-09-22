@@ -81,8 +81,9 @@ The configured Java voice pool is:
 
 - af_heart
 - af_bella
-- af_nicole
 - bf_emma
+
+`af_nicole` is intentionally blacklisted. AutoNewsRoller removes both `af_nicole` and `af-nicole` from configured Kokoro voice pools at runtime, and the Python Kokoro helper refuses direct use of that voice. If an old/custom configuration contains only blacklisted entries, the runtime falls back to the safe pool above.
 
 ## Kokoro token timing
 

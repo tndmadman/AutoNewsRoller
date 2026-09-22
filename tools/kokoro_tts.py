@@ -10,6 +10,9 @@ def main():
     ap.add_argument('--text-file',required=True); ap.add_argument('--output',required=True)
     ap.add_argument('--voice',default='af_heart'); ap.add_argument('--lang',default='a'); ap.add_argument('--speed',type=float,default=1.0)
     args=ap.parse_args()
+    voice_key=args.voice.strip().lower().replace('-','_')
+    if voice_key == 'af_nicole':
+        raise SystemExit('Kokoro voice af_nicole is blacklisted in AutoNewsRoller.')
     text=Path(args.text_file).read_text(encoding='utf-8').strip()
     if not text: raise SystemExit('No text to speak.')
     try:
