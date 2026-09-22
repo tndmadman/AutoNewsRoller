@@ -413,7 +413,7 @@ Return one JSON object matching the repair schema and nothing else.
     private static List<RepairTarget> expansionPlan(NewsScript script,int desiredTotal){
         int currentTotal=Text.words(script.narration());
         int remaining=Math.max(0,desiredTotal-currentTotal);
-        List<Integer>indices=java.util.stream.IntStream.range(0,script.segments().size())
+        List<Integer>indices=java.util.stream.IntStream.range(1,script.segments().size())
                 .boxed()
                 .sorted(Comparator.comparingInt(i->Text.words(script.segments().get(i).narration())))
                 .toList();
@@ -438,7 +438,7 @@ Return one JSON object matching the repair schema and nothing else.
     private static List<RepairTarget> compressionPlan(NewsScript script,int desiredTotal){
         int currentTotal=Text.words(script.narration());
         int remaining=Math.max(0,currentTotal-desiredTotal);
-        List<Integer>indices=java.util.stream.IntStream.range(0,script.segments().size())
+        List<Integer>indices=java.util.stream.IntStream.range(1,script.segments().size())
                 .boxed()
                 .sorted((a,b)->Integer.compare(
                         Text.words(script.segments().get(b).narration()),
@@ -466,7 +466,7 @@ Return one JSON object matching the repair schema and nothing else.
 
     private static List<RepairTarget> numberRepairPlan(NewsScript script,Set<String>unsupported){
         List<RepairTarget>plan=new ArrayList<>();
-        for(int i=0;i<script.segments().size();i++){
+        for(int i=1;i<script.segments().size();i++){
             NewsScript.Segment seg=script.segments().get(i);
             boolean hit=false;
             for(String n:unsupported){
@@ -493,11 +493,17 @@ Return one JSON object matching the repair schema and nothing else.
         return Math.min(1200,Math.max(320,words*5+220));
     }
 
-    private static List<Integer>segmentTargets(int preferredWords,int count){
+    private static List<Integer>segmentTargets(int preferredWords,int count,int hookWords){
+        if(count<=1)return List.of(Math.max(1,preferredWords));
+        int locked=Math.max(HookPlanner.MIN_HOOK_WORDS,Math.min(HookPlanner.MAX_HOOK_WORDS,hookWords));
+        int remaining=Math.max(count-1,preferredWords-locked);
+        int bodyCount=count-1;
+        int base=remaining/bodyCount;
+        int remainder=remaining%bodyCount;
+
         List<Integer>out=new ArrayList<>();
-        int base=preferredWords/count;
-        int remainder=preferredWords%count;
-        for(int i=0;i<count;i++)out.add(base+(i<remainder?1:0));
+        out.add(locked);
+        for(int i=0;i<bodyCount;i++)out.add(base+(i<remainder?1:0));
         return List.copyOf(out);
     }
 
