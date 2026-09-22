@@ -434,10 +434,36 @@ public final class SelfTest {
                 .stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
         FactPackage fp=new SourceVerifier().verify(cluster,2).factPackage();
         List<NewsScript.Segment>segments=new ArrayList<>();
-        for(int i=0;i<8;i++)segments.add(new NewsScript.Segment(i,"Verified narration beat "+(i+1),"detail","BACKGROUND","Documentary visual grounded in the supplied facts",8));
-        NewsScript visualScript=new NewsScript(fp.storyId(),fp.headline(),"Verified narration for visual planning.",segments,70,List.of());
+        segments.add(new NewsScript.Segment(0,"Nvidia reveals a new AI accelerator chip","retention hook","HOOK","Immediate verified opening visual",3));
+        for(int i=1;i<8;i++)segments.add(new NewsScript.Segment(i,"Verified narration beat number "+(i+1)+" adds factual context for viewers.","detail","BACKGROUND","Documentary visual grounded in the supplied facts",8));
+        NewsScript visualScript=new NewsScript(fp.storyId(),fp.headline(),"Verified narration for visual planning.",segments,70,List.of(),
+                Map.of("text",segments.get(0).narration(),"type","direct_event","factIds",List.of("FACT_A")));
         VisualPlan plan=new VisualPlanner().plan(visualScript,fp);
-        ok(plan.items().size()>=9&&plan.items().size()<=10,"visual planner creates headline, 7-8 story beats, and source card");
+        ok(plan.items().size()==9&&"HOOK".equals(plan.items().get(0).type())&&
+                        plan.items().stream().noneMatch(x->"HEADLINE_CARD".equals(x.type())),
+                "visual planner starts at frame zero with hook visual and no standalone headline card");
+
+        FactPackage hookFacts=new FactPackage(
+                "hook-fixture",
+                "Nvidia announces a new AI accelerator",
+                "Nvidia announced a new AI accelerator for data centers.",
+                List.of(new FactClaim(
+                        "Nvidia announced a new AI accelerator for data centers.",
+                        List.of("https://source-a.test/story","https://source-b.test/story"),
+                        0.9,
+                        false
+                )),
+                List.of(),
+                List.of(Map.of("publisher","Fixture News")),
+                2,2,0.9,false
+        );
+        HookPlanner.Selection hookSelection=new HookPlanner(null,1).select(hookFacts);
+        ok(Text.words(hookSelection.text())>=HookPlanner.MIN_HOOK_WORDS&&
+                        Text.words(hookSelection.text())<=HookPlanner.MAX_HOOK_WORDS&&
+                        HookPlanner.validationProblems(hookSelection.text(),hookFacts,hookFacts.headline()).isEmpty(),
+                "hook planner fallback produces a short factual opening inside hard hook bounds");
+        ok(!HookPlanner.validationProblems("Breaking news this shocking story changes everything",hookFacts,hookFacts.headline()).isEmpty(),
+                "hook validator rejects generic clickbait openings");
 
         NewsScript shortScript=new NewsScript(fp.storyId(),fp.headline(),"This narration is deliberately too short.",segments,3,List.of());
         ok(new ScriptValidator().validate(shortScript,fp,70).stream().anyMatch(x->x.startsWith("narration too short")),
@@ -466,27 +492,34 @@ public final class SelfTest {
         String retryLine="Verified reporting describes the event using facts already present in the supplied package while keeping narration neutral.";
         for(int i=0;i<8;i++)retrySegments.add(new NewsScript.Segment(i,retryLine,"detail","BACKGROUND","Verified documentary visual",8));
         String retryNarration=retrySegments.stream().map(NewsScript.Segment::narration).reduce("",(x,y)->x.isBlank()?y:x+" "+y);
-        NewsScript retryBase=new NewsScript(fp.storyId(),fp.headline(),retryNarration,retrySegments,58,List.copyOf(allowedPublishers));
+        String lockedHook="Nvidia reveals a new AI accelerator chip";
+        retrySegments.set(0,new NewsScript.Segment(0,lockedHook,"retention hook","HOOK","Immediate verified opening visual",3));
+        retryNarration=retrySegments.stream().map(NewsScript.Segment::narration).reduce("",(x,y)->x.isBlank()?y:x+" "+y);
+        NewsScript retryBase=new NewsScript(
+                fp.storyId(),fp.headline(),retryNarration,retrySegments,58,List.copyOf(allowedPublishers),
+                Map.of("text",lockedHook,"type","direct_event","factIds",List.of("FACT_A"))
+        );
 
         List<NewsScriptGenerator.RepairTarget>repairPlan=List.of(
-                new NewsScriptGenerator.RepairTarget(0,18,24,21,retrySegments.get(0).narration()),
-                new NewsScriptGenerator.RepairTarget(1,18,24,21,retrySegments.get(1).narration())
+                new NewsScriptGenerator.RepairTarget(1,18,24,21,retrySegments.get(1).narration()),
+                new NewsScriptGenerator.RepairTarget(2,18,24,21,retrySegments.get(2).narration())
         );
         Map<String,Object>repairJson=new LinkedHashMap<>();
         repairJson.put("replacements",List.of(
-                Map.of("segmentIndex",0,"narration","Verified reporting explains the event using supplied facts while adding careful context that remains neutral, factual, concise, and directly grounded in source material."),
-                Map.of("segmentIndex",1,"narration","The replacement narration keeps the documented facts intact while giving this beat enough detail for a clear broadcast-style explanation without unsupported additions.")
+                Map.of("segmentIndex",1,"narration","The replacement narration keeps documented facts intact while giving this beat enough detail for a clear broadcast explanation without adding unsupported claims."),
+                Map.of("segmentIndex",2,"narration","Verified reporting supplies additional context for this segment while the rewrite remains factual, concise, neutral, and grounded in the available source material.")
         ));
         NewsScript repaired=NewsScriptGenerator.applyReplacements(retryBase,Json.stringify(repairJson),fp,70,repairPlan);
-        ok(repaired.segments().size()==8&&Text.words(repaired.segments().get(0).narration())>=18&&Text.words(repaired.segments().get(0).narration())<=24,
-                "script repair replaces targeted segments within hard Java word bounds");
+        ok(repaired.segments().size()==8&&lockedHook.equals(repaired.segments().get(0).narration())&&
+                        lockedHook.equals(repaired.hook().get("text"))&&"HOOK".equals(repaired.segments().get(0).visualType()),
+                "ordinary script repair preserves locked hook text, metadata, and visual role");
 
         boolean rejectedOversize=false;
         try{
             Map<String,Object>oversize=new LinkedHashMap<>();
             oversize.put("replacements",List.of(
-                    Map.of("segmentIndex",0,"narration","This deliberately oversized replacement contains far too many words for the requested repair target and should be rejected before it can corrupt the otherwise usable current draft with an uncontrolled expansion response from the model."),
-                    Map.of("segmentIndex",1,"narration","The replacement narration keeps the documented facts intact while giving this beat enough detail for a clear broadcast-style explanation without unsupported additions.")
+                    Map.of("segmentIndex",1,"narration","This deliberately oversized replacement contains far too many words for the requested repair target and should be rejected before it can corrupt the otherwise usable current draft with an uncontrolled expansion response from the model."),
+                    Map.of("segmentIndex",2,"narration","Verified reporting supplies additional context for this segment while the rewrite remains factual, concise, neutral, and grounded in the available source material.")
             ));
             NewsScriptGenerator.applyReplacements(retryBase,Json.stringify(oversize),fp,70,repairPlan);
         }catch(IllegalArgumentException expected){rejectedOversize=true;}
@@ -499,6 +532,11 @@ public final class SelfTest {
         String captionText=Files.readString(ass);
         ok(captionText.contains("[V4+ Styles]")&&captionText.contains("Style: News,Arial,42")&&captionText.contains("\\N")&&captionText.contains("FFD86F"),
                 "captions use compact two-line ASS styling with restrained accent");
+
+        String pipelineSource=Files.readString(root.resolve("src/autonewsroller/orchestration/NewsPipeline.java"));
+        ok(pipelineSource.contains("audit.put(\"hook\",script.hook())")&&
+                        pipelineSource.contains("openingVisualType")&&pipelineSource.contains("HOOK\".equalsIgnoreCase(chosen.type())"),
+                "pipeline persists hook diagnostics and prioritizes hook-specific Comfy opening prompt");
 
         String comfySource=Files.readString(root.resolve("src/autonewsroller/visuals/ComfyImageGenerator.java"));
         int recovery=comfySource.indexOf("public void recoverFromOom()");
