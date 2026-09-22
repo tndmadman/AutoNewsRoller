@@ -49,6 +49,22 @@ function syncWorthyAgeControl(){
     :"Worthy age filter becomes active when the WORTHY view is selected.";
 }
 function safeHttpUrl(v){try{const u=new URL(String(v||""));return (u.protocol==="https:"||u.protocol==="http:")?u.href:""}catch{return ""}}
+function feedEndpointLabel(url){
+  try{
+    const u=new URL(String(url||""));
+    const parts=u.pathname.split("/").filter(Boolean);
+    let label=parts.length?parts[parts.length-1]:u.hostname;
+    label=label.replace(/\.(xml|rss|atom)$/i,"").replace(/[_-]+/g," ").trim();
+    if(!label||/^(rss|feed|index|main|latest)$/i.test(label)){
+      label=parts.length>1?parts[parts.length-2]:u.hostname.replace(/^www\./,"");
+      label=String(label).replace(/[_-]+/g," ").trim();
+    }
+    return label||u.hostname.replace(/^www\./,"");
+  }catch{return ""}
+}
+function feedCategoryClass(category){
+  return "cat-"+String(category||"general").toLowerCase().replace(/[^a-z0-9]+/g,"-");
+}
 function toast(msg,error=false){const t=$("#toast");t.textContent=msg;t.className="toast show"+(error?" error":"");clearTimeout(t._timer);t._timer=setTimeout(()=>t.className="toast",3500)}
 
 async function loadState(){
@@ -235,7 +251,12 @@ function storyCard(s){
 }
 function renderFeeds(){
   const root=$("#feeds"),fs=state.feeds||[];
-  root.innerHTML=fs.map(f=>`<div class="feed ${String(f.status||"").toLowerCase()}"><i class="lamp"></i><div class="feedText"><div class="feedName">${esc(f.name)}</div><div class="feedMeta">${esc(f.category)} // ${esc(f.status||"UNKNOWN")} ${f.entries!=null?"// "+f.entries:""}</div></div></div>`).join("");
+  root.innerHTML=fs.map(f=>{
+    const category=String(f.category||"general").toUpperCase();
+    const endpoint=feedEndpointLabel(f.url);
+    const title=[f.name,category,f.url].filter(Boolean).join(" // ");
+    return `<div class="feed ${String(f.status||"").toLowerCase()} ${feedCategoryClass(f.category)}" title="${esc(title)}"><i class="lamp"></i><div class="feedText"><div class="feedName"><span class="feedPublisher">${esc(f.name)}</span><span class="feedCategory">${esc(category)}</span></div><div class="feedMeta"><span>${esc(f.status||"UNKNOWN")}${f.entries!=null?" // "+f.entries:""}</span>${endpoint?`<span class="feedEndpoint">${esc(endpoint)}</span>`:""}</div></div></div>`;
+  }).join("");
 }
 function renderVideos(){
   const root=$("#videos"),vs=state.videos||[];
