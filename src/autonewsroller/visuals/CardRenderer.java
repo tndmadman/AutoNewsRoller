@@ -20,7 +20,13 @@ public final class CardRenderer {
         Graphics2D g=prepare(canvas);
         paintShell(g,w,h,item.type());
 
-        if("HEADLINE_CARD".equalsIgnoreCase(item.type())){
+        if("HOOK".equalsIgnoreCase(item.type())){
+            g.setColor(TEXT);
+            drawWrapped(g,item.title(),new Font("SansSerif",Font.BOLD,36),90,285,w-180,48,3);
+            g.setColor(PANEL_2);g.fillRoundRect(90,520,w-180,650,34,34);
+            g.setColor(TEXT);
+            drawWrapped(g,item.body(),new Font("SansSerif",Font.BOLD,48),128,680,w-256,62,5);
+        }else if("HEADLINE_CARD".equalsIgnoreCase(item.type())){
             g.setColor(ACCENT);g.fillRoundRect(90,330,w-180,14,8,8);
             g.setColor(TEXT);
             drawWrapped(g,item.title(),new Font("SansSerif",Font.BOLD,52),90,455,w-180,68,7);
@@ -54,13 +60,14 @@ public final class CardRenderer {
         Graphics2D g=prepare(canvas);
         paintShell(g,w,h,item.type());
 
+        boolean hook="HOOK".equalsIgnoreCase(item.type());
         g.setColor(TEXT);
-        drawWrapped(g,item.title(),new Font("SansSerif",Font.BOLD,42),90,205,w-180,54,3);
+        drawWrapped(g,item.title(),new Font("SansSerif",Font.BOLD,hook?34:42),90,hook?195:205,w-180,hook?44:54,hook?2:3);
 
         int imageX=90;
-        int imageY=390;
+        int imageY=hook?300:390;
         int imageW=w-180;
-        int imageH=Math.min(930,(int)(h*0.49));
+        int imageH=hook?Math.min(1060,(int)(h*0.56)):Math.min(930,(int)(h*0.49));
         g.setColor(PANEL_2);
         g.fillRoundRect(imageX-8,imageY-8,imageW+16,imageH+16,34,34);
         Shape oldClip=g.getClip();
@@ -68,9 +75,9 @@ public final class CardRenderer {
         drawCover(g,source,imageX,imageY,imageW,imageH);
         g.setClip(oldClip);
 
-        g.setColor(MUTED);
-        int bodyY=imageY+imageH+70;
-        drawWrapped(g,item.body(),new Font("SansSerif",Font.PLAIN,29),90,bodyY,w-180,43,5);
+        g.setColor(hook?TEXT:MUTED);
+        int bodyY=imageY+imageH+(hook?55:70);
+        drawWrapped(g,item.body(),new Font("SansSerif",hook?Font.BOLD:Font.PLAIN,hook?36:29),90,bodyY,w-180,hook?48:43,hook?4:5);
 
         paintFooter(g,w,h,item.type());
         g.dispose();
