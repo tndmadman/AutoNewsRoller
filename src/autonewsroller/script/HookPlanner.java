@@ -313,10 +313,22 @@ Return one JSON object matching the schema and nothing else.
 
         if(best!=null)return best;
 
-        String headline=Text.clean(fp.headline());
-        if(Text.words(headline)>=MIN_HOOK_WORDS&&Text.words(headline)<=MAX_HOOK_WORDS)
-            return new Candidate(headline,"direct_event",facts.isEmpty()?List.of():List.of(facts.keySet().iterator().next()));
+        for(var entry:facts.entrySet()){
+            String trimmed=trimToWords(entry.getValue().statement(),MAX_HOOK_WORDS);
+            if(Text.words(trimmed)<MIN_HOOK_WORDS)continue;
+            Candidate c=new Candidate(trimmed,"direct_event",List.of(entry.getKey()));
+            if(validationProblems(c.text(),fp,fp.headline()).isEmpty())return c;
+        }
 
+        String firstFactId=facts.isEmpty()?"":facts.keySet().iterator().next();
+        for(String piece:hookPieces(fp.summary())){
+            int words=Text.words(piece);
+            if(words<MIN_HOOK_WORDS||words>MAX_HOOK_WORDS)continue;
+            Candidate c=new Candidate(piece,"direct_event",firstFactId.isBlank()?List.of():List.of(firstFactId));
+            if(validationProblems(c.text(),fp,fp.headline()).isEmpty())return c;
+        }
+
+        String headline=Text.clean(fp.headline());
         if(!facts.isEmpty()){
             var first=facts.entrySet().iterator().next();
             return new Candidate(trimToWords(first.getValue().statement(),MAX_HOOK_WORDS),"direct_event",List.of(first.getKey()));
