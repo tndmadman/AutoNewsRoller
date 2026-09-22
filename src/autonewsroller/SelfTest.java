@@ -429,6 +429,16 @@ public final class SelfTest {
                 "script Ollama budget reserves enough context, output tokens, and surgical retries");
         ok(cfg.getBool("articleEnrichmentEnabled",false),
                 "production defaults enable article enrichment before script generation");
+        ok(!cfg.csv("kokoroVoices","").stream().anyMatch(v->v.equalsIgnoreCase("af_nicole")||v.equalsIgnoreCase("af-nicole")),
+                "production defaults exclude blacklisted Kokoro voice af_nicole");
+        List<String>safeKokoro=NewsPipeline.allowedKokoroVoices(List.of("af_heart","af_nicole","af-nicole","bf_emma"));
+        ok(safeKokoro.equals(List.of("af_heart","bf_emma")),
+                "runtime Kokoro voice filter blocks af_nicole and af-nicole aliases");
+        ok(NewsPipeline.allowedKokoroVoices(List.of("af_nicole")).equals(List.of("af_heart","af_bella","bf_emma")),
+                "all-blacklisted Kokoro configuration falls back to safe voices");
+        String kokoroHelper=Files.readString(root.resolve("tools/kokoro_tts.py"));
+        ok(kokoroHelper.contains("voice_key == 'af_nicole'")&&kokoroHelper.contains("blacklisted"),
+                "Kokoro helper hard-blocks af_nicole direct invocation");
 
         StoryCluster cluster=new StoryClusterer().cluster(a.stream().filter(x->!x.title().contains("Old archive")).toList())
                 .stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
