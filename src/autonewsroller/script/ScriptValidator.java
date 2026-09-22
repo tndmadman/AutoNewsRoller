@@ -19,6 +19,14 @@ public final class ScriptValidator {
         if(s.segments()!=null&&(s.segments().size()<7||s.segments().size()>10))
             problems.add("expected 7-10 narration segments");
 
+        if(s.segments()!=null&&!s.segments().isEmpty()){
+            boolean fallbackHook=s.hook()!=null&&Boolean.TRUE.equals(s.hook().get("fallback"));
+            for(String p:HookPlanner.validationProblems(s.segments().get(0).narration(),facts,s.headline())){
+                if(fallbackHook&&"hook duplicates headline".equals(p))continue;
+                problems.add("hook "+p);
+            }
+        }
+
         for(String n:unsupportedNumbers(s,facts))
             problems.add("script contains unsupported number: "+n);
 
@@ -30,9 +38,13 @@ public final class ScriptValidator {
     }
 
     public Set<String> unsupportedNumbers(NewsScript s,FactPackage facts){
+        return unsupportedNumbersInText(s==null?"":s.narration(),facts);
+    }
+
+    public Set<String> unsupportedNumbersInText(String text,FactPackage facts){
         Set<String> allowedNumbers=numbers(JsonFactText(facts));
         LinkedHashSet<String> unsupported=new LinkedHashSet<>();
-        for(String n:numbers(s==null?"":s.narration()))
+        for(String n:numbers(text))
             if(!allowedNumbers.contains(n))unsupported.add(n);
         return unsupported;
     }
