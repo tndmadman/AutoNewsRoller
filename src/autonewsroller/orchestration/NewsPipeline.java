@@ -21,6 +21,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 public final class NewsPipeline {
+    private static final Set<String> KOKORO_VOICE_BLACKLIST=Set.of("af_nicole");
+    private static final List<String> SAFE_KOKORO_VOICES=List.of("af_heart","af_bella","bf_emma");
+
     private final Path root,batchDir;private final NewsConfig cfg;private final EventLog events;private final RuntimeLog logs;private final StoryHistory history;private final PublishHistory publishHistory;
     public NewsPipeline(Path root,NewsConfig cfg,Path batchDir){this(root,cfg,batchDir,null);}
     public NewsPipeline(Path root,NewsConfig cfg,Path batchDir,Consumer<WorkerState> eventListener){this.root=root;this.batchDir=batchDir;this.cfg=cfg;this.events=new EventLog(batchDir.resolve("runtime/events.jsonl"),eventListener);this.logs=new RuntimeLog(batchDir);this.history=new StoryHistory(root.resolve("data/story_history.jsonl"));this.publishHistory=new PublishHistory(root.resolve("data/publish_history.jsonl"));this.logs.debug("Batch initialized at "+batchDir);}
@@ -332,7 +335,13 @@ public final class NewsPipeline {
     }
 
     private NarrationResult narrate(StoryCluster c,NewsScript script,Path wav,int worker,int slot)throws Exception{
-        List<String>kv=cfg.csv("kokoroVoices","af_heart");
+        List<String>configuredKokoro=cfg.csv("kokoroVoices","af_heart,af_bella,bf_emma");
+        List<String>kv=allowedKokoroVoices(configuredKokoro);
+        if(kv.size()!=configuredKokoro.size()){
+            String blacklistMsg="KOKORO VOICE BLACKLIST: af_nicole removed from configured pool";
+            System.out.println(blacklistMsg);
+            logs.worker(worker,"slot="+slot+" "+blacklistMsg);
+        }
         List<String>qv=cfg.csv("qwenVoices","Ryan");
         String kVoice=kv.get(Math.floorMod(c.id.hashCode(),kv.size()));
         String qVoice=qv.get(Math.floorMod(c.id.hashCode(),qv.size()));
@@ -360,6 +369,21 @@ public final class NewsPipeline {
             logs.worker(worker,"slot="+slot+" TTS engine used: Qwen3 fallback voice="+qVoice);
             return nr;
         }
+    }
+
+    public static List<String> allowedKokoroVoices(List<String>configured){
+        List<String>safe=new ArrayList<>();
+        if(configured!=null){
+            for(String voice:configured){
+                String clean=voice==null?"":voice.trim();
+                if(clean.isBlank())continue;
+                String key=clean.toLowerCase(Locale.ROOT).replace('-','_');
+                if(KOKORO_VOICE_BLACKLIST.contains(key))continue;
+                if(!safe.contains(clean))safe.add(clean);
+            }
+        }
+        if(safe.isEmpty())safe.addAll(SAFE_KOKORO_VOICES);
+        return List.copyOf(safe);
     }
 
     private double audioDuration(Path wav)throws Exception{
