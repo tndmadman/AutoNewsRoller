@@ -14,6 +14,8 @@ import autonewsroller.visuals.*;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.*;
+import java.awt.image.BufferedImage;
+import javax.imageio.ImageIO;
 import java.net.InetSocketAddress;
 import java.nio.file.*;
 import java.time.*;
@@ -453,6 +455,20 @@ public final class SelfTest {
         ok(plan.items().size()==9&&"HOOK".equals(plan.items().get(0).type())&&
                         plan.items().stream().noneMatch(x->"HEADLINE_CARD".equals(x.type())),
                 "visual planner starts at frame zero with hook visual and no standalone headline card");
+
+        Path newsPackageDir=Files.createTempDirectory("autonews-news-package-");
+        Path sourceImage=newsPackageDir.resolve("source.png");
+        BufferedImage fixtureImage=new BufferedImage(768,1344,BufferedImage.TYPE_INT_RGB);
+        ImageIO.write(fixtureImage,"png",sourceImage.toFile());
+        Path openingFrame=newsPackageDir.resolve("opening.png");
+        new CardRenderer().renderWithImage(plan.items().get(0),sourceImage,openingFrame,1080,1920);
+        BufferedImage renderedOpening=ImageIO.read(openingFrame.toFile());
+        ok(renderedOpening!=null&&renderedOpening.getWidth()==1080&&renderedOpening.getHeight()==1920,
+                "broadcast news package renders a valid 1080x1920 hook thumbnail frame");
+        String cardSource=Files.readString(root.resolve("src/autonewsroller/visuals/CardRenderer.java"));
+        ok(cardSource.contains("TOP STORY")&&cardSource.contains("VERIFIED REPORTING")&&
+                        cardSource.contains("renderHookPackage")&&cardSource.contains("renderStoryPackage"),
+                "AWARE visual package includes thumbnail hook treatment and persistent broadcast body layout");
 
         FactPackage hookFacts=new FactPackage(
                 "hook-fixture",
