@@ -346,13 +346,28 @@ Procedural cards use Java2D.
 
 Default final card canvas uses the final video width/height.
 
-Cards contain:
+The current visual package is `aware-broadcast-v1`. It is designed to make the first frames usable as social-video thumbnail frames while keeping the entire video visually consistent with a television/news-channel package.
 
-- dark background;
-- rounded content panel;
-- wrapped title;
-- wrapped body;
-- AutoNewsRoller plus visual type footer.
+Opening HOOK frames contain:
+
+- a high-contrast AWARE / NEWS network header;
+- a TOP STORY strap;
+- a large hero image;
+- a short all-caps cover headline derived only from the existing verified story headline;
+- the locked spoken hook as the deck;
+- a persistent AWARE NEWS / VERIFIED REPORTING ticker.
+
+Normal story frames keep a lighter version of the same package:
+
+- persistent AWARE / NEWS network header;
+- visual-type/news-update tag;
+- large story image;
+- broadcast lower-third containing a compact headline and the current verified narration beat;
+- persistent AWARE NEWS ticker.
+
+The source card uses the same package instead of switching to a visually unrelated layout.
+
+The renderer deliberately leaves the caption-safe lower area below the story lower-third so ASS captions can remain readable without covering the main headline package.
 
 The procedural path is important because it provides a deterministic fallback when ComfyUI is unavailable or inappropriate.
 
@@ -368,7 +383,7 @@ It creates:
 
 The old 3.5-second opening HEADLINE_CARD is intentionally removed from production plans. The hook scene receives a short duration weight tied to its narration word count, while later scenes receive proportionally larger weights.
 
-The hook visual prompt is grounded in the FACT IDs selected by HookPlanner and asks for a concrete editorial/documentary subject or action rather than a generic newsroom image. CardRenderer also gives HOOK images a larger image-first layout.
+The hook visual prompt is grounded in the FACT IDs selected by HookPlanner and asks for a concrete editorial/documentary subject or action rather than a generic newsroom image. It also tells ComfyUI to keep the lower quarter reasonably clean so the broadcast lower-third does not cover the most important subject. CardRenderer turns that HOOK image into the thumbnail-safe AWARE news opening package described above.
 
 The source card lists distinct publisher names.
 
