@@ -1,8 +1,11 @@
 const $=s=>document.querySelector(s);
 let state={stories:[],feeds:[],workers:[],videos:[],counts:{}}, token="", activeFilter="ALL", eventSource=null, refreshTimer=null;
-const WORTHY_AGE_OPTIONS=new Set([0,1,2,3,4,6,8,12,24,48,72]);
-let worthyAgeHours=Number(localStorage.getItem("autonewsWorthyAgeHours")||0);
-if(!WORTHY_AGE_OPTIONS.has(worthyAgeHours))worthyAgeHours=0;
+const STORY_AGE_OPTIONS=new Set([0,1,2,3,4,6,8,12,24,48,72]);
+const storedStoryAge=localStorage.getItem("autonewsStoryAgeHours");
+const legacyWorthyAge=localStorage.getItem("autonewsWorthyAgeHours");
+let storyAgeLimitHours=Number(storedStoryAge??legacyWorthyAge??0);
+if(!STORY_AGE_OPTIONS.has(storyAgeLimitHours))storyAgeLimitHours=0;
+if(storedStoryAge===null&&legacyWorthyAge!==null)localStorage.setItem("autonewsStoryAgeHours",String(storyAgeLimitHours));
 const qp=new URLSearchParams(location.search);
 token=qp.get("token")||localStorage.getItem("autonewsToken")||"";
 if(qp.get("token")) localStorage.setItem("autonewsToken",token);
@@ -32,21 +35,20 @@ function storyAgeHours(s){
   if(!Number.isFinite(t))return null;
   return Math.max(0,(Date.now()-t)/3600000);
 }
-function withinWorthyAge(s){
-  if(worthyAgeHours<=0)return true;
+function withinStoryAge(s){
+  if(storyAgeLimitHours<=0)return true;
   const h=storyAgeHours(s);
-  return h!==null&&h<=worthyAgeHours;
+  return h!==null&&h<=storyAgeLimitHours;
 }
-function syncWorthyAgeControl(){
-  const el=$("#worthyAgeFilter");
+function syncStoryAgeControl(){
+  const el=$("#storyAgeFilter");
   if(!el)return;
-  el.value=String(worthyAgeHours);
-  const worthyView=currentStoryFilter()==="WORTHY";
-  el.disabled=!worthyView;
-  el.classList.toggle("activeFilterControl",worthyView&&worthyAgeHours>0);
-  el.title=worthyView
-    ?(worthyAgeHours>0?"Showing worthy stories published within the last "+worthyAgeHours+" hour(s).":"Showing worthy stories of any age.")
-    :"Worthy age filter becomes active when the WORTHY view is selected.";
+  el.value=String(storyAgeLimitHours);
+  el.disabled=false;
+  el.classList.toggle("activeFilterControl",storyAgeLimitHours>0);
+  el.title=storyAgeLimitHours>0
+    ?"Showing stories published within the last "+storyAgeLimitHours+" hour(s)."
+    :"Showing stories of any age.";
 }
 function safeHttpUrl(v){try{const u=new URL(String(v||""));return (u.protocol==="https:"||u.protocol==="http:")?u.href:""}catch{return ""}}
 function feedEndpointLabel(url){
@@ -91,17 +93,14 @@ function render(){
     : "MANUAL QUEUE";
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
-  syncWorthyAgeControl();renderRails();renderWorkers();renderStories();renderFeeds();renderVideos();drawRadar();
+  syncStoryAgeControl();renderRails();renderWorkers();renderStories();renderFeeds();renderVideos();drawRadar();
 }
 function renderRails(){
-  const ss=state.stories||[];
+  const allStories=state.stories||[];
+  const ss=storyAgeLimitHours>0?allStories.filter(withinStoryAge):allStories;
   $("#railAll").textContent=ss.length;
   $("#railFound").textContent=ss.filter(x=>x.status==="DISCOVERED").length;
-  const worthyAll=ss.filter(isActionableWorthy);
-  const worthyVisible=worthyAll.filter(withinWorthyAge);
-  $("#railVerified").textContent=currentStoryFilter()==="WORTHY"&&worthyAgeHours>0
-    ?worthyVisible.length+"/"+worthyAll.length
-    :worthyAll.length;
+  $("#railVerified").textContent=ss.filter(isActionableWorthy).length;
   $("#railQueued").textContent=ss.filter(x=>x.status==="QUEUED").length;
   $("#railProducing").textContent=ss.filter(x=>x.status==="PRODUCING").length;
   $("#railComplete").textContent=ss.filter(x=>String(x.status).startsWith("COMPLETE")).length;
@@ -137,17 +136,18 @@ function storyMatches(s){
     else if(filter==="TO_POST"){if(status!=="COMPLETE"||!!s.uploaded||!!s.scrapped)return false;}
     else if(filter==="UPLOADED"){if(!s.uploaded||!!s.scrapped)return false;}
     else if(filter==="SCRAPPED"){if(!s.scrapped)return false;}
-    else if(filter==="WORTHY"){if(!isActionableWorthy(s)||!withinWorthyAge(s))return false;}
+    else if(filter==="WORTHY"){if(!isActionableWorthy(s))return false;}
     else if(status!==filter)return false;
   }
+  if(!withinStoryAge(s))return false;
   if(!q)return true;
   return [s.topic,s.category,s.uploadedPlatform,s.uploadNote,s.scrapReason,...(s.publishers||[])].join(" ").toLowerCase().includes(q);
 }
 function renderStories(){
   const root=$("#stories"),ss=(state.stories||[]).filter(storyMatches);
   if(!ss.length){
-    if(currentStoryFilter()==="WORTHY"&&worthyAgeHours>0)
-      root.innerHTML='<div class="emptyState">No worthy stories were published within the last '+worthyAgeHours+' hour(s).</div>';
+    if(storyAgeLimitHours>0)
+      root.innerHTML='<div class="emptyState">No stories in this view were published within the last '+storyAgeLimitHours+' hour(s).</div>';
     else root.innerHTML='<div class="emptyState">No stories match this view.</div>';
     return;
   }
@@ -365,20 +365,20 @@ $("#search").addEventListener("input",renderStories);
 $("#statusFilter").addEventListener("change",()=>{
   activeFilter="ALL";
   document.querySelectorAll(".rail").forEach(x=>x.classList.remove("active"));
-  syncWorthyAgeControl();renderRails();renderStories();
+  syncStoryAgeControl();renderRails();renderStories();
 });
-$("#worthyAgeFilter").value=String(worthyAgeHours);
-$("#worthyAgeFilter").addEventListener("change",()=>{
-  const next=Number($("#worthyAgeFilter").value||0);
-  worthyAgeHours=WORTHY_AGE_OPTIONS.has(next)?next:0;
-  localStorage.setItem("autonewsWorthyAgeHours",String(worthyAgeHours));
-  syncWorthyAgeControl();renderRails();renderStories();
+$("#storyAgeFilter").value=String(storyAgeLimitHours);
+$("#storyAgeFilter").addEventListener("change",()=>{
+  const next=Number($("#storyAgeFilter").value||0);
+  storyAgeLimitHours=STORY_AGE_OPTIONS.has(next)?next:0;
+  localStorage.setItem("autonewsStoryAgeHours",String(storyAgeLimitHours));
+  syncStoryAgeControl();renderRails();renderStories();
 });
 document.querySelectorAll(".rail").forEach(b=>b.onclick=()=>{
   activeFilter=b.dataset.filter;
   $("#statusFilter").value="ALL";
   document.querySelectorAll(".rail").forEach(x=>x.classList.toggle("active",x===b));
-  syncWorthyAgeControl();renderRails();renderStories();
+  syncStoryAgeControl();renderRails();renderStories();
 });
 
 function connectEvents(){
