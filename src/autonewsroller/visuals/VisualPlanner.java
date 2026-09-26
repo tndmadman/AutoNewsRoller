@@ -22,7 +22,7 @@ public final class VisualPlanner {
 
             String body=seg.narration()==null?"":seg.narration();
             String prompt=seg.visualPrompt()==null?"":seg.visualPrompt();
-            double minDuration=idx==0?2.4:4.0;
+            double minDuration=idx==0?3.0:4.0;
             out.add(new VisualPlan.Item(
                     idx,
                     type,
