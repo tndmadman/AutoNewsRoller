@@ -346,9 +346,9 @@ Procedural cards use Java2D.
 
 Default final card canvas uses the final video width/height.
 
-The current visual package is `aware-broadcast-v1`. It is designed to make the first frames usable as social-video thumbnail frames while keeping the entire video visually consistent with a television/news-channel package.
+The current visual package is `aware-broadcast-v2`. It is designed to make the first frames usable as social-video thumbnail frames while keeping the entire video visually consistent with a television/news-channel package. The v2 package uses a restrained deep-navy, broadcast-blue, news-red, white, and cool-gray palette; neon cyan/yellow UI accents are intentionally excluded.
 
-Opening HOOK frames contain:
+Opening HOOK frames are thumbnail-first and contain:
 
 - a high-contrast AWARE / NEWS network header;
 - a TOP STORY strap;
