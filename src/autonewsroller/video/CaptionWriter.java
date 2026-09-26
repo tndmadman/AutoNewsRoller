@@ -20,7 +20,7 @@ public final class CaptionWriter {
            .append("WrapStyle: 2\nScaledBorderAndShadow: yes\n\n")
            .append("[V4+ Styles]\n")
            .append("Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n")
-           .append("Style: News,Arial,42,&H00FFFFFF,&H00FFD86F,&H00101010,&H94000000,-1,0,0,0,100,100,0,0,3,3,0,2,82,82,205,1\n\n")
+           .append("Style: News,Arial,42,&H00FFFFFF,&H00B27943,&H001E1105,&HA80F1105,-1,0,0,0,100,100,0,0,3,3,0,2,82,82,205,1\n\n")
            .append("[Events]\n")
            .append("Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n");
 
@@ -64,7 +64,7 @@ public final class CaptionWriter {
         int highlight=Math.min(2,w.length);
         String first=String.join(" ",Arrays.copyOfRange(w,0,highlight));
         String rest=highlight<w.length?" "+String.join(" ",Arrays.copyOfRange(w,highlight,w.length)):"";
-        String text="{\\c&H00FFD86F&}"+first+"{\\c&H00FFFFFF&}"+rest;
+        String text="{\\c&H00B27943&}"+first+"{\\c&H00FFFFFF&}"+rest;
         return wrapTwoLines(text,w.length);
     }
 
