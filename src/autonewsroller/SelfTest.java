@@ -466,9 +466,14 @@ public final class SelfTest {
         ok(renderedOpening!=null&&renderedOpening.getWidth()==1080&&renderedOpening.getHeight()==1920,
                 "broadcast news package renders a valid 1080x1920 hook thumbnail frame");
         String cardSource=Files.readString(root.resolve("src/autonewsroller/visuals/CardRenderer.java"));
+        String themeSource=Files.readString(root.resolve("src/autonewsroller/visuals/BroadcastTheme.java"));
         ok(cardSource.contains("TOP STORY")&&cardSource.contains("VERIFIED REPORTING")&&
-                        cardSource.contains("renderHookPackage")&&cardSource.contains("renderStoryPackage"),
-                "AWARE visual package includes thumbnail hook treatment and persistent broadcast body layout");
+                        cardSource.contains("renderHookPackage")&&cardSource.contains("renderStoryPackage")&&
+                        cardSource.contains("fitHeadlineFont")&&cardSource.contains("verticalBias"),
+                "AWARE visual package includes thumbnail-first hook treatment, adaptive headline sizing, and protected subject cropping");
+        ok(themeSource.contains("aware-broadcast-v2")&&themeSource.contains("public static final Color BLUE")&&
+                        themeSource.contains("public static final Color RED")&&!themeSource.contains("56,232,255"),
+                "broadcast v2 theme centralizes restrained red/blue branding and removes the old neon cyan accent");
 
         FactPackage hookFacts=new FactPackage(
                 "hook-fixture",
@@ -557,13 +562,16 @@ public final class SelfTest {
                 "This caption contains enough words to split cleanly across two compact lines for a vertical news video.",
                 7.0,"sentence");
         String captionText=Files.readString(ass);
-        ok(captionText.contains("[V4+ Styles]")&&captionText.contains("Style: News,Arial,42")&&captionText.contains("\\N")&&captionText.contains("FFD86F"),
-                "captions use compact two-line ASS styling with restrained accent");
+        ok(captionText.contains("[V4+ Styles]")&&captionText.contains("Style: News,Arial,42")&&captionText.contains("\\N")&&
+                        captionText.contains("B27943")&&!captionText.contains("FFD86F"),
+                "captions use compact two-line ASS styling with broadcast-blue emphasis and no legacy yellow accent");
 
         String pipelineSource=Files.readString(root.resolve("src/autonewsroller/orchestration/NewsPipeline.java"));
         ok(pipelineSource.contains("audit.put(\"hook\",script.hook())")&&
-                        pipelineSource.contains("openingVisualType")&&pipelineSource.contains("HOOK\".equalsIgnoreCase(chosen.type())"),
-                "pipeline persists hook diagnostics and prioritizes hook-specific Comfy opening prompt");
+                        pipelineSource.contains("openingVisualType")&&pipelineSource.contains("HOOK\".equalsIgnoreCase(chosen.type())")&&
+                        pipelineSource.contains("BroadcastTheme.PACKAGE_ID")&&pipelineSource.contains("no neon lighting")&&
+                        pipelineSource.contains("neutral white balance"),
+                "pipeline persists hook diagnostics, records broadcast v2, and constrains Comfy visuals to natural news photography");
 
         String comfySource=Files.readString(root.resolve("src/autonewsroller/visuals/ComfyImageGenerator.java"));
         int recovery=comfySource.indexOf("public void recoverFromOom()");
