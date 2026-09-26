@@ -9,24 +9,25 @@ import java.util.*;
 import javax.imageio.ImageIO;
 
 public final class CardRenderer {
-    private static final Color BG=new Color(7,11,16);
-    private static final Color PANEL=new Color(15,23,31);
-    private static final Color PANEL_2=new Color(24,34,44);
-    private static final Color TEXT=new Color(247,249,252);
-    private static final Color MUTED=new Color(178,191,205);
-    private static final Color ACCENT=new Color(56,232,255);
-    private static final Color RED=new Color(226,48,62);
-    private static final Color TICKER=new Color(9,18,26);
+    private static final Color BG=BroadcastTheme.BACKGROUND;
+    private static final Color NAVY=BroadcastTheme.NAVY;
+    private static final Color NAVY_2=BroadcastTheme.NAVY_2;
+    private static final Color BLUE=BroadcastTheme.BLUE;
+    private static final Color BLUE_LIGHT=BroadcastTheme.BLUE_LIGHT;
+    private static final Color RED=BroadcastTheme.RED;
+    private static final Color RED_LIGHT=BroadcastTheme.RED_LIGHT;
+    private static final Color TEXT=BroadcastTheme.TEXT;
+    private static final Color MUTED=BroadcastTheme.MUTED;
+    private static final Color RULE=BroadcastTheme.RULE;
+    private static final Color TICKER=BroadcastTheme.TICKER;
 
     public Path render(VisualPlan.Item item,Path out,int w,int h)throws Exception{
         Files.createDirectories(out.getParent());
         BufferedImage canvas=new BufferedImage(w,h,BufferedImage.TYPE_INT_RGB);
         Graphics2D g=prepare(canvas);
-
         if("HOOK".equalsIgnoreCase(item.type()))renderHookPlaceholder(g,item,w,h);
         else if("SOURCE_CARD".equalsIgnoreCase(item.type()))renderSourceCard(g,item,w,h);
         else renderStoryPlaceholder(g,item,w,h);
-
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
         return out;
@@ -36,13 +37,10 @@ public final class CardRenderer {
         Files.createDirectories(out.getParent());
         BufferedImage source=ImageIO.read(imagePath.toFile());
         if(source==null)throw new IllegalArgumentException("Unsupported image: "+imagePath);
-
         BufferedImage canvas=new BufferedImage(w,h,BufferedImage.TYPE_INT_RGB);
         Graphics2D g=prepare(canvas);
-
         if("HOOK".equalsIgnoreCase(item.type()))renderHookPackage(g,item,source,w,h);
         else renderStoryPackage(g,item,source,w,h);
-
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
         return out;
@@ -51,122 +49,137 @@ public final class CardRenderer {
     private static void renderHookPackage(Graphics2D g,VisualPlan.Item item,BufferedImage source,int w,int h){
         paintTopBar(g,w,"TOP STORY",true);
 
-        int imageX=48,imageY=190,imageW=w-96,imageH=Math.min(1050,h-760);
-        paintImageFrame(g,source,imageX,imageY,imageW,imageH,22);
+        int imageX=0,imageY=170,imageW=w,imageH=Math.min(1120,h-700);
+        drawCover(g,source,imageX,imageY,imageW,imageH,0.38);
 
-        int lowerY=imageY+imageH-20;
-        int lowerH=390;
-        g.setColor(new Color(5,9,13,245));
-        g.fillRect(48,lowerY,w-96,lowerH);
+        // Dark broadcast gradient-like wash built deterministically with stacked alpha bars.
+        int lowerY=imageY+imageH-245;
+        for(int n=0;n<8;n++){
+            int alpha=35+n*24;
+            g.setColor(new Color(4,15,27,Math.min(225,alpha)));
+            g.fillRect(0,lowerY+n*32,w,36);
+        }
+
+        int panelY=imageY+imageH-34;
+        g.setColor(NAVY);
+        g.fillRect(0,panelY,w,430);
+        g.setColor(RED);
+        g.fillRect(0,panelY,w,9);
 
         g.setColor(RED);
-        g.fillRoundRect(76,lowerY+30,190,42,7,7);
+        g.fillRect(54,panelY+38,192,46);
         g.setColor(Color.WHITE);
-        g.setFont(new Font("SansSerif",Font.BOLD,20));
-        g.drawString("TOP STORY",98,lowerY+59);
+        g.setFont(new Font("SansSerif",Font.BOLD,21));
+        g.drawString("TOP STORY",77,panelY+69);
 
-        g.setColor(TEXT);
-        drawWrapped(g,coverHeadline(item.title(),8),new Font("SansSerif",Font.BOLD,52),76,lowerY+132,w-152,58,3);
+        String headline=coverHeadline(item.title(),7);
+        g.setColor(Color.WHITE);
+        Font headlineFont=fitHeadlineFont(g,headline,w-108,3,68,48);
+        drawWrapped(g,headline,headlineFont,54,panelY+150,w-108,headlineFont.getSize()+7,3);
 
+        String deck=compactDeck(item.body(),18);
         g.setColor(MUTED);
-        drawWrapped(g,item.body(),new Font("SansSerif",Font.BOLD,31),76,lowerY+300,w-152,42,2);
+        drawWrapped(g,deck,new Font("SansSerif",Font.BOLD,29),54,panelY+345,w-108,40,2);
 
-        paintTicker(g,w,h,"AWARE NEWS  •  VERIFIED REPORTING");
+        paintTicker(g,w,h,"AWARE NEWS","VERIFIED REPORTING",true);
     }
 
     private static void renderStoryPackage(Graphics2D g,VisualPlan.Item item,BufferedImage source,int w,int h){
         paintTopBar(g,w,storyLabel(item.type()),false);
 
-        int imageX=62,imageY=235,imageW=w-124,imageH=Math.min(930,h-780);
-        paintImageFrame(g,source,imageX,imageY,imageW,imageH,24);
+        int imageX=48,imageY=205,imageW=w-96,imageH=Math.min(980,h-790);
+        paintImageFrame(g,source,imageX,imageY,imageW,imageH,8,0.47);
 
-        int lowerY=imageY+imageH+18;
-        g.setColor(PANEL);
-        g.fillRoundRect(62,lowerY,imageW,320,22,22);
+        int lowerY=imageY+imageH+16;
+        g.setColor(NAVY);
+        g.fillRect(48,lowerY,imageW,330);
+        g.setColor(BLUE);
+        g.fillRect(48,lowerY,10,330);
+        g.setColor(RED);
+        g.fillRect(58,lowerY,138,7);
 
-        g.setColor(ACCENT);
-        g.fillRect(62,lowerY,9,320);
-
-        g.setColor(MUTED);
+        g.setColor(BLUE_LIGHT);
         g.setFont(new Font("SansSerif",Font.BOLD,19));
-        g.drawString(storyLabel(item.type()),94,lowerY+48);
+        g.drawString(storyLabel(item.type()),86,lowerY+52);
 
         g.setColor(TEXT);
-        drawWrapped(g,coverHeadline(item.title(),10),new Font("SansSerif",Font.BOLD,38),94,lowerY+102,imageW-64,46,2);
+        drawWrapped(g,coverHeadline(item.title(),10),new Font("SansSerif",Font.BOLD,39),86,lowerY+111,imageW-76,47,2);
 
         g.setColor(MUTED);
-        drawWrapped(g,item.body(),new Font("SansSerif",Font.PLAIN,27),94,lowerY+215,imageW-64,38,3);
+        drawWrapped(g,compactDeck(item.body(),28),new Font("SansSerif",Font.PLAIN,27),86,lowerY+222,imageW-76,38,3);
 
-        paintTicker(g,w,h,"AWARE NEWS  •  STORY UPDATE");
+        paintTicker(g,w,h,"AWARE NEWS","STORY UPDATE",false);
     }
 
     private static void renderHookPlaceholder(Graphics2D g,VisualPlan.Item item,int w,int h){
         paintTopBar(g,w,"TOP STORY",true);
+        g.setColor(NAVY_2);
+        g.fillRect(0,170,w,1070);
+        paintPlaceholderGrid(g,42,215,w-84,915);
 
-        g.setColor(PANEL_2);
-        g.fillRoundRect(48,215,w-96,920,28,28);
-        paintPlaceholderGrid(g,70,240,w-140,870);
-
-        int lowerY=1080;
-        g.setColor(new Color(5,9,13,245));
-        g.fillRect(48,lowerY,w-96,455);
-
+        int panelY=1190;
+        g.setColor(NAVY);
+        g.fillRect(0,panelY,w,430);
         g.setColor(RED);
-        g.fillRoundRect(76,lowerY+32,190,42,7,7);
+        g.fillRect(0,panelY,w,9);
+        g.setColor(RED);
+        g.fillRect(54,panelY+38,192,46);
         g.setColor(Color.WHITE);
-        g.setFont(new Font("SansSerif",Font.BOLD,20));
-        g.drawString("TOP STORY",98,lowerY+61);
+        g.setFont(new Font("SansSerif",Font.BOLD,21));
+        g.drawString("TOP STORY",77,panelY+69);
 
-        g.setColor(TEXT);
-        drawWrapped(g,coverHeadline(item.title(),8),new Font("SansSerif",Font.BOLD,52),76,lowerY+142,w-152,58,3);
+        String headline=coverHeadline(item.title(),7);
+        g.setColor(Color.WHITE);
+        Font headlineFont=fitHeadlineFont(g,headline,w-108,3,68,48);
+        drawWrapped(g,headline,headlineFont,54,panelY+150,w-108,headlineFont.getSize()+7,3);
         g.setColor(MUTED);
-        drawWrapped(g,item.body(),new Font("SansSerif",Font.BOLD,31),76,lowerY+330,w-152,42,2);
-
-        paintTicker(g,w,h,"AWARE NEWS  •  VERIFIED REPORTING");
+        drawWrapped(g,compactDeck(item.body(),18),new Font("SansSerif",Font.BOLD,29),54,panelY+345,w-108,40,2);
+        paintTicker(g,w,h,"AWARE NEWS","VERIFIED REPORTING",true);
     }
 
     private static void renderStoryPlaceholder(Graphics2D g,VisualPlan.Item item,int w,int h){
         paintTopBar(g,w,storyLabel(item.type()),false);
+        g.setColor(NAVY_2);
+        g.fillRect(48,220,w-96,900);
+        paintPlaceholderGrid(g,70,245,w-140,850);
 
-        g.setColor(PANEL_2);
-        g.fillRoundRect(62,250,w-124,890,24,24);
-        paintPlaceholderGrid(g,84,272,w-168,846);
-
-        int lowerY=1170;
-        g.setColor(PANEL);
-        g.fillRoundRect(62,lowerY,w-124,325,22,22);
-        g.setColor(ACCENT);
-        g.fillRect(62,lowerY,9,325);
-
-        g.setColor(MUTED);
+        int lowerY=1145;
+        g.setColor(NAVY);
+        g.fillRect(48,lowerY,w-96,330);
+        g.setColor(BLUE);
+        g.fillRect(48,lowerY,10,330);
+        g.setColor(RED);
+        g.fillRect(58,lowerY,138,7);
+        g.setColor(BLUE_LIGHT);
         g.setFont(new Font("SansSerif",Font.BOLD,19));
-        g.drawString(storyLabel(item.type()),94,lowerY+48);
-
+        g.drawString(storyLabel(item.type()),86,lowerY+52);
         g.setColor(TEXT);
-        drawWrapped(g,coverHeadline(item.title(),10),new Font("SansSerif",Font.BOLD,38),94,lowerY+102,w-188,46,2);
+        drawWrapped(g,coverHeadline(item.title(),10),new Font("SansSerif",Font.BOLD,39),86,lowerY+111,w-172,47,2);
         g.setColor(MUTED);
-        drawWrapped(g,item.body(),new Font("SansSerif",Font.PLAIN,27),94,lowerY+215,w-188,38,3);
-
-        paintTicker(g,w,h,"AWARE NEWS  •  STORY UPDATE");
+        drawWrapped(g,compactDeck(item.body(),28),new Font("SansSerif",Font.PLAIN,27),86,lowerY+222,w-172,38,3);
+        paintTicker(g,w,h,"AWARE NEWS","STORY UPDATE",false);
     }
 
     private static void renderSourceCard(Graphics2D g,VisualPlan.Item item,int w,int h){
         paintTopBar(g,w,"SOURCES",false);
 
-        g.setColor(PANEL);
-        g.fillRoundRect(70,310,w-140,970,30,30);
-        g.setColor(ACCENT);
-        g.fillRect(70,310,10,970);
+        g.setColor(NAVY);
+        g.fillRect(58,300,w-116,990);
+        g.setColor(BLUE);
+        g.fillRect(58,300,10,990);
+        g.setColor(RED);
+        g.fillRect(68,300,180,8);
+
+        g.setColor(BLUE_LIGHT);
+        g.setFont(new Font("SansSerif",Font.BOLD,23));
+        g.drawString("REPORTING SOURCES",105,390);
 
         g.setColor(TEXT);
-        g.setFont(new Font("SansSerif",Font.BOLD,24));
-        g.drawString("REPORTING SOURCES",110,390);
-        drawWrapped(g,item.body(),new Font("SansSerif",Font.BOLD,38),110,500,w-220,58,9);
+        drawWrapped(g,item.body(),new Font("SansSerif",Font.BOLD,39),105,500,w-210,60,9);
 
         g.setColor(MUTED);
-        drawWrapped(g,"Sources used to verify and build this report.",new Font("SansSerif",Font.PLAIN,25),110,1130,w-220,38,2);
-
-        paintTicker(g,w,h,"AWARE NEWS  •  SOURCES");
+        drawWrapped(g,"Sources used to verify and build this report.",new Font("SansSerif",Font.PLAIN,25),105,1190,w-210,38,2);
+        paintTicker(g,w,h,"AWARE NEWS","SOURCES",false);
     }
 
     private static Graphics2D prepare(BufferedImage img){
@@ -179,64 +192,71 @@ public final class CardRenderer {
     }
 
     private static void paintTopBar(Graphics2D g,int w,String label,boolean topStory){
-        g.setColor(new Color(8,15,22));
-        g.fillRect(0,0,w,170);
+        g.setColor(NAVY);
+        g.fillRect(0,0,w,BroadcastTheme.HEADER_HEIGHT);
+        g.setColor(BLUE);
+        g.fillRect(0,0,w,9);
+        g.setColor(RED);
+        g.fillRect(0,9,Math.max(170,w/4),5);
 
-        g.setColor(topStory?RED:ACCENT);
-        g.fillRect(0,0,w,8);
-
-        g.setColor(topStory?RED:ACCENT);
-        g.fillRoundRect(48,45,190,74,10,10);
+        g.setColor(BLUE);
+        g.fillRect(42,42,194,76);
         g.setColor(Color.WHITE);
-        g.setFont(new Font("SansSerif",Font.BOLD,35));
-        g.drawString("AWARE",68,94);
+        g.setFont(new Font("SansSerif",Font.BOLD,36));
+        g.drawString("AWARE",62,94);
 
         g.setColor(TEXT);
-        g.setFont(new Font("SansSerif",Font.BOLD,26));
+        g.setFont(new Font("SansSerif",Font.BOLD,27));
         g.drawString("NEWS",260,93);
 
         String right=label==null||label.isBlank()?"NEWS UPDATE":label.toUpperCase(Locale.ROOT);
         g.setFont(new Font("SansSerif",Font.BOLD,19));
         FontMetrics fm=g.getFontMetrics();
-        int tagW=Math.max(150,fm.stringWidth(right)+38);
-        g.setColor(new Color(23,34,45));
-        g.fillRoundRect(w-48-tagW,53,tagW,58,9,9);
-        g.setColor(topStory?new Color(255,145,151):ACCENT);
-        g.drawString(right,w-48-tagW+19,90);
+        int tagW=Math.max(160,fm.stringWidth(right)+40);
+        g.setColor(topStory?RED:BLUE);
+        g.fillRect(w-42-tagW,52,tagW,58);
+        g.setColor(Color.WHITE);
+        g.drawString(right,w-42-tagW+20,90);
 
-        g.setColor(new Color(40,58,72));
-        g.fillRect(48,145,w-96,1);
+        g.setColor(RULE);
+        g.fillRect(42,145,w-84,2);
     }
 
-    private static void paintTicker(Graphics2D g,int w,int h,String message){
-        int y=h-105;
-        g.setColor(TICKER);g.fillRect(0,y,w,105);
-        g.setColor(ACCENT);g.fillRect(0,y,w,5);
-        g.setColor(TEXT);g.setFont(new Font("SansSerif",Font.BOLD,20));
-        g.drawString(message,50,y+58);
-        g.setColor(MUTED);g.setFont(new Font("SansSerif",Font.BOLD,17));
-        String mark="AWARE";
-        FontMetrics fm=g.getFontMetrics();
-        g.drawString(mark,w-50-fm.stringWidth(mark),y+58);
+    private static void paintTicker(Graphics2D g,int w,int h,String brand,String message,boolean urgent){
+        int y=h-BroadcastTheme.TICKER_HEIGHT;
+        g.setColor(TICKER);g.fillRect(0,y,w,BroadcastTheme.TICKER_HEIGHT);
+        g.setColor(BLUE);g.fillRect(0,y,w,6);
+        g.setColor(urgent?RED:BLUE);
+        g.fillRect(0,y+6,230,BroadcastTheme.TICKER_HEIGHT-6);
+        g.setColor(Color.WHITE);
+        g.setFont(new Font("SansSerif",Font.BOLD,21));
+        g.drawString(brand,38,y+63);
+        g.setColor(TEXT);
+        g.setFont(new Font("SansSerif",Font.BOLD,20));
+        g.drawString(message,270,y+63);
+        g.setColor(RED);
+        g.fillRect(w-22,y+6,22,BroadcastTheme.TICKER_HEIGHT-6);
     }
 
-    private static void paintImageFrame(Graphics2D g,BufferedImage source,int x,int y,int w,int h,int radius){
-        g.setColor(new Color(31,45,57));
-        g.fillRoundRect(x-5,y-5,w+10,h+10,radius+5,radius+5);
+    private static void paintImageFrame(Graphics2D g,BufferedImage source,int x,int y,int w,int h,int radius,double verticalBias){
+        g.setColor(RULE);
+        g.fillRoundRect(x-4,y-4,w+8,h+8,radius+3,radius+3);
         Shape oldClip=g.getClip();
         g.setClip(new RoundRectangle2D.Double(x,y,w,h,radius,radius));
-        drawCover(g,source,x,y,w,h);
+        drawCover(g,source,x,y,w,h,verticalBias);
         g.setClip(oldClip);
     }
 
     private static void paintPlaceholderGrid(Graphics2D g,int x,int y,int w,int h){
-        g.setColor(new Color(31,43,54));
-        g.fillRoundRect(x,y,w,h,20,20);
-        g.setColor(new Color(42,57,69));
+        g.setColor(NAVY_2);
+        g.fillRect(x,y,w,h);
+        g.setColor(RULE);
         for(int yy=y+70;yy<y+h;yy+=120)g.drawLine(x+40,yy,x+w-40,yy);
         for(int xx=x+80;xx<x+w;xx+=150)g.drawLine(xx,y+40,xx,y+h-40);
-        g.setColor(ACCENT);
-        g.fillOval(x+w/2-15,y+h/2-15,30,30);
+        g.setColor(BLUE);
+        g.fillRect(x+w/2-18,y+h/2-18,36,36);
+        g.setColor(RED);
+        g.fillRect(x+w/2-7,y+h/2-7,14,14);
     }
 
     private static String storyLabel(String type){
@@ -244,7 +264,7 @@ public final class CardRenderer {
         String t=type.replace('_',' ').trim().toUpperCase(Locale.ROOT);
         return switch(t){
             case "TIMELINE"->"TIMELINE";
-            case "BACKGROUND"->"NEWS UPDATE";
+            case "BACKGROUND"->"CONTEXT";
             case "HOOK"->"TOP STORY";
             default->t;
         };
@@ -257,6 +277,33 @@ public final class CardRenderer {
         String result=String.join(" ",Arrays.copyOfRange(words,0,Math.min(maxWords,words.length)));
         if(words.length>maxWords)result+="…";
         return result.toUpperCase(Locale.ROOT);
+    }
+
+    private static String compactDeck(String text,int maxWords){
+        if(text==null||text.isBlank())return "";
+        String clean=text.replaceAll("\\s+"," ").trim();
+        String[] words=clean.split(" ");
+        return String.join(" ",Arrays.copyOfRange(words,0,Math.min(maxWords,words.length)))+(words.length>maxWords?"…":"");
+    }
+
+    private static Font fitHeadlineFont(Graphics2D g,String text,int maxWidth,int maxLines,int startSize,int minSize){
+        for(int size=startSize;size>=minSize;size-=2){
+            Font font=new Font("SansSerif",Font.BOLD,size);
+            if(wrappedLineCount(g,text,font,maxWidth)<=maxLines)return font;
+        }
+        return new Font("SansSerif",Font.BOLD,minSize);
+    }
+
+    private static int wrappedLineCount(Graphics2D g,String text,Font font,int maxWidth){
+        g.setFont(font);FontMetrics fm=g.getFontMetrics();
+        int lines=1;StringBuilder line=new StringBuilder();
+        for(String word:(text==null?"":text.trim()).split("\\s+")){
+            if(word.isBlank())continue;
+            String test=line.length()==0?word:line+" "+word;
+            if(fm.stringWidth(test)>maxWidth&&line.length()>0){lines++;line.setLength(0);line.append(word);}
+            else{if(line.length()>0)line.append(' ');line.append(word);}
+        }
+        return lines;
     }
 
     private static int drawWrapped(Graphics2D g,String text,Font font,int x,int y,int maxWidth,int step,int maxLines){
@@ -279,10 +326,13 @@ public final class CardRenderer {
         return yy;
     }
 
-    private static void drawCover(Graphics2D g,BufferedImage src,int x,int y,int w,int h){
+    private static void drawCover(Graphics2D g,BufferedImage src,int x,int y,int w,int h,double verticalBias){
         double scale=Math.max(w/(double)src.getWidth(),h/(double)src.getHeight());
         int sw=(int)Math.round(w/scale),sh=(int)Math.round(h/scale);
-        int sx=Math.max(0,(src.getWidth()-sw)/2),sy=Math.max(0,(src.getHeight()-sh)/2);
+        int sx=Math.max(0,(src.getWidth()-sw)/2);
+        int maxSy=Math.max(0,src.getHeight()-sh);
+        double bias=Math.max(0.0,Math.min(1.0,verticalBias));
+        int sy=(int)Math.round(maxSy*bias);
         g.drawImage(src,x,y,x+w,y+h,sx,sy,sx+sw,sy+sh,null);
     }
 }
