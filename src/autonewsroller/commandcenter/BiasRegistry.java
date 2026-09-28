@@ -54,7 +54,12 @@ public final class BiasRegistry {
         int left=0,center=0,right=0,unknown=0;
         Map<String,String>buckets=new LinkedHashMap<>();
         Map<String,Object>details=new LinkedHashMap<>();
+        Map<String,String>unique=new LinkedHashMap<>();
         for(String p:publishers){
+            if(p==null||p.isBlank())continue;
+            unique.putIfAbsent(p.trim().toLowerCase(Locale.ROOT),p.trim());
+        }
+        for(String p:unique.values()){
             SourceRating rating=ratings.getOrDefault(p.toLowerCase(Locale.ROOT),new SourceRating("unknown","Not rated","",""));
             buckets.put(p,rating.bucket());
             Map<String,Object>d=new LinkedHashMap<>();
