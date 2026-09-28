@@ -6,10 +6,10 @@ import java.util.*;
 
 public final class VisualPlanner {
     public VisualPlan plan(NewsScript script,FactPackage fp){
-        return plan(script,fp,PoliticalVisualData.empty(),0.60,true,5.0);
+        return plan(script,fp,PoliticalVisualData.empty(),0.60,true,5.0,true,true);
     }
 
-    public VisualPlan plan(NewsScript script,FactPackage fp,PoliticalVisualData political,double minimumRelevance,boolean showUncertain,double politicalSceneSeconds){
+    public VisualPlan plan(NewsScript script,FactPackage fp,PoliticalVisualData political,double minimumRelevance,boolean showUncertain,double politicalSceneSeconds,boolean showConfidence,boolean showSourceMix){
         List<VisualPlan.Item> out=new ArrayList<>();
 
         int idx=0;
@@ -57,6 +57,9 @@ public final class VisualPlanner {
 
         if(political!=null&&political.shouldRender(minimumRelevance,showUncertain)){
             int insertAt=Math.min(3,out.size());
+            Map<String,Object>renderData=new LinkedHashMap<>(political.toMap());
+            renderData.put("showConfidence",showConfidence);
+            renderData.put("showSourceMix",showSourceMix);
             out.add(insertAt,new VisualPlan.Item(
                     -1,
                     "POLITICAL_CONTEXT",
@@ -64,7 +67,7 @@ public final class VisualPlanner {
                     political.storySummary(),
                     Math.max(3.5,Math.min(8.0,politicalSceneSeconds)),
                     "",
-                    political.toMap()
+                    renderData
             ));
         }
 
