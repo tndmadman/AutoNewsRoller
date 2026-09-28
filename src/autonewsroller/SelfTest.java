@@ -445,7 +445,7 @@ public final class SelfTest {
         NewsScript script=new NewsScript(fp.storyId(),fp.headline(),"Verified political narration.",segments,70,List.of(),
                 Map.of("text",segments.get(0).narration(),"type","direct_event","factIds",List.of("FACT_A")));
 
-        VisualPlan plan=new VisualPlanner().plan(script,fp,political,0.60,true,5.0);
+        VisualPlan plan=new VisualPlanner().plan(script,fp,political,0.60,true,5.0,true,true);
         List<VisualPlan.Item>politicalItems=plan.items().stream().filter(x->"POLITICAL_CONTEXT".equals(x.type())).toList();
         ok(politicalItems.size()==1&&politicalItems.get(0).index()>0&&!"POLITICAL_CONTEXT".equals(plan.items().get(0).type()),
                 "visual planner inserts one political context scene without replacing the hook thumbnail");
