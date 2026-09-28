@@ -638,11 +638,11 @@ public final class SelfTest {
     private void testWorthyHourFilterContract(Path root)throws Exception{
         String html=Files.readString(root.resolve("web/command-center/index.html"));
         String js=Files.readString(root.resolve("web/command-center/app.js"));
-        ok(html.contains("id=\"worthyAgeFilter\"")&&html.contains("WORTHY: LAST 1H")&&html.contains("WORTHY: LAST 72H"),
-                "dashboard exposes Worthy publication-age presets");
-        ok(js.contains("autonewsWorthyAgeHours")&&js.contains("latestPublishedAt")&&js.contains("withinWorthyAge")&&
-                        js.contains("currentStoryFilter()===\"WORTHY\""),
-                "dashboard Worthy hour filter persists and filters by latest publication time");
+        ok(html.contains("id=\"storyAgeFilter\"")&&html.contains("AGE: LAST 1H")&&html.contains("AGE: LAST 72H"),
+                "dashboard exposes story publication-age presets");
+        ok(js.contains("autonewsStoryAgeHours")&&js.contains("latestPublishedAt")&&js.contains("withinStoryAge")&&
+                        js.contains("storyAgeLimitHours"),
+                "dashboard story age filter persists and filters by latest publication time");
     }
 
     private void testFeedCardIdentityContract(Path root)throws Exception{
