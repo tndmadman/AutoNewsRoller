@@ -6,6 +6,10 @@ import java.util.*;
 
 public final class VisualPlanner {
     public VisualPlan plan(NewsScript script,FactPackage fp){
+        return plan(script,fp,PoliticalVisualData.empty(),0.60,true,5.0);
+    }
+
+    public VisualPlan plan(NewsScript script,FactPackage fp,PoliticalVisualData political,double minimumRelevance,boolean showUncertain,double politicalSceneSeconds){
         List<VisualPlan.Item> out=new ArrayList<>();
 
         int idx=0;
@@ -34,8 +38,6 @@ public final class VisualPlanner {
             idx++;
         }
 
-        // A malformed/legacy script with too few segments should still have enough
-        // changing visuals, but the opening hook remains frame zero.
         if(idx<6){
             for(String sentence:Text.sentences(script.narration())){
                 if(idx>=8)break;
@@ -53,9 +55,28 @@ public final class VisualPlanner {
             }
         }
 
+        if(political!=null&&political.shouldRender(minimumRelevance,showUncertain)){
+            int insertAt=Math.min(3,out.size());
+            out.add(insertAt,new VisualPlan.Item(
+                    -1,
+                    "POLITICAL_CONTEXT",
+                    "Political context",
+                    political.storySummary(),
+                    Math.max(3.5,Math.min(8.0,politicalSceneSeconds)),
+                    "",
+                    political.toMap()
+            ));
+        }
+
         String src=fp.sources().stream().map(x->String.valueOf(x.get("publisher"))).distinct().limit(5)
                 .reduce((a,b)->a+" • "+b).orElse("");
-        out.add(new VisualPlan.Item(idx,"SOURCE_CARD","Sources",src,2.5,""));
-        return new VisualPlan(script.storyId(),List.copyOf(out));
+        out.add(new VisualPlan.Item(-1,"SOURCE_CARD","Sources",src,2.5,""));
+
+        List<VisualPlan.Item> reindexed=new ArrayList<>();
+        for(int i=0;i<out.size();i++){
+            VisualPlan.Item item=out.get(i);
+            reindexed.add(new VisualPlan.Item(i,item.type(),item.title(),item.body(),item.duration(),item.prompt(),item.data()));
+        }
+        return new VisualPlan(script.storyId(),List.copyOf(reindexed));
     }
 }
