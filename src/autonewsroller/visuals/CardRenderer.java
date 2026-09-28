@@ -210,14 +210,17 @@ public final class CardRenderer {
         g.setFont(new Font("SansSerif",Font.PLAIN,24));
         g.drawString("Publisher baseline and story framing are separate signals.",x,panelY+126);
 
+        boolean showSourceMix=bool(item.data().getOrDefault("showSourceMix",true));
+        boolean showConfidence=bool(item.data().getOrDefault("showConfidence",true));
         int sourceY=panelY+195;
-        g.setColor(BLUE_LIGHT);
-        g.setFont(new Font("SansSerif",Font.BOLD,25));
-        g.drawString(p.totalSourceCount()==1?"SOURCE RATING":"SOURCE MIX",x,sourceY);
-
         Map<String,Object>details=map(item.data().get("sourceMix"));
         Map<String,Object>publisherDetails=map(details.get("publisherDetails"));
-        if(p.totalSourceCount()==1&&publisherDetails.size()==1){
+        if(showSourceMix){
+            g.setColor(BLUE_LIGHT);
+            g.setFont(new Font("SansSerif",Font.BOLD,25));
+            g.drawString(p.totalSourceCount()==1?"SOURCE RATING":"SOURCE MIX",x,sourceY);
+        }
+        if(showSourceMix&&p.totalSourceCount()==1&&publisherDetails.size()==1){
             Map.Entry<String,Object>e=publisherDetails.entrySet().iterator().next();
             Map<String,Object>d=map(e.getValue());
             String bucket=String.valueOf(d.getOrDefault("bucket","unknown")).toUpperCase(Locale.ROOT);
@@ -226,7 +229,7 @@ public final class CardRenderer {
             drawWrapped(g,e.getKey(),new Font("SansSerif",Font.BOLD,41),x,sourceY+62,contentW,49,2);
             g.setColor(colorForBucket(bucket));g.setFont(new Font("SansSerif",Font.BOLD,35));
             g.drawString(original.toUpperCase(Locale.ROOT),x,sourceY+152);
-        }else{
+        }else if(showSourceMix){
             int total=Math.max(1,p.totalSourceCount());
             drawSourceSegment(g,x,sourceY+48,contentW,p.sourceLeft(),p.sourceCenter(),p.sourceRight(),p.sourceUnknown(),total);
             g.setFont(new Font("SansSerif",Font.BOLD,24));
@@ -240,7 +243,7 @@ public final class CardRenderer {
             }
         }
 
-        int storyY=panelY+485;
+        int storyY=showSourceMix?panelY+485:panelY+245;
         g.setColor(BLUE_LIGHT);g.setFont(new Font("SansSerif",Font.BOLD,25));
         g.drawString("STORY FRAMING",x,storyY);
 
@@ -259,7 +262,7 @@ public final class CardRenderer {
         g.drawString(classification,x,meterY+157);
 
         g.setColor(MUTED);g.setFont(new Font("SansSerif",Font.PLAIN,23));
-        g.drawString("Automated framing analysis • Confidence "+Math.round(p.storyConfidence()*100)+"%",x,meterY+201);
+        g.drawString(showConfidence?"Automated framing analysis • Confidence "+Math.round(p.storyConfidence()*100)+"%":"Automated framing analysis",x,meterY+201);
         if(!p.storySummary().isBlank()){
             g.setColor(MUTED);
             drawWrapped(g,p.storySummary(),new Font("SansSerif",Font.PLAIN,22),x,meterY+247,contentW,32,3);
@@ -306,6 +309,8 @@ public final class CardRenderer {
             default->BroadcastTheme.POLITICAL_UNKNOWN;
         };
     }
+
+    private static boolean bool(Object raw){return raw instanceof Boolean b?b:Boolean.parseBoolean(String.valueOf(raw));}
 
     private static Map<String,Object> map(Object raw){
         if(!(raw instanceof Map<?,?>m))return Map.of();
