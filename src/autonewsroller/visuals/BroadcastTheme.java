@@ -26,8 +26,16 @@ public final class BroadcastTheme {
     public static final Color MUTED=new Color(188,199,210);
     public static final Color RULE=new Color(54,78,99);
     public static final Color TICKER=new Color(4,15,27);
+    public static final Color POLITICAL_LEFT=BLUE_LIGHT;
+    public static final Color POLITICAL_CENTER=new Color(214,223,231);
+    public static final Color POLITICAL_RIGHT=RED_LIGHT;
+    public static final Color POLITICAL_UNKNOWN=new Color(116,132,145);
+    public static final Color PANEL=new Color(7,26,43);
 
     public static final int HEADER_HEIGHT=170;
     public static final int TICKER_HEIGHT=105;
     public static final int SAFE_SIDE=48;
+    public static final int POLITICAL_PANEL_X=58;
+    public static final int POLITICAL_PANEL_Y=265;
+    public static final int POLITICAL_PANEL_BOTTOM_SAFE=1370;
 }
