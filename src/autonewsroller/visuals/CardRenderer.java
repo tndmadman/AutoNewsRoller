@@ -1,6 +1,6 @@
 package autonewsroller.visuals;
 
-import autonewsroller.model.VisualPlan;
+import autonewsroller.model.*;
 import java.awt.*;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
@@ -27,6 +27,7 @@ public final class CardRenderer {
         Graphics2D g=prepare(canvas);
         if("HOOK".equalsIgnoreCase(item.type()))renderHookPlaceholder(g,item,w,h);
         else if("SOURCE_CARD".equalsIgnoreCase(item.type()))renderSourceCard(g,item,w,h);
+        else if("POLITICAL_CONTEXT".equalsIgnoreCase(item.type()))renderPoliticalContext(g,item,w,h);
         else renderStoryPlaceholder(g,item,w,h);
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
@@ -180,6 +181,137 @@ public final class CardRenderer {
         g.setColor(MUTED);
         drawWrapped(g,"Sources used to verify and build this report.",new Font("SansSerif",Font.PLAIN,25),105,1190,w-210,38,2);
         paintTicker(g,w,h,"AWARE NEWS","SOURCES",false);
+    }
+
+    private static void renderPoliticalContext(Graphics2D g,VisualPlan.Item item,int w,int h){
+        PoliticalVisualData p=PoliticalVisualData.fromMap(item.data());
+        paintTopBar(g,w,"POLITICAL CONTEXT",false);
+
+        int panelX=BroadcastTheme.POLITICAL_PANEL_X;
+        int panelY=BroadcastTheme.POLITICAL_PANEL_Y;
+        int panelW=w-panelX*2;
+        int panelH=Math.min(BroadcastTheme.POLITICAL_PANEL_BOTTOM_SAFE-panelY,1020);
+
+        g.setColor(BroadcastTheme.PANEL);
+        g.fillRoundRect(panelX,panelY,panelW,panelH,20,20);
+        g.setColor(RULE);
+        g.drawRoundRect(panelX,panelY,panelW,panelH,20,20);
+        g.setColor(BLUE);
+        g.fillRect(panelX,panelY,Math.max(120,panelW/3),8);
+        g.setColor(RED);
+        g.fillRect(panelX+Math.max(120,panelW/3),panelY,panelW-Math.max(120,panelW/3),8);
+
+        int x=panelX+46;
+        int contentW=panelW-92;
+        g.setColor(TEXT);
+        g.setFont(new Font("SansSerif",Font.BOLD,48));
+        g.drawString("POLITICAL CONTEXT",x,panelY+86);
+        g.setColor(MUTED);
+        g.setFont(new Font("SansSerif",Font.PLAIN,24));
+        g.drawString("Publisher baseline and story framing are separate signals.",x,panelY+126);
+
+        int sourceY=panelY+195;
+        g.setColor(BLUE_LIGHT);
+        g.setFont(new Font("SansSerif",Font.BOLD,25));
+        g.drawString(p.totalSourceCount()==1?"SOURCE RATING":"SOURCE MIX",x,sourceY);
+
+        Map<String,Object>details=map(item.data().get("sourceMix"));
+        Map<String,Object>publisherDetails=map(details.get("publisherDetails"));
+        if(p.totalSourceCount()==1&&publisherDetails.size()==1){
+            Map.Entry<String,Object>e=publisherDetails.entrySet().iterator().next();
+            Map<String,Object>d=map(e.getValue());
+            String bucket=String.valueOf(d.getOrDefault("bucket","unknown")).toUpperCase(Locale.ROOT);
+            String original=String.valueOf(d.getOrDefault("originalClassification",bucket));
+            g.setColor(TEXT);g.setFont(new Font("SansSerif",Font.BOLD,41));
+            drawWrapped(g,e.getKey(),new Font("SansSerif",Font.BOLD,41),x,sourceY+62,contentW,49,2);
+            g.setColor(colorForBucket(bucket));g.setFont(new Font("SansSerif",Font.BOLD,35));
+            g.drawString(original.toUpperCase(Locale.ROOT),x,sourceY+152);
+        }else{
+            int total=Math.max(1,p.totalSourceCount());
+            drawSourceSegment(g,x,sourceY+48,contentW,p.sourceLeft(),p.sourceCenter(),p.sourceRight(),p.sourceUnknown(),total);
+            g.setFont(new Font("SansSerif",Font.BOLD,24));
+            int labelY=sourceY+128;
+            g.setColor(BroadcastTheme.POLITICAL_LEFT);g.drawString("LEFT "+p.sourceLeft(),x,labelY);
+            g.setColor(BroadcastTheme.POLITICAL_CENTER);g.drawString("CENTER "+p.sourceCenter(),x+contentW/3,labelY);
+            g.setColor(BroadcastTheme.POLITICAL_RIGHT);g.drawString("RIGHT "+p.sourceRight(),x+(contentW*2)/3,labelY);
+            if(p.sourceUnknown()>0){
+                g.setColor(BroadcastTheme.POLITICAL_UNKNOWN);g.setFont(new Font("SansSerif",Font.PLAIN,21));
+                g.drawString(p.sourceUnknown()+" UNRATED SOURCE"+(p.sourceUnknown()==1?"":"S"),x,labelY+42);
+            }
+        }
+
+        int storyY=panelY+485;
+        g.setColor(BLUE_LIGHT);g.setFont(new Font("SansSerif",Font.BOLD,25));
+        g.drawString("STORY FRAMING",x,storyY);
+
+        int[] pct=p.storyPercentages();
+        int meterY=storyY+48;
+        drawThreeWayMeter(g,x,meterY,contentW,pct[0],pct[1],pct[2]);
+
+        g.setFont(new Font("SansSerif",Font.BOLD,25));
+        g.setColor(BroadcastTheme.POLITICAL_LEFT);g.drawString("LEFT "+pct[0]+"%",x,meterY+83);
+        g.setColor(BroadcastTheme.POLITICAL_CENTER);g.drawString("CENTER "+pct[1]+"%",x+contentW/3,meterY+83);
+        g.setColor(BroadcastTheme.POLITICAL_RIGHT);g.drawString("RIGHT "+pct[2]+"%",x+(contentW*2)/3,meterY+83);
+
+        String classification=p.storyClassification().replace('_',' ').toUpperCase(Locale.ROOT)+" FRAMING";
+        if("MIXED".equals(p.storyClassification().toUpperCase(Locale.ROOT))||"UNCERTAIN".equals(p.storyClassification().toUpperCase(Locale.ROOT)))classification=p.storyClassification().replace('_',' ').toUpperCase(Locale.ROOT);
+        g.setColor(TEXT);g.setFont(new Font("SansSerif",Font.BOLD,38));
+        g.drawString(classification,x,meterY+157);
+
+        g.setColor(MUTED);g.setFont(new Font("SansSerif",Font.PLAIN,23));
+        g.drawString("Automated framing analysis • Confidence "+Math.round(p.storyConfidence()*100)+"%",x,meterY+201);
+        if(!p.storySummary().isBlank()){
+            g.setColor(MUTED);
+            drawWrapped(g,p.storySummary(),new Font("SansSerif",Font.PLAIN,22),x,meterY+247,contentW,32,3);
+        }
+
+        String provider=p.sourceProvider();
+        String attribution=provider.isBlank()?"Publisher baseline: unrated metadata":("Publisher baseline: "+provider+(p.sourceAsOf().isBlank()?"":" • "+p.sourceAsOf()));
+        g.setColor(new Color(133,151,167));g.setFont(new Font("SansSerif",Font.PLAIN,18));
+        drawWrapped(g,attribution+" • Framing weights describe presentation, not truth or credibility.",x,panelY+panelH-54,contentW,25,2);
+
+        paintTicker(g,w,h,"AWARE NEWS","POLITICAL CONTEXT",false);
+    }
+
+    private static void drawSourceSegment(Graphics2D g,int x,int y,int w,int left,int center,int right,int unknown,int total){
+        int h=34;
+        int used=0;
+        int[] values={left,center,right,unknown};
+        Color[] colors={BroadcastTheme.POLITICAL_LEFT,BroadcastTheme.POLITICAL_CENTER,BroadcastTheme.POLITICAL_RIGHT,BroadcastTheme.POLITICAL_UNKNOWN};
+        for(int i=0;i<values.length;i++){
+            if(values[i]<=0)continue;
+            int seg=i==values.length-1?w-used:(int)Math.round(w*(values[i]/(double)total));
+            seg=Math.max(1,Math.min(w-used,seg));
+            g.setColor(colors[i]);g.fillRect(x+used,y,seg,h);used+=seg;
+        }
+        if(used<w){g.setColor(BroadcastTheme.POLITICAL_UNKNOWN);g.fillRect(x+used,y,w-used,h);}
+    }
+
+    private static void drawThreeWayMeter(Graphics2D g,int x,int y,int w,int left,int center,int right){
+        int h=42;
+        int leftW=(int)Math.round(w*(left/100.0));
+        int centerW=(int)Math.round(w*(center/100.0));
+        int rightW=Math.max(0,w-leftW-centerW);
+        g.setColor(BroadcastTheme.POLITICAL_LEFT);g.fillRect(x,y,leftW,h);
+        g.setColor(BroadcastTheme.POLITICAL_CENTER);g.fillRect(x+leftW,y,centerW,h);
+        g.setColor(BroadcastTheme.POLITICAL_RIGHT);g.fillRect(x+leftW+centerW,y,rightW,h);
+        g.setColor(RULE);g.drawRect(x,y,w,h);
+    }
+
+    private static Color colorForBucket(String bucket){
+        return switch(bucket.toLowerCase(Locale.ROOT)){
+            case "left"->BroadcastTheme.POLITICAL_LEFT;
+            case "center"->BroadcastTheme.POLITICAL_CENTER;
+            case "right"->BroadcastTheme.POLITICAL_RIGHT;
+            default->BroadcastTheme.POLITICAL_UNKNOWN;
+        };
+    }
+
+    private static Map<String,Object> map(Object raw){
+        if(!(raw instanceof Map<?,?>m))return Map.of();
+        Map<String,Object>out=new LinkedHashMap<>();
+        for(var e:m.entrySet())out.put(String.valueOf(e.getKey()),e.getValue());
+        return out;
     }
 
     private static Graphics2D prepare(BufferedImage img){
