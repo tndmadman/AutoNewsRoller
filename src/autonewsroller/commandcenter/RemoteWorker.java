@@ -1,6 +1,7 @@
 package autonewsroller.commandcenter;
 
 import autonewsroller.config.NewsConfig;
+import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.*;
 import autonewsroller.util.Json;
 
@@ -71,7 +72,8 @@ public final class RemoteWorker {
             String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
             Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+stamp);
             NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,event->progressSafe(jobId,event));
-            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,dryRun);
+            PoliticalVisualData political=job.get("politicalVisualData") instanceof Map<?,?>?PoliticalVisualData.fromMap(Json.object(job.get("politicalVisualData"))):null;
+            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,dryRun);
             if(!dryRun&&output.toString().toLowerCase(Locale.ROOT).endsWith(".mp4")){
                 Map<String,Object>upload=uploadVideo(jobId,output);
                 Map<String,Object>complete=new LinkedHashMap<>();

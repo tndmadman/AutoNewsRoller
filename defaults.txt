@@ -61,3 +61,10 @@ commandCenterControllerUrl=http://127.0.0.1:8787
 
 politicalAnalysisModel=llama3.1:8b
 politicalAnalysisOllamaUrl=http://127.0.0.1:11434/api/generate
+
+politicalGraphicsEnabled=true
+politicalGraphicsMinimumRelevance=0.60
+politicalGraphicsShowConfidence=true
+politicalGraphicsShowSourceMix=true
+politicalGraphicsSceneSeconds=5.0
+politicalGraphicsShowOnUncertain=true

@@ -185,14 +185,14 @@ function storyCard(s){
     :`<button class="btn ghost" onclick="analyzeBias('${esc(s.id)}')">${framingStatus==="COMPLETE"?"↻ REANALYZE FRAMING":"◎ ANALYZE FRAMING"}</button>`;
   const framingPanel=framingStatus==="COMPLETE"
     ?`<div class="framingPanel">
-        <div class="mixTitle"><span>ARTICLE FRAMING // LOCAL OLLAMA</span><span>${esc(String(framing.overallClassification||"uncertain").replace("_"," ").toUpperCase())} // ${Math.round(num(framing.overallConfidence)*100)}%</span></div>
+        <div class="mixTitle"><span>STORY FRAMING // LOCAL OLLAMA</span><span>${esc(String(framing.overallClassification||"uncertain").replace("_"," ").toUpperCase())} // ${Math.round(num(framing.overallConfidence)*100)}%</span></div>
         <div class="triBias"><div class="tri left" style="--v:${framingBar("left")}%"><span>LEFT WEIGHT</span><b>${framingBar("left")}%</b></div><div class="tri center" style="--v:${framingBar("center")}%"><span>CENTER WEIGHT</span><b>${framingBar("center")}%</b></div><div class="tri right" style="--v:${framingBar("right")}%"><span>RIGHT WEIGHT</span><b>${framingBar("right")}%</b></div></div>
         <div class="framingSummary">${esc(framing.summary||"")}</div>
         ${framingRows}
-        <div class="framingMeta">HEURISTIC WEIGHTS, NOT TRUTH PROBABILITIES // MIXED ${num(framing.mixed)} // UNCERTAIN ${num(framing.uncertain)} // NOT POLITICAL ${num(framing.notPolitical)} // MODEL ${esc(framing.model||"")}</div>
+        <div class="framingMeta">AUTOMATED FRAMING ANALYSIS // HEURISTIC WEIGHTS, NOT TRUTH PROBABILITIES // MIXED ${num(framing.mixed)} // UNCERTAIN ${num(framing.uncertain)} // NOT POLITICAL ${num(framing.notPolitical)} // MODEL ${esc(framing.model||"")}</div>
         ${analysisButton}
       </div>`
-    :`<div class="framingPanel pending"><div class="mixTitle"><span>ARTICLE FRAMING // LOCAL OLLAMA</span><span>${esc(framingStatus||"NOT ANALYZED")}</span></div><div class="framingSummary">${framingStatus==="FAILED"?esc(s.biasAnalysisError||"Analysis failed."):s.politicalCandidate?"Queued automatically for idle-worker analysis.":"This story was not automatically flagged as political; you can still analyze it manually."}</div>${analysisButton}</div>`;
+    :`<div class="framingPanel pending"><div class="mixTitle"><span>STORY FRAMING // LOCAL OLLAMA</span><span>${esc(framingStatus||"NOT ANALYZED")}</span></div><div class="framingSummary">${framingStatus==="FAILED"?esc(s.biasAnalysisError||"Analysis failed."):s.politicalCandidate?"Queued automatically for idle-worker analysis.":"This story was not automatically flagged as political; you can still analyze it manually."}</div>${analysisButton}</div>`;
   const productionFacts=(status==="PRODUCING"||status==="COMPLETE"||status==="FAILED")
     ?`<div class="productionFacts">
         <span><b>TTS</b> ${engine}${voice?" // "+voice:""}</span>
