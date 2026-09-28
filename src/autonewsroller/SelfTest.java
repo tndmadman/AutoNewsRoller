@@ -36,6 +36,7 @@ public final class SelfTest {
         testCommandCenterLeaseRecovery(a);
         testPublisherBiasRegistry(root);
         testPoliticalAnalysisQueue(a);
+        testPoliticalVisualGraphics(root,a);
         testAuthoritative(root);
         testMalformed(root);
         testScriptValidation(a);
@@ -380,6 +381,8 @@ public final class SelfTest {
         Map<String,Object>details=Json.object(mix.get("publisherDetails"));
         Map<String,Object>fox=Json.object(details.get("Fox News"));
         ok("Right".equals(fox.get("originalClassification"))&&String.valueOf(fox.get("url")).contains("allsides.com"),"publisher bias preserves provider label and citation URL");
+        Map<String,Object>deduped=registry.mix(List.of("BBC News","BBC News","bbc news"));
+        ok(((Number)deduped.get("center")).intValue()==1&&((Number)deduped.get("left")).intValue()==0&&((Number)deduped.get("right")).intValue()==0,"publisher bias mix deduplicates repeated publishers case-insensitively");
     }
 
     private void testPoliticalAnalysisQueue(List<Article>a)throws Exception{
@@ -413,6 +416,56 @@ public final class SelfTest {
         ok("COMPLETE".equals(done.get("biasAnalysisStatus"))&&Json.object(done.get("framingAnalysis")).get("overallClassification").equals("center"),"political framing result persists in command center state");
     }
 
+    private void testPoliticalVisualGraphics(Path root,List<Article>a)throws Exception{
+        BiasRegistry registry=BiasRegistry.load(root.resolve("config/source_bias.json"));
+        Map<String,Object>sourceMix=registry.mix(List.of("BBC News","Fox News","Unknown Fixture"));
+
+        Map<String,Object>analysis=new LinkedHashMap<>();
+        analysis.put("politicalRelevance",0.93);
+        analysis.put("overallClassification","center");
+        analysis.put("overallConfidence",0.84);
+        analysis.put("overallWeights",Map.of("left",0.333,"center",0.333,"right",0.334));
+        analysis.put("summary","The supplied coverage uses mostly neutral institutional framing with limited partisan cues.");
+
+        PoliticalVisualData political=PoliticalVisualData.from(true,sourceMix,analysis,"COMPLETE","");
+        int[] percentages=political.storyPercentages();
+        ok(percentages[0]+percentages[1]+percentages[2]==100&&percentages[2]==34,
+                "political story display percentages normalize and round to exactly 100");
+        ok(political.ratedSourceCount()==2&&political.sourceUnknown()==1,
+                "political visual data keeps rated and unrated publishers separate");
+        ok(political.shouldRender(0.60,true)&&!PoliticalVisualData.empty().shouldRender(0.60,true),
+                "political graphic appears only for analyzed relevant political stories");
+
+        StoryCluster cluster=new StoryClusterer().cluster(a.stream().filter(x->!x.title().contains("Old archive")).toList())
+                .stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
+        FactPackage fp=new SourceVerifier().verify(cluster,2).factPackage();
+        List<NewsScript.Segment>segments=new ArrayList<>();
+        segments.add(new NewsScript.Segment(0,"A verified political story opens with a direct factual hook.","retention hook","HOOK","Verified opening visual",3));
+        for(int i=1;i<6;i++)segments.add(new NewsScript.Segment(i,"Verified context beat "+i+" explains documented facts without unsupported claims.","detail","BACKGROUND","Documentary visual",7));
+        NewsScript script=new NewsScript(fp.storyId(),fp.headline(),"Verified political narration.",segments,70,List.of(),
+                Map.of("text",segments.get(0).narration(),"type","direct_event","factIds",List.of("FACT_A")));
+
+        VisualPlan plan=new VisualPlanner().plan(script,fp,political,0.60,true,5.0);
+        List<VisualPlan.Item>politicalItems=plan.items().stream().filter(x->"POLITICAL_CONTEXT".equals(x.type())).toList();
+        ok(politicalItems.size()==1&&politicalItems.get(0).index()>0&&!"POLITICAL_CONTEXT".equals(plan.items().get(0).type()),
+                "visual planner inserts one political context scene without replacing the hook thumbnail");
+
+        Path dir=Files.createTempDirectory("autonews-political-card-");
+        Path rendered=new CardRenderer().render(politicalItems.get(0),dir.resolve("political.png"),1080,1920);
+        BufferedImage image=ImageIO.read(rendered.toFile());
+        ok(image!=null&&image.getWidth()==1080&&image.getHeight()==1920,
+                "political context card renders deterministically at 1080x1920");
+
+        PoliticalVisualData uncertain=PoliticalVisualData.from(true,sourceMix,Map.of(
+                "politicalRelevance",0.90,
+                "overallClassification","uncertain",
+                "overallConfidence",0.42,
+                "overallWeights",Map.of("left",0.32,"center",0.37,"right",0.31)
+        ),"COMPLETE","");
+        ok(!uncertain.shouldRender(0.60,false)&&uncertain.shouldRender(0.60,true),
+                "uncertain political framing obeys the show-on-uncertain configuration");
+    }
+
     private void testAuthoritative(Path root)throws Exception{
         try(InputStream in=Files.newInputStream(root.resolve("tests/fixtures/authoritative.xml"))){
             List<Article>a=RssSource.parse(in,new SourceConfig("Official Agency","rss","world","fixture",true,1,true),Instant.now());
@@ -432,6 +485,8 @@ public final class SelfTest {
                 "script Ollama budget reserves enough context, output tokens, and surgical retries");
         ok(cfg.getBool("articleEnrichmentEnabled",false),
                 "production defaults enable article enrichment before script generation");
+        ok(cfg.getBool("politicalGraphicsEnabled",false)&&cfg.getDouble("politicalGraphicsMinimumRelevance",0)<1&&cfg.getDouble("politicalGraphicsSceneSeconds",0)>=3.5,
+                "production defaults enable bounded political context graphics");
         ok(!cfg.csv("kokoroVoices","").stream().anyMatch(v->v.equalsIgnoreCase("af_nicole")||v.equalsIgnoreCase("af-nicole")),
                 "production defaults exclude blacklisted Kokoro voice af_nicole");
         List<String>safeKokoro=NewsPipeline.allowedKokoroVoices(List.of("af_heart","af_nicole","af-nicole","bf_emma"));
