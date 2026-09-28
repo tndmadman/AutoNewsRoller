@@ -2,6 +2,8 @@ package autonewsroller.orchestration;
 
 import autonewsroller.audit.*;
 import autonewsroller.cluster.*;
+import autonewsroller.commandcenter.BiasRegistry;
+import autonewsroller.commandcenter.PoliticalFramingAnalyzer;
 import autonewsroller.config.*;
 import autonewsroller.history.*;
 import autonewsroller.ingest.*;
@@ -129,6 +131,10 @@ public final class NewsPipeline {
     }
 
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,boolean dryRun)throws Exception{
+        return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,null,dryRun);
+    }
+
+    public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,boolean dryRun)throws Exception{
         Files.createDirectories(slotDir);
         StoryCluster c=enrichForProduction(cand.cluster());
         VerificationResult refreshed=new SourceVerifier().verify(c,cfg.minimumIndependentSources());
@@ -142,6 +148,9 @@ public final class NewsPipeline {
         int articleIndex=0;
         for(Article a:c.articles)Json.write(articleDir.resolve(String.format("%02d.json",articleIndex++)),a.toMap());
         Json.write(slotDir.resolve("fact_package.json"),fp.toMap());
+
+        PoliticalVisualData political=resolvePoliticalVisualData(c,suppliedPolitical,dryRun);
+        Json.write(slotDir.resolve("political_analysis.json"),political.toMap());
 
         OllamaClient oc=dryRun?null:new OllamaClient(
                 cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate"),
@@ -160,7 +169,7 @@ public final class NewsPipeline {
                 " hookType="+String.valueOf(script.hook().getOrDefault("type","unknown")));
 
         if(dryRun){
-            VisualPlan plan=new VisualPlanner().plan(script,fp);
+            VisualPlan plan=new VisualPlanner().plan(script,fp,political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0));
             Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
             Map<String,Object>audit=new LinkedHashMap<>();
             audit.put("status","approved-dry-run");
@@ -170,6 +179,7 @@ public final class NewsPipeline {
             audit.put("hook",script.hook());
             audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());
             audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());
+            putPoliticalAudit(audit,political,plan);
             Json.write(slotDir.resolve("audit.json"),audit);
             events.emit(worker,slot,PipelineStage.APPROVED,"dry-run complete");
             logs.worker(worker,"slot="+slot+" dry-run approved");
@@ -199,7 +209,7 @@ public final class NewsPipeline {
                 throw new IllegalStateException(String.format(Locale.ROOT,"Narration audio still too short after repair: %.2fs; minimum is %.2fs",narrationSeconds,minimumFinalSeconds));
         }
 
-        VisualPlan plan=new VisualPlanner().plan(script,fp);
+        VisualPlan plan=new VisualPlanner().plan(script,fp,political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0));
         Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
         Path visuals=slotDir.resolve("visuals");List<Path>imgs=new ArrayList<>();List<Map<String,Object>>imageSources=new ArrayList<>();CardRenderer cards=new CardRenderer();int i=0;
@@ -226,7 +236,7 @@ public final class NewsPipeline {
                 List<Integer>eligible=new ArrayList<>();
                 for(int n=0;n<plan.items().size();n++){
                     VisualPlan.Item item=plan.items().get(n);
-                    if(item.type().equals("HEADLINE_CARD")||item.type().equals("SOURCE_CARD"))continue;
+                    if(item.type().equals("HEADLINE_CARD")||item.type().equals("SOURCE_CARD")||item.type().equals("POLITICAL_CONTEXT"))continue;
                     eligible.add(n);
                 }
 
@@ -280,10 +290,48 @@ public final class NewsPipeline {
         }
 
         Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));List<Double>sceneWeights=plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(imgs,sceneWeights,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration());
-        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);audit.put("hook",script.hook());audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());audit.put("visualPackage",BroadcastTheme.PACKAGE_ID);audit.put("thumbnailStrategy","hook-frame-zero");Json.write(slotDir.resolve("audit.json"),audit);
+        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);audit.put("hook",script.hook());audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());audit.put("visualPackage",BroadcastTheme.PACKAGE_ID);audit.put("thumbnailStrategy","hook-frame-zero");putPoliticalAudit(audit,political,plan);Json.write(slotDir.resolve("audit.json"),audit);
         Path finalDir=slotDir.getParent().resolve("final_videos");Path finalVideo=FileNames.unique(finalDir,c.topic,".mp4");Files.createDirectories(finalDir);Files.copy(render,finalVideo,StandardCopyOption.REPLACE_EXISTING);
-        Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
+        Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
         history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
+    }
+
+    private PoliticalVisualData resolvePoliticalVisualData(StoryCluster cluster,PoliticalVisualData supplied,boolean dryRun){
+        if(supplied!=null&&supplied.analysisAvailable())return supplied;
+
+        Map<String,Object>sourceMix=BiasRegistry.load(root.resolve("config/source_bias.json")).mix(cluster.publishers());
+        boolean candidate=PoliticalFramingAnalyzer.likelyPolitical(cluster);
+        if(!cfg.getBool("politicalGraphicsEnabled",true)){
+            return PoliticalVisualData.from(candidate,sourceMix,Map.of(),"DISABLED","");
+        }
+        if(!candidate){
+            return PoliticalVisualData.from(false,sourceMix,Map.of(),"NOT_POLITICAL","");
+        }
+        if(dryRun){
+            return PoliticalVisualData.from(true,sourceMix,Map.of(),"NOT_ANALYZED","");
+        }
+
+        try{
+            Map<String,Object>analysis=new PoliticalFramingAnalyzer(root,cfg).analyze(cluster);
+            return PoliticalVisualData.from(true,sourceMix,analysis,"COMPLETE","");
+        }catch(Exception e){
+            String msg="Political framing analysis unavailable; continuing without political graphic: "+e.getMessage();
+            System.err.println(msg);
+            logs.debug(msg);
+            return PoliticalVisualData.from(true,sourceMix,Map.of(),"FAILED",e.getMessage());
+        }
+    }
+
+    private static void putPoliticalAudit(Map<String,Object>audit,PoliticalVisualData political,VisualPlan plan){
+        boolean rendered=plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type()));
+        audit.put("politicalContextRendered",rendered);
+        audit.put("politicalCandidate",political.politicalCandidate());
+        audit.put("politicalAnalysisAvailable",political.analysisAvailable());
+        audit.put("politicalRelevance",political.politicalRelevance());
+        audit.put("storyFramingClassification",political.storyClassification());
+        audit.put("storyFramingConfidence",political.storyConfidence());
+        audit.put("politicalRatedSourceCount",political.ratedSourceCount());
+        audit.put("politicalUnratedSourceCount",political.sourceUnknown());
     }
 
     public void rejected(int worker,int slot,String detail){events.emit(worker,slot,PipelineStage.REJECTED,detail);logs.worker(worker,"slot="+slot+" rejected "+detail);}
