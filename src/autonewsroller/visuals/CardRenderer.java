@@ -271,7 +271,7 @@ public final class CardRenderer {
         String provider=p.sourceProvider();
         String attribution=provider.isBlank()?"Publisher baseline: unrated metadata":("Publisher baseline: "+provider+(p.sourceAsOf().isBlank()?"":" • "+p.sourceAsOf()));
         g.setColor(new Color(133,151,167));g.setFont(new Font("SansSerif",Font.PLAIN,18));
-        drawWrapped(g,attribution+" • Framing weights describe presentation, not truth or credibility.",x,panelY+panelH-54,contentW,25,2);
+        drawWrapped(g,attribution+" • Framing weights describe presentation, not truth or credibility.",new Font("SansSerif",Font.PLAIN,18),x,panelY+panelH-54,contentW,25,2);
 
         paintTicker(g,w,h,"AWARE NEWS","POLITICAL CONTEXT",false);
     }
