@@ -169,7 +169,7 @@ public final class NewsPipeline {
                 " hookType="+String.valueOf(script.hook().getOrDefault("type","unknown")));
 
         if(dryRun){
-            VisualPlan plan=new VisualPlanner().plan(script,fp,political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0));
+            VisualPlan plan=new VisualPlanner().plan(script,fp,political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
             Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
             Map<String,Object>audit=new LinkedHashMap<>();
             audit.put("status","approved-dry-run");
@@ -209,7 +209,7 @@ public final class NewsPipeline {
                 throw new IllegalStateException(String.format(Locale.ROOT,"Narration audio still too short after repair: %.2fs; minimum is %.2fs",narrationSeconds,minimumFinalSeconds));
         }
 
-        VisualPlan plan=new VisualPlanner().plan(script,fp,political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0));
+        VisualPlan plan=new VisualPlanner().plan(script,fp,political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
         Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
         Path visuals=slotDir.resolve("visuals");List<Path>imgs=new ArrayList<>();List<Map<String,Object>>imageSources=new ArrayList<>();CardRenderer cards=new CardRenderer();int i=0;
@@ -297,13 +297,12 @@ public final class NewsPipeline {
     }
 
     private PoliticalVisualData resolvePoliticalVisualData(StoryCluster cluster,PoliticalVisualData supplied,boolean dryRun){
-        if(supplied!=null&&supplied.analysisAvailable())return supplied;
-
         Map<String,Object>sourceMix=BiasRegistry.load(root.resolve("config/source_bias.json")).mix(cluster.publishers());
         boolean candidate=PoliticalFramingAnalyzer.likelyPolitical(cluster);
         if(!cfg.getBool("politicalGraphicsEnabled",true)){
             return PoliticalVisualData.from(candidate,sourceMix,Map.of(),"DISABLED","");
         }
+        if(supplied!=null&&supplied.analysisAvailable())return supplied;
         if(!candidate){
             return PoliticalVisualData.from(false,sourceMix,Map.of(),"NOT_POLITICAL","");
         }
