@@ -2,6 +2,7 @@ package autonewsroller.commandcenter;
 
 import autonewsroller.config.SourceConfig;
 import autonewsroller.model.Article;
+import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.NewsPipeline;
 import autonewsroller.orchestration.WorkerState;
 import autonewsroller.util.Json;
@@ -262,6 +263,16 @@ public final class CommandCenterStore {
             Map<String,Object>job=new LinkedHashMap<>();
             job.put("jobType","VIDEO");job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
             job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
+            Map<String,Object>sourceMix=m.get("sourceMix") instanceof Map<?,?>?Json.object(m.get("sourceMix")):Map.of();
+            Map<String,Object>framing=m.get("framingAnalysis") instanceof Map<?,?>?Json.object(m.get("framingAnalysis")):Map.of();
+            PoliticalVisualData political=PoliticalVisualData.from(
+                    Boolean.TRUE.equals(m.get("politicalCandidate")),
+                    sourceMix,
+                    framing,
+                    String.valueOf(m.getOrDefault("biasAnalysisStatus","")),
+                    String.valueOf(m.getOrDefault("biasAnalysisError",""))
+            );
+            job.put("politicalVisualData",political.toMap());
             return job;
         }
 
