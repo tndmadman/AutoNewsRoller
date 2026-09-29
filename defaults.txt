@@ -39,7 +39,7 @@ imageWidth=768
 imageHeight=1344
 imageSteps=24
 imageCfg=5.0
-imageNegative=text, watermark, logo, captions, low quality, distorted, deformed
+imageNegative=text, watermark, logo, captions, low quality, distorted, deformed, cyan cast, teal cast, electric blue lighting, blue monochrome, neon blue, oversaturated blue, purple neon, artificial glow, sci-fi color grading
 
 commandCenterHost=127.0.0.1
 commandCenterPort=8787
