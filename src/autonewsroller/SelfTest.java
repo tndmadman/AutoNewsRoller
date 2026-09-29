@@ -526,9 +526,9 @@ public final class SelfTest {
                         cardSource.contains("renderHookPackage")&&cardSource.contains("renderStoryPackage")&&
                         cardSource.contains("fitHeadlineFont")&&cardSource.contains("verticalBias"),
                 "AWARE visual package includes thumbnail-first hook treatment, adaptive headline sizing, and protected subject cropping");
-        ok(themeSource.contains("aware-broadcast-v2")&&themeSource.contains("public static final Color BLUE")&&
-                        themeSource.contains("public static final Color RED")&&!themeSource.contains("56,232,255"),
-                "broadcast v2 theme centralizes restrained red/blue branding and removes the old neon cyan accent");
+        ok(themeSource.contains("aware-broadcast-v3-breaking")&&themeSource.contains("new Color(30,74,132)")&&
+                        themeSource.contains("new Color(185,23,38)")&&!themeSource.toLowerCase(Locale.ROOT).contains("56,232,255"),
+                "broadcast v3 uses breaking-news red and restrained royal blue without neon cyan");
 
         FactPackage hookFacts=new FactPackage(
                 "hook-fixture",
@@ -625,8 +625,12 @@ public final class SelfTest {
         ok(pipelineSource.contains("audit.put(\"hook\",script.hook())")&&
                         pipelineSource.contains("openingVisualType")&&pipelineSource.contains("HOOK\".equalsIgnoreCase(chosen.type())")&&
                         pipelineSource.contains("BroadcastTheme.PACKAGE_ID")&&pipelineSource.contains("no neon lighting")&&
-                        pipelineSource.contains("neutral white balance"),
-                "pipeline persists hook diagnostics, records broadcast v2, and constrains Comfy visuals to natural news photography");
+                        pipelineSource.contains("neutral white balance")&&pipelineSource.contains("no blue wash")&&
+                        pipelineSource.contains("red and blue breaking-news branding is added later"),
+                "pipeline persists hook diagnostics, records broadcast v3, and keeps AI blue casts out of generated news photography");
+        String defaultsText=Files.readString(root.resolve("defaults.txt"));
+        ok(defaultsText.contains("cyan cast")&&defaultsText.contains("electric blue lighting")&&defaultsText.contains("blue monochrome"),
+                "default negative prompt rejects synthetic cyan and electric-blue image grading");
 
         String comfySource=Files.readString(root.resolve("src/autonewsroller/visuals/ComfyImageGenerator.java"));
         int recovery=comfySource.indexOf("public void recoverFromOom()");
