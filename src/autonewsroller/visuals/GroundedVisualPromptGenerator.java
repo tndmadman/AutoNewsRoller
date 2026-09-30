@@ -86,9 +86,10 @@ public final class GroundedVisualPromptGenerator {
         List<String>ids=!hookIds.isEmpty()?hookIds:(bestId.isBlank()?List.of():List.of(bestId));
         String fact=best==null?fp.summary():best.statement();
         if(!ids.isEmpty()&&facts.containsKey(ids.get(0)))fact=facts.get(ids.get(0)).statement();
-        String entity=cluster.entities.stream().filter(x->containsToken(fact,x)||containsToken(seg.narration(),x)).findFirst().orElse("");
-        String subject=!entity.isBlank()?entity:conservativeSubject(fact);
-        String prompt=("Realistic editorial wire-service photograph grounded only in this verified fact: "+fact+
+        final String factText=fact;
+        String entity=cluster.entities.stream().filter(x->containsToken(factText,x)||containsToken(seg.narration(),x)).findFirst().orElse("");
+        String subject=!entity.isBlank()?entity:conservativeSubject(factText);
+        String prompt=("Realistic editorial wire-service photograph grounded only in this verified fact: "+factText+
                 ". Primary subject: "+subject+". Show the supported subject, object, institution, or location in an ordinary contemporary setting. "+
                 "Do not depict people, actions, crowds, damage, vehicles, weapons, fire, explosions, police, military activity, injuries, protests, or other events unless explicitly stated in the cited fact. "+
                 "No symbolic or metaphorical imagery.").replaceAll("\\s+"," ").trim();
