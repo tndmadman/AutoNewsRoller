@@ -492,3 +492,10 @@ The remaining work is disproportionately important because it is the operational
 - delivery/publishing integration.
 
 Do not confuse percentage of code written with percentage of production risk removed.
+
+## Grounded visual prompt validation
+
+Current validation now includes deterministic coverage for valid FACT-grounded scenes, unknown FACT IDs, unsupported proper nouns, unsupported disaster/violence imagery, AI-news clichés, minimum grounding behavior, and deterministic offline visual-plan generation. The production pipeline writes `visual_prompt_plan.json` before image generation and records FACT IDs, strategy, anchors, grounding score, repairs, fallbacks, and planner summary metrics in audit/provenance.
+
+Live image relevance is still a target-machine validation item: passing Java/CI validation proves the prompt-planning and grounding contracts, not that RealVisXL output quality was visually reviewed. A future local vision relevance stage can consume the new prompt-plan/provenance artifacts without changing the planner contract.
+

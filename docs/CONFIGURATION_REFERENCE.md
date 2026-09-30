@@ -602,3 +602,19 @@ Documented examples:
 - feedRefreshMinutes is not currently read by watch_news_windows.bat.
 
 These are good cleanup targets because configuration should ideally be authoritative rather than partly descriptive.
+
+## Grounded visual prompt planner
+
+- `visualPromptEnabled=true` — enables Ollama visual planning; failure falls back safely.
+- `visualPromptModel=` — blank inherits `ollamaModel`.
+- `visualPromptOllamaUrl=` — blank inherits `ollamaUrl`.
+- `visualPromptTemperature=0.15` — low-creativity planning temperature.
+- `visualPromptRetries=3` — per-scene repair attempts after deterministic validation rejects a model scene.
+- `visualPromptMaxOutputTokens=2400` — output budget for the whole-story plan.
+- `visualPromptMaxFacts=24` — bounded deterministic FACT-ID evidence set, aligned with hook planning.
+- `visualPromptArticleExcerptsPerSource=4` — maximum relevance-ranked article excerpts per source.
+- `visualPromptMinimumGroundingScore=65` — internal acceptance threshold.
+- `visualPromptRequireFactIds=true` — requires Comfy-generated story scenes to cite supporting FACT IDs.
+
+Blank visual-specific model/URL settings intentionally reuse the normal Ollama service and the existing serialized `output/runtime/ollama.lock`.
+

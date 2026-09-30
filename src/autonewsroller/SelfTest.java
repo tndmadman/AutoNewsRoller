@@ -632,6 +632,53 @@ public final class SelfTest {
         ok(defaultsText.contains("cyan cast")&&defaultsText.contains("electric blue lighting")&&defaultsText.contains("blue monochrome"),
                 "default negative prompt rejects synthetic cyan and electric-blue image grading");
 
+        ok(cfg.getBool("visualPromptEnabled",false)&&cfg.getInt("visualPromptMinimumGroundingScore",0)>=65&&
+                        cfg.getBool("visualPromptRequireFactIds",false)&&cfg.getInt("visualPromptRetries",0)>=3,
+                "grounded visual prompt planner defaults enable FACT-ID validation, scoring, and repair");
+
+        FactPackage visualFacts=new FactPackage(
+                "visual-fixture","Boeing aircraft maintenance update","Boeing reported aircraft maintenance work.",
+                List.of(
+                        new FactClaim("Boeing reported maintenance work on a passenger aircraft at its Seattle-area facility.",List.of("a","b"),0.9,false),
+                        new FactClaim("Maintenance workers inspected the passenger aircraft inside an aviation maintenance facility.",List.of("a","b"),0.9,false)
+                ),
+                List.of(),List.of(Map.<String,Object>of("publisher","Fixture Wire")),2,2,0.9,false
+        );
+        Map<String,FactClaim>visualFactMap=new LinkedHashMap<>();
+        visualFactMap.put("FACT_A",visualFacts.facts().get(0));
+        visualFactMap.put("FACT_B",visualFacts.facts().get(1));
+        VisualPromptValidator visualValidator=new VisualPromptValidator(65,true);
+        VisualPromptPlan validVisual=new VisualPromptPlan(
+                0,"DIRECT_EVENT",List.of("FACT_A","FACT_B"),List.of("Boeing"),
+                "Boeing passenger aircraft","maintenance workers inspecting the aircraft","aviation maintenance facility","Seattle area","daytime",
+                "maintenance workers",List.of("passenger aircraft","maintenance equipment"),List.of("fire","crash"),
+                "documentary medium-wide shot","Boeing passenger aircraft inside an aviation maintenance facility while maintenance workers inspect the aircraft.",0,false,List.of(),0,false
+        );
+        VisualPromptValidator.Result validResult=visualValidator.validate(validVisual,visualFactMap,List.of("Boeing","Seattle"),visualFacts.headline(),List.of());
+        ok(validResult.valid()&&validResult.score()>=65,"visual prompt validator accepts a specific FACT-grounded scene");
+
+        VisualPromptPlan unknownFact=new VisualPromptPlan(0,"DIRECT_EVENT",List.of("FACT_Z"),List.of("Boeing"),"Boeing passenger aircraft","","aviation facility","","","",List.of("aircraft"),List.of(),"documentary shot","Boeing passenger aircraft at an aviation facility.",0,false,List.of(),0,false);
+        ok(!visualValidator.validate(unknownFact,visualFactMap,List.of("Boeing"),visualFacts.headline(),List.of()).valid(),
+                "visual prompt validator rejects unknown FACT IDs");
+
+        VisualPromptPlan inventedEntity=new VisualPromptPlan(0,"LOCATION",List.of("FACT_A"),List.of("Tesla"),"Tesla factory","","factory","","","",List.of("factory"),List.of(),"documentary shot","Tesla factory exterior.",0,false,List.of(),0,false);
+        ok(!visualValidator.validate(inventedEntity,visualFactMap,List.of("Boeing","Seattle"),visualFacts.headline(),List.of()).valid(),
+                "visual prompt validator rejects unsupported proper nouns");
+
+        VisualPromptPlan inventedDrama=new VisualPromptPlan(0,"DIRECT_EVENT",List.of("FACT_A"),List.of("Boeing"),"Boeing passenger aircraft","burning after an explosion","aviation facility","Seattle","","",List.of("fire","smoke"),List.of(),"dramatic shot","Boeing aircraft burning after an explosion with smoke.",0,false,List.of(),0,false);
+        ok(!visualValidator.validate(inventedDrama,visualFactMap,List.of("Boeing","Seattle"),visualFacts.headline(),List.of()).valid(),
+                "visual prompt validator rejects unsupported violent/disaster imagery");
+
+        VisualPromptPlan aiCliche=new VisualPromptPlan(0,"CONTEXT",List.of("FACT_A"),List.of("Boeing"),"Boeing passenger aircraft","","aviation facility","","","",List.of("aircraft"),List.of(),"conceptual shot","Boeing aircraft over a glowing futuristic world map with floating data.",0,false,List.of(),0,false);
+        ok(!visualValidator.validate(aiCliche,visualFactMap,List.of("Boeing","Seattle"),visualFacts.headline(),List.of()).valid(),
+                "visual prompt validator rejects unsupported AI-news clichés");
+
+        GroundedVisualPromptGenerator.Result dryVisuals=new GroundedVisualPromptGenerator(null,cfg).generate(visualScript,fp,cluster,true);
+        Path visualArtifact=Files.createTempDirectory("autonews-visual-plan-").resolve("visual_prompt_plan.json");
+        Json.write(visualArtifact,dryVisuals.toMap());
+        ok(Files.isRegularFile(visualArtifact)&&dryVisuals.scenes().size()==visualScript.segments().size()&&dryVisuals.scenes().stream().allMatch(VisualPromptPlan::valid),
+                "offline dry-run produces deterministic validated visual_prompt_plan artifact without Ollama");
+
         String comfySource=Files.readString(root.resolve("src/autonewsroller/visuals/ComfyImageGenerator.java"));
         int recovery=comfySource.indexOf("public void recoverFromOom()");
         int generate=comfySource.indexOf("public Path generate(");

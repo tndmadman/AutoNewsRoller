@@ -169,7 +169,9 @@ public final class NewsPipeline {
                 " hookType="+String.valueOf(script.hook().getOrDefault("type","unknown")));
 
         if(dryRun){
-            VisualPlan plan=new VisualPlanner().plan(script,fp,political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
+            GroundedVisualPromptGenerator.Result visualPrompts=generateVisualPrompts(script,fp,c,true,worker,slot);
+            Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
+            VisualPlan plan=new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
             Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
             Map<String,Object>audit=new LinkedHashMap<>();
             audit.put("status","approved-dry-run");
@@ -179,6 +181,7 @@ public final class NewsPipeline {
             audit.put("hook",script.hook());
             audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());
             audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());
+            putVisualPromptAudit(audit,visualPrompts);
             putPoliticalAudit(audit,political,plan);
             Json.write(slotDir.resolve("audit.json"),audit);
             events.emit(worker,slot,PipelineStage.APPROVED,"dry-run complete");
@@ -209,7 +212,9 @@ public final class NewsPipeline {
                 throw new IllegalStateException(String.format(Locale.ROOT,"Narration audio still too short after repair: %.2fs; minimum is %.2fs",narrationSeconds,minimumFinalSeconds));
         }
 
-        VisualPlan plan=new VisualPlanner().plan(script,fp,political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
+        GroundedVisualPromptGenerator.Result visualPrompts=generateVisualPrompts(script,fp,c,false,worker,slot);
+        Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
+        VisualPlan plan=new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
         Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
         Path visuals=slotDir.resolve("visuals");List<Path>imgs=new ArrayList<>();List<Map<String,Object>>imageSources=new ArrayList<>();CardRenderer cards=new CardRenderer();int i=0;
@@ -269,7 +274,15 @@ public final class NewsPipeline {
                     Path composed=visuals.resolve(String.format("%02d_post_%02d.png",replace,comfyGenerated+1));
                     cards.renderWithImage(chosen,generated,composed,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
                     imgs.set(replace,composed);
-                    imageSources.set(replace,Map.of("type","comfyui-generated","path",composed.toString(),"generatedPath",generated.toString(),"checkpoint",usedCheckpoint,"prompt",prompt,"visualType",chosen.type()));
+                    Map<String,Object>imageSource=new LinkedHashMap<>();
+                    imageSource.put("type","comfyui-generated");imageSource.put("path",composed.toString());imageSource.put("generatedPath",generated.toString());
+                    imageSource.put("checkpoint",usedCheckpoint);imageSource.put("prompt",prompt);imageSource.put("visualType",chosen.type());
+                    imageSource.put("segmentIndex",chosen.data().getOrDefault("segmentIndex",chosen.index()));
+                    imageSource.put("visualStrategy",chosen.data().getOrDefault("visualStrategy",chosen.type()));
+                    imageSource.put("factIds",chosen.data().getOrDefault("factIds",List.of()));
+                    imageSource.put("anchorEntities",chosen.data().getOrDefault("anchorEntities",List.of()));
+                    imageSource.put("groundingScore",chosen.data().getOrDefault("groundingScore",0));
+                    imageSources.set(replace,imageSource);
                     comfyGenerated++;
                     String comfyUsed="COMFYUI USED checkpoint="+usedCheckpoint+" image="+generated.getFileName()+" count="+comfyGenerated;
                     System.out.println(comfyUsed);events.emit(worker,slot,PipelineStage.VISUALS,comfyUsed);
@@ -290,10 +303,41 @@ public final class NewsPipeline {
         }
 
         Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));List<Double>sceneWeights=plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(imgs,sceneWeights,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration());
-        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);audit.put("hook",script.hook());audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());audit.put("visualPackage",BroadcastTheme.PACKAGE_ID);audit.put("thumbnailStrategy","hook-frame-zero");putPoliticalAudit(audit,political,plan);Json.write(slotDir.resolve("audit.json"),audit);
+        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);audit.put("hook",script.hook());audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());audit.put("visualPackage",BroadcastTheme.PACKAGE_ID);audit.put("thumbnailStrategy","hook-frame-zero");putVisualPromptAudit(audit,visualPrompts);putPoliticalAudit(audit,political,plan);Json.write(slotDir.resolve("audit.json"),audit);
         Path finalDir=slotDir.getParent().resolve("final_videos");Path finalVideo=FileNames.unique(finalDir,c.topic,".mp4");Files.createDirectories(finalDir);Files.copy(render,finalVideo,StandardCopyOption.REPLACE_EXISTING);
-        Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
+        Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
         history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
+    }
+
+    private GroundedVisualPromptGenerator.Result generateVisualPrompts(NewsScript script,FactPackage fp,StoryCluster cluster,boolean dryRun,int worker,int slot){
+        events.emit(worker,slot,PipelineStage.VISUALS,"VISUAL PROMPT PLANNER starting");
+        OllamaClient visualOllama=null;
+        if(!dryRun&&cfg.getBool("visualPromptEnabled",true)){
+            String url=cfg.get("visualPromptOllamaUrl","");
+            if(url.isBlank())url=cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate");
+            String model=cfg.get("visualPromptModel","");
+            if(model.isBlank())model=cfg.get("ollamaModel","llama3.1:8b");
+            visualOllama=new OllamaClient(url,model,cfg.get("ollamaKeepAlive","30m"),root.resolve("output/runtime/ollama.lock"),
+                    cfg.getInt("ollamaContextTokens",8192),cfg.getInt("visualPromptMaxOutputTokens",2400),cfg.getDouble("visualPromptTemperature",0.15));
+        }
+        GroundedVisualPromptGenerator.Result result=new GroundedVisualPromptGenerator(visualOllama,cfg).generate(script,fp,cluster,dryRun);
+        events.emit(worker,slot,PipelineStage.VISUALS,"VISUAL PROMPT PLAN accepted scenes="+result.scenes().size()+" repairs="+result.repairAttempts()+" fallbacks="+result.fallbackCount());
+        for(VisualPromptPlan scene:result.scenes()){
+            String msg="VISUAL PROMPT scene="+scene.segmentIndex()+" score="+Math.round(scene.groundingScore())+" facts="+String.join(",",scene.factIds())+" strategy="+scene.strategy()+(scene.fallback()?" fallback=true":"");
+            System.out.println(msg);logs.worker(worker,"slot="+slot+" "+msg);
+        }
+        return result;
+    }
+
+    private static void putVisualPromptAudit(Map<String,Object>audit,GroundedVisualPromptGenerator.Result visualPrompts){
+        audit.put("visualPromptPlannerEnabled",true);
+        audit.put("visualPromptScenes",visualPrompts.scenes().size());
+        audit.put("visualPromptValidatedScenes",visualPrompts.scenes().stream().filter(VisualPromptPlan::valid).count());
+        audit.put("visualPromptFallbackScenes",visualPrompts.fallbackCount());
+        audit.put("visualPromptRepairAttempts",visualPrompts.repairAttempts());
+        audit.put("visualPromptRejectedScenes",visualPrompts.rejectedCount());
+        audit.put("visualPromptMinimumGroundingScore",visualPrompts.scenes().stream().mapToDouble(VisualPromptPlan::groundingScore).min().orElse(0));
+        audit.put("visualPromptLowestGroundingScore",visualPrompts.lowestScore());
     }
 
     private PoliticalVisualData resolvePoliticalVisualData(StoryCluster cluster,PoliticalVisualData supplied,boolean dryRun){

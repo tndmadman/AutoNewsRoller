@@ -217,17 +217,12 @@ Return one JSON object matching the repair schema and nothing else.
                 if(narration.isBlank())continue;
 
                 String purpose=Text.clean(String.valueOf(x.getOrDefault("purpose",idx==0?"what happened":"verified detail")));
-                String visualType=Text.clean(String.valueOf(x.getOrDefault("visualType","BACKGROUND")));
-                String visualPrompt=Text.clean(String.valueOf(x.getOrDefault("visualPrompt","")));
-                if(visualPrompt.isBlank())
-                    visualPrompt="Realistic editorial news image illustrating only this verified narration beat: "+narration;
-
                 segs.add(new NewsScript.Segment(
                         idx++,
                         narration,
                         purpose,
-                        visualType,
-                        visualPrompt,
+                        "",
+                        "",
                         defaultDuration
                 ));
             }
@@ -297,7 +292,7 @@ Return one JSON object matching the repair schema and nothing else.
                     narration,
                     old.purpose(),
                     old.visualType(),
-                    "Realistic editorial news image illustrating only this verified narration beat: "+narration,
+                    "",
                     old.durationTarget()
             ));
             applied++;
