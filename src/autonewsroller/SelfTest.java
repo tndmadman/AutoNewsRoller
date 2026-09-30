@@ -657,11 +657,11 @@ public final class SelfTest {
         VisualPromptValidator.Result validResult=visualValidator.validate(validVisual,visualFactMap,List.of("Boeing","Seattle"),visualFacts.headline(),List.of());
         ok(validResult.valid()&&validResult.score()>=65,"visual prompt validator accepts a specific FACT-grounded scene");
 
-        VisualPromptPlan unknownFact=new VisualPromptPlan(0,"DIRECT_EVENT",List.of("FACT_Z"),List.of("Boeing"),"Boeing passenger aircraft","","aviation facility","","","","",List.of("aircraft"),List.of(),"documentary shot","Boeing passenger aircraft at an aviation facility.",0,false,List.of(),0,false);
+        VisualPromptPlan unknownFact=new VisualPromptPlan(0,"DIRECT_EVENT",List.of("FACT_Z"),List.of("Boeing"),"Boeing passenger aircraft","","aviation facility","","","",List.of("aircraft"),List.of(),"documentary shot","Boeing passenger aircraft at an aviation facility.",0,false,List.of(),0,false);
         ok(!visualValidator.validate(unknownFact,visualFactMap,List.of("Boeing"),visualFacts.headline(),List.of()).valid(),
                 "visual prompt validator rejects unknown FACT IDs");
 
-        VisualPromptPlan inventedEntity=new VisualPromptPlan(0,"LOCATION",List.of("FACT_A"),List.of("Tesla"),"Tesla factory","","factory","","","","",List.of("factory"),List.of(),"documentary shot","Tesla factory exterior.",0,false,List.of(),0,false);
+        VisualPromptPlan inventedEntity=new VisualPromptPlan(0,"LOCATION",List.of("FACT_A"),List.of("Tesla"),"Tesla factory","","factory","","","",List.of("factory"),List.of(),"documentary shot","Tesla factory exterior.",0,false,List.of(),0,false);
         ok(!visualValidator.validate(inventedEntity,visualFactMap,List.of("Boeing","Seattle"),visualFacts.headline(),List.of()).valid(),
                 "visual prompt validator rejects unsupported proper nouns");
 
@@ -669,7 +669,7 @@ public final class SelfTest {
         ok(!visualValidator.validate(inventedDrama,visualFactMap,List.of("Boeing","Seattle"),visualFacts.headline(),List.of()).valid(),
                 "visual prompt validator rejects unsupported violent/disaster imagery");
 
-        VisualPromptPlan aiCliche=new VisualPromptPlan(0,"CONTEXT",List.of("FACT_A"),List.of("Boeing"),"Boeing passenger aircraft","","aviation facility","","","","",List.of("aircraft"),List.of(),"conceptual shot","Boeing aircraft over a glowing futuristic world map with floating data.",0,false,List.of(),0,false);
+        VisualPromptPlan aiCliche=new VisualPromptPlan(0,"CONTEXT",List.of("FACT_A"),List.of("Boeing"),"Boeing passenger aircraft","","aviation facility","","","",List.of("aircraft"),List.of(),"conceptual shot","Boeing aircraft over a glowing futuristic world map with floating data.",0,false,List.of(),0,false);
         ok(!visualValidator.validate(aiCliche,visualFactMap,List.of("Boeing","Seattle"),visualFacts.headline(),List.of()).valid(),
                 "visual prompt validator rejects unsupported AI-news clichés");
 
