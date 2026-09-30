@@ -548,3 +548,12 @@ Verified behavior, live validation gaps, and prioritized next work.
 ### DEVELOPMENT_HISTORY.md
 
 Why the project was created and notable implementation/validation events.
+
+## Grounded visual prompting files
+
+- `src/autonewsroller/model/VisualPromptPlan.java` — auditable structured scene plan with FACT IDs, anchors, subject/action/setting, exclusions, prompt, validation score, repair count, and fallback flag.
+- `src/autonewsroller/visuals/GroundedVisualPromptGenerator.java` — builds bounded story evidence, plans all scenes through the existing serialized Ollama service, repairs rejected scenes, and creates deterministic offline fallbacks.
+- `src/autonewsroller/visuals/VisualPromptValidator.java` — deterministic factual grounding gate for IDs, overlap, proper nouns, specificity, unsupported drama, AI clichés, and grounding threshold.
+- `src/autonewsroller/visuals/VisualPlanner.java` — consumes validated visual prompt plans while preserving procedural source/political cards.
+- `src/autonewsroller/orchestration/NewsPipeline.java` — invokes the stage after final narration, writes `visual_prompt_plan.json`, and carries grounding fields into audit/provenance.
+
