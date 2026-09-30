@@ -519,3 +519,12 @@ The TTS stage likewise emits the actual path:
 - or `KOKORO FAILED: ...` followed by `QWEN3 FALLBACK USED voice=...`
 
 The final MP4 sidecar remains authoritative and the Command Center copies these values into the persistent story/video state so the website displays the engine, voice, visual mode, checkpoint, and ComfyUI image count after completion.
+
+## Grounded image-prompt stage
+
+ComfyUI is no longer expected to infer the story from one narration sentence. After the final narration is stable, the pipeline uses the existing local Ollama endpoint to create a structured plan for all story-image scenes in one call. The planner is CPU/local-service work and does not acquire the Qwen/Comfy GPU lane. Only image generation continues to use the existing GPU-lane and VRAM-release behavior.
+
+Each generated-image scene must cite verified FACT IDs and pass deterministic validation. Repair is scene-local. If Ollama is unavailable, image prompting falls back to a conservative FACT-grounded Java plan and video production continues. Offline fixture dry-runs never require Ollama or ComfyUI, but still produce and validate `visual_prompt_plan.json`.
+
+The standard Comfy photography suffix remains responsible for wire-service realism and natural color. Breaking-news red/blue styling remains in `CardRenderer`; it is not baked into generated photographs. The negative prompt also rejects common conceptual/surreal/holographic/cyberpunk AI-news imagery.
+
