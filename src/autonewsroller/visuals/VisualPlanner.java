@@ -6,35 +6,45 @@ import java.util.*;
 
 public final class VisualPlanner {
     public VisualPlan plan(NewsScript script,FactPackage fp){
-        return plan(script,fp,PoliticalVisualData.empty(),0.60,true,5.0,true,true);
+        return plan(script,fp,List.of(),PoliticalVisualData.empty(),0.60,true,5.0,true,true);
     }
 
     public VisualPlan plan(NewsScript script,FactPackage fp,PoliticalVisualData political,double minimumRelevance,boolean showUncertain,double politicalSceneSeconds,boolean showConfidence,boolean showSourceMix){
+        return plan(script,fp,List.of(),political,minimumRelevance,showUncertain,politicalSceneSeconds,showConfidence,showSourceMix);
+    }
+
+    public VisualPlan plan(NewsScript script,FactPackage fp,List<VisualPromptPlan> prompts,PoliticalVisualData political,double minimumRelevance,boolean showUncertain,double politicalSceneSeconds,boolean showConfidence,boolean showSourceMix){
         List<VisualPlan.Item> out=new ArrayList<>();
+        Map<Integer,VisualPromptPlan>bySegment=new LinkedHashMap<>();
+        if(prompts!=null)for(VisualPromptPlan p:prompts)bySegment.put(p.segmentIndex(),p);
 
         int idx=0;
         List<NewsScript.Segment> segments=script.segments()==null?List.of():script.segments();
         for(NewsScript.Segment seg:segments){
             if(idx>=8)break;
-
-            String type=seg.visualType();
-            if(idx==0){
-                type="HOOK";
-            }else if(type==null||type.isBlank()||type.equalsIgnoreCase("HEADLINE_CARD")||type.equalsIgnoreCase("SOURCE_CARD")||type.equalsIgnoreCase("HOOK")){
-                type=(idx%3==0)?"TIMELINE":"BACKGROUND";
+            VisualPromptPlan grounded=bySegment.get(seg.index());
+            String type;
+            String prompt;
+            Map<String,Object>data=new LinkedHashMap<>();
+            if(grounded!=null){
+                type=grounded.strategy();
+                prompt=grounded.prompt();
+                data.put("segmentIndex",grounded.segmentIndex());
+                data.put("visualStrategy",grounded.strategy());
+                data.put("factIds",grounded.factIds());
+                data.put("anchorEntities",grounded.anchorEntities());
+                data.put("groundingScore",grounded.groundingScore());
+                data.put("mustNotShow",grounded.mustNotShow());
+                data.put("visualPromptFallback",grounded.fallback());
+                data.put("visualPromptRepairAttempts",grounded.repairAttempts());
+            }else{
+                type=idx==0?"HOOK":((idx%3==0)?"TIMELINE":"CONTEXT");
+                prompt=seg.visualPrompt()==null?"":seg.visualPrompt();
+                if(prompt.isBlank())prompt="Realistic editorial news photograph grounded only in verified reporting about: "+seg.narration();
             }
-
+            if(idx==0)type="HOOK";
             String body=seg.narration()==null?"":seg.narration();
-            String prompt=seg.visualPrompt()==null?"":seg.visualPrompt();
-            double minDuration=idx==0?3.0:4.0;
-            out.add(new VisualPlan.Item(
-                    idx,
-                    type,
-                    script.headline(),
-                    body,
-                    Math.max(minDuration,seg.durationTarget()),
-                    prompt
-            ));
+            out.add(new VisualPlan.Item(idx,type,script.headline(),body,Math.max(idx==0?3.0:4.0,seg.durationTarget()),prompt,data));
             idx++;
         }
 
@@ -43,14 +53,8 @@ public final class VisualPlanner {
                 if(idx>=8)break;
                 boolean duplicate=out.stream().anyMatch(x->x.body()!=null&&x.body().equalsIgnoreCase(sentence));
                 if(duplicate||sentence.isBlank())continue;
-                out.add(new VisualPlan.Item(
-                        idx,
-                        idx%2==0?"BACKGROUND":"TIMELINE",
-                        script.headline(),
-                        sentence,
-                        7.0,
-                        "Realistic editorial news image illustrating only this verified narration beat: "+sentence
-                ));
+                out.add(new VisualPlan.Item(idx,idx%2==0?"CONTEXT":"TIMELINE",script.headline(),sentence,7.0,
+                        "Realistic editorial news photograph grounded only in verified reporting about: "+sentence));
                 idx++;
             }
         }
@@ -60,19 +64,10 @@ public final class VisualPlanner {
             Map<String,Object>renderData=new LinkedHashMap<>(political.toMap());
             renderData.put("showConfidence",showConfidence);
             renderData.put("showSourceMix",showSourceMix);
-            out.add(insertAt,new VisualPlan.Item(
-                    -1,
-                    "POLITICAL_CONTEXT",
-                    "Political context",
-                    political.storySummary(),
-                    Math.max(3.5,Math.min(8.0,politicalSceneSeconds)),
-                    "",
-                    renderData
-            ));
+            out.add(insertAt,new VisualPlan.Item(-1,"POLITICAL_CONTEXT","Political context",political.storySummary(),Math.max(3.5,Math.min(8.0,politicalSceneSeconds)),"",renderData));
         }
 
-        String src=fp.sources().stream().map(x->String.valueOf(x.get("publisher"))).distinct().limit(5)
-                .reduce((a,b)->a+" • "+b).orElse("");
+        String src=fp.sources().stream().map(x->String.valueOf(x.get("publisher"))).distinct().limit(5).reduce((a,b)->a+" • "+b).orElse("");
         out.add(new VisualPlan.Item(-1,"SOURCE_CARD","Sources",src,2.5,""));
 
         List<VisualPlan.Item> reindexed=new ArrayList<>();
