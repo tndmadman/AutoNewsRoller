@@ -357,3 +357,12 @@ OwnedProcesses only sends a shutdown request when:
 - the token returned by /health matches the marker.
 
 This is designed to avoid killing an unrelated service that happens to be listening on the same port.
+
+## Grounded visual prompt planning
+
+After narration passes validation, AutoNewsRoller now runs a separate grounded visual-planning stage before `VisualPlanner` and ComfyUI. `GroundedVisualPromptGenerator` receives the final script, deterministic `FACT_A...` identifiers, story entities, source publishers, and bounded article excerpts selected for visual relevance. It requests all narration scenes in one low-temperature structured Ollama call so the model can vary supported subjects across the full sequence.
+
+`VisualPromptValidator` then deterministically checks segment mapping, FACT IDs, evidence overlap, concrete subject specificity, unsupported proper nouns, unsupported dramatic content, AI-news clichés, and an internal grounding score. Rejected scenes are repaired individually; persistent failures use a conservative deterministic fallback rather than failing the video. `SOURCE_CARD` and `POLITICAL_CONTEXT` remain procedural.
+
+The accepted structured result is written to `visual_prompt_plan.json` before ComfyUI. `VisualPlanner` copies strategy, FACT IDs, anchor entities, grounding score, exclusion guidance, repair count, and fallback state into scene metadata. Comfy provenance and `audit.json` preserve the grounding diagnostics.
+
