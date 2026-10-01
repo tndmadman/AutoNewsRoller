@@ -256,27 +256,29 @@ public final class NewsPipeline {
                             ? (chosen.title()+". "+chosen.body())
                             : chosen.prompt();
                     String visualSuffix="HOOK".equalsIgnoreCase(chosen.type())
-                            ?", thumbnail-safe opening frame for a vertical news video, realistic wire-service news photography, strongest concrete focal subject visible immediately on a phone screen, place the main subject in the upper-middle of the frame, keep the lower quarter visually clean for a broadcast lower-third, preserve believable real-world colors and skin tones, neutral white balance, moderate documentary contrast, restrained saturation, newsroom realism, no blue wash, no cyan or teal cast, no electric-blue lighting, no cinematic teal-orange grade, no neon lighting, no sci-fi colors, no glowing edges, no generic newsroom graphics, no artificial UI, no text, no logos, no watermark; the red and blue breaking-news branding is added later by the deterministic broadcast renderer, not baked into the photograph"
-                            :", realistic wire-service editorial documentary photograph for a vertical broadcast news package, clear central subject, natural scene depth, portrait composition, preserve believable real-world colors and skin tones, neutral white balance, moderate documentary contrast, restrained saturation, keep the lower quarter reasonably uncluttered for a news lower-third, no blue wash, no cyan or teal cast, no electric-blue lighting, no cinematic teal-orange grade, no neon lighting, no sci-fi colors, no glowing edges, no artificial UI, no text, no logos, no watermark; the red and blue breaking-news branding is added later by the deterministic broadcast renderer, not baked into the photograph";
+                            ?", thumbnail-safe opening frame for a vertical news video, realistic wire-service news photography, strongest concrete focal subject visible immediately on a phone screen, main subject in the upper-middle of the frame, lower quarter visually clean for a broadcast lower-third, believable real-world colors and skin tones, neutral white balance, moderate documentary contrast, restrained saturation, newsroom realism"
+                            :", realistic wire-service editorial documentary photograph for a vertical broadcast news package, clear central subject, natural scene depth, portrait composition, believable real-world colors and skin tones, neutral white balance, moderate documentary contrast, restrained saturation, lower quarter reasonably uncluttered for a news lower-third";
                     String prompt=(basePrompt+visualSuffix).replaceAll("\\s+"," ").trim();
+                    String negativePrompt=sceneNegativePrompt(chosen);
+                    assertNoExcludedConceptInPositive(chosen,prompt);
                     Path generated=visuals.resolve(String.format("%02d_comfy_generated_%02d.png",replace,comfyGenerated+1));
                     String generating="COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" checkpoint="+usedCheckpoint;
                     System.out.println(generating);events.emit(worker,slot,PipelineStage.VISUALS,generating);
                     try{
-                        comfy.generate(prompt,cfg.get("imageNegative","text, watermark, logo, captions, low quality, distorted"),usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",24),Double.parseDouble(cfg.get("imageCfg","5.0")));
+                        comfy.generate(prompt,negativePrompt,usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",24),Double.parseDouble(cfg.get("imageCfg","5.0")));
                     }catch(Exception imageError){
                         if(!ComfyImageGenerator.looksLikeCudaOom(imageError))throw imageError;
                         String recovery="COMFYUI OOM RECOVERY: freeing VRAM once and retrying current image";
                         System.err.println(recovery);events.emit(worker,slot,PipelineStage.VISUALS,recovery);logs.worker(worker,"slot="+slot+" "+recovery);
                         comfy.recoverFromOom();
-                        comfy.generate(prompt,cfg.get("imageNegative","text, watermark, logo, captions, low quality, distorted"),usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",24),Double.parseDouble(cfg.get("imageCfg","5.0")));
+                        comfy.generate(prompt,negativePrompt,usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",24),Double.parseDouble(cfg.get("imageCfg","5.0")));
                     }
                     Path composed=visuals.resolve(String.format("%02d_post_%02d.png",replace,comfyGenerated+1));
                     cards.renderWithImage(chosen,generated,composed,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
                     imgs.set(replace,composed);
                     Map<String,Object>imageSource=new LinkedHashMap<>();
                     imageSource.put("type","comfyui-generated");imageSource.put("path",composed.toString());imageSource.put("generatedPath",generated.toString());
-                    imageSource.put("checkpoint",usedCheckpoint);imageSource.put("prompt",prompt);imageSource.put("visualType",chosen.type());
+                    imageSource.put("checkpoint",usedCheckpoint);imageSource.put("prompt",prompt);imageSource.put("negativePrompt",negativePrompt);imageSource.put("visualType",chosen.type());
                     imageSource.put("segmentIndex",chosen.data().getOrDefault("segmentIndex",chosen.index()));
                     imageSource.put("visualStrategy",chosen.data().getOrDefault("visualStrategy",chosen.type()));
                     imageSource.put("factIds",chosen.data().getOrDefault("factIds",List.of()));
@@ -500,6 +502,28 @@ public final class NewsPipeline {
 
     private static boolean categoryMatches(String requested,String articleCategory){
         return requested==null||requested.isBlank()||"general".equalsIgnoreCase(requested)||requested.equalsIgnoreCase(articleCategory);
+    }
+
+    private String sceneNegativePrompt(VisualPlan.Item item){
+        LinkedHashSet<String>terms=new LinkedHashSet<>();
+        for(String term:cfg.get("imageNegative","text, watermark, logo, captions, low quality, distorted").split(",")){
+            String clean=Text.clean(term);if(!clean.isBlank())terms.add(clean);
+        }
+        terms.addAll(List.of("text","logos","watermark","captions","artificial UI","generic newsroom graphics","blue wash","cyan cast","teal cast","electric blue lighting","cinematic teal-orange grade","neon lighting","sci-fi colors","glowing edges"));
+        Object raw=item.data().get("mustNotShow");
+        if(raw instanceof Collection<?>xs)for(Object x:xs){String clean=Text.clean(String.valueOf(x));if(!clean.isBlank())terms.add(clean);}
+        return String.join(", ",terms);
+    }
+
+    private static void assertNoExcludedConceptInPositive(VisualPlan.Item item,String prompt){
+        Object raw=item.data().get("mustNotShow");if(!(raw instanceof Collection<?>xs))return;
+        String lower=prompt.toLowerCase(Locale.ROOT);
+        for(Object x:xs){
+            String term=Text.clean(String.valueOf(x)).toLowerCase(Locale.ROOT);
+            if(term.length()<3)continue;
+            if(lower.matches("(?s).*\\b"+java.util.regex.Pattern.quote(term)+"\\b.*"))
+                throw new IllegalStateException("positive visual prompt contains excluded concept '"+term+"' for scene "+item.index());
+        }
     }
 
     private String commitSha(){String env=System.getenv("GITHUB_SHA");if(env!=null&&!env.isBlank())return env;try{Process p=new ProcessBuilder("git","rev-parse","HEAD").directory(root.toFile()).redirectErrorStream(true).start();if(p.waitFor(5,TimeUnit.SECONDS)&&p.exitValue()==0)return new String(p.getInputStream().readAllBytes(),StandardCharsets.UTF_8).trim();}catch(Exception ignored){}return "unknown";}

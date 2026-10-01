@@ -69,13 +69,18 @@ public final class GroundedVisualPromptGenerator {
                 }
             }
             if(!p.valid()){p=fallback(script.segments().get(i),script,fp,cluster,facts,excerpts,p.repairAttempts());fallbacks++;}
+            p=p.withMustNotShow(mergeTerms(p.mustNotShow(),validator.negativeSafetyTerms(p,facts)));
             out.add(p);
         }
         return new Result(List.copyOf(out),repairs,fallbacks,rejected,model);
     }
 
     private Result fallbackAll(NewsScript script,FactPackage fp,StoryCluster cluster,Map<String,FactClaim>facts,List<String>excerpts,String model){
-        List<VisualPromptPlan>out=new ArrayList<>();for(NewsScript.Segment s:script.segments())out.add(fallback(s,script,fp,cluster,facts,excerpts,0));
+        List<VisualPromptPlan>out=new ArrayList<>();
+        for(NewsScript.Segment s:script.segments()){
+            VisualPromptPlan p=fallback(s,script,fp,cluster,facts,excerpts,0);
+            out.add(p.withMustNotShow(mergeTerms(p.mustNotShow(),validator.negativeSafetyTerms(p,facts))));
+        }
         return new Result(List.copyOf(out),0,out.size(),0,model);
     }
 
@@ -88,14 +93,12 @@ public final class GroundedVisualPromptGenerator {
         if(!ids.isEmpty()&&facts.containsKey(ids.get(0)))fact=facts.get(ids.get(0)).statement();
         final String factText=fact;
         String entity=cluster.entities.stream().filter(x->containsToken(factText,x)||containsToken(seg.narration(),x)).findFirst().orElse("");
-        String subject=!entity.isBlank()?entity:conservativeSubject(factText);
-        String prompt=("Realistic editorial wire-service photograph grounded only in this verified fact: "+factText+
-                ". Primary subject: "+subject+". Show the supported subject, object, institution, or location in an ordinary contemporary setting. "+
-                "Do not depict people, actions, crowds, damage, vehicles, weapons, fire, explosions, police, military activity, injuries, protests, or other events unless explicitly stated in the cited fact. "+
-                "No symbolic or metaphorical imagery.").replaceAll("\\s+"," ").trim();
-        VisualPromptPlan p=new VisualPromptPlan(seg.index(),seg.index()==0?"HOOK":"CONTEXT",ids,entity.isBlank()?List.of():List.of(entity),subject,"","ordinary contemporary setting","","","",List.of(),List.of("unsupported violence","unsupported crowds","unsupported emergency activity"),"clear documentary composition",prompt,0,false,List.of(),repairs,true);
+        String subject=!entity.isBlank()&&Text.words(entity)>=2?entity:conservativeSubject(factText);
+        String prompt=("Realistic editorial wire-service photograph of "+subject+
+                " in an ordinary contemporary setting, grounded in this verified reporting: "+factText).replaceAll("\\s+"," ").trim();
+        VisualPromptPlan p=new VisualPromptPlan(seg.index(),seg.index()==0?"HOOK":"CONTEXT",ids,entity.isBlank()?List.of():List.of(entity),subject,"","ordinary contemporary setting","","","",List.of(),List.of(),"clear documentary composition",prompt,0,false,List.of(),repairs,true);
         VisualPromptValidator.Result vr=validator.validate(p,facts,cluster.entities,fp.headline(),excerpts);
-        return p.withValidation(Math.max(vr.score(),cfg.getInt("visualPromptMinimumGroundingScore",65)),true,List.of());
+        return p.withValidation(vr.score(),vr.valid(),vr.issues());
     }
 
     private Map<String,Object>input(NewsScript script,FactPackage fp,StoryCluster cluster,Map<String,FactClaim>facts,List<String>excerpts){
@@ -119,12 +122,13 @@ Images must read as plausible contemporary wire-service photography. Political i
 For war/crime stories, never infer battlefield, weapons, police raids, blood, destruction, or emergency scenes merely from the topic; those details require direct cited support.
 Plan ALL segments together. Use visual variety only from supported evidence; do not repeat the same building/portrait/subject unnecessarily.
 Each scene must cite 1-4 valid FACT IDs, identify a concrete subject, return a controlled strategy, and include mustNotShow constraints.
+The prompt field is POSITIVE image conditioning only. Never write exclusions, negations, "no X", "without X", "do not show X", or forbidden concepts into the prompt field. Put every excluded literal visual concept only in mustNotShow using short concrete phrases.
 For segment 0, preserve the supplied hook FACT IDs when they exist.
 Return strict JSON only.
 """;}
 
     private static String repairPrompt(){return """
-Rewrite ONLY the rejected visual scene. Keep the exact segmentIndex and narration. Use only supplied FACT IDs and evidence. Remove every unsupported entity, action, location, object, violent/dramatic element, and AI cliché named by the validation errors. Do not introduce new named entities. Return exactly one scene object matching the schema, not a scenes wrapper.
+Rewrite ONLY the rejected visual scene. Keep the exact segmentIndex and narration. Use only supplied FACT IDs and evidence. Remove every unsupported entity, action, location, object, violent/dramatic element, and AI cliché named by the validation errors. Do not introduce new named entities. The prompt field is positive conditioning only: never put exclusions, negations, or forbidden concepts into it; put exclusions only in mustNotShow. Return exactly one scene object matching the schema, not a scenes wrapper.
 """;}
 
     private Map<String,Object>repairInput(NewsScript.Segment seg,VisualPromptPlan p,List<String>issues,FactPackage fp,StoryCluster cluster,Map<String,FactClaim>facts,List<String>excerpts){
@@ -144,6 +148,7 @@ Rewrite ONLY the rejected visual scene. Keep the exact segmentIndex and narratio
     private static String str(Map<String,Object>m,String k){return Text.clean(String.valueOf(m.getOrDefault(k,"")));}
     private static List<String>stringList(Object x){List<String>out=new ArrayList<>();if(x instanceof List<?>l)for(Object v:l){String s=Text.clean(String.valueOf(v));if(!s.isBlank())out.add(s);}return List.copyOf(out);}
     private static List<String>append(List<String>x,String v){List<String>o=new ArrayList<>(x);o.add(v);return List.copyOf(o);}
+    private static List<String>mergeTerms(List<String>a,List<String>b){LinkedHashSet<String>o=new LinkedHashSet<>();if(a!=null)o.addAll(a);if(b!=null)o.addAll(b);return List.copyOf(o);}
     private static boolean containsToken(String a,String b){return Text.normalize(a).contains(Text.normalize(b));}
     private static String conservativeSubject(String fact){String s=Text.clean(fact);List<String>sent=Text.sentences(s);String first=sent.isEmpty()?s:sent.get(0);String[]w=first.split("\\s+");return String.join(" ",Arrays.copyOfRange(w,0,Math.min(10,w.length)));}
 

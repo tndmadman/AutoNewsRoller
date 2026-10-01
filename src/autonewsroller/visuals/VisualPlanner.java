@@ -48,17 +48,6 @@ public final class VisualPlanner {
             idx++;
         }
 
-        if(idx<6){
-            for(String sentence:Text.sentences(script.narration())){
-                if(idx>=8)break;
-                boolean duplicate=out.stream().anyMatch(x->x.body()!=null&&x.body().equalsIgnoreCase(sentence));
-                if(duplicate||sentence.isBlank())continue;
-                out.add(new VisualPlan.Item(idx,idx%2==0?"CONTEXT":"TIMELINE",script.headline(),sentence,7.0,
-                        "Realistic editorial news photograph grounded only in verified reporting about: "+sentence));
-                idx++;
-            }
-        }
-
         if(political!=null&&political.shouldRender(minimumRelevance,showUncertain)){
             int insertAt=Math.min(3,out.size());
             Map<String,Object>renderData=new LinkedHashMap<>(political.toMap());

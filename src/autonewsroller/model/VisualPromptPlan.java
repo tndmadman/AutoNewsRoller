@@ -45,6 +45,9 @@ public record VisualPromptPlan(
     public VisualPromptPlan withRepairAttempts(int attempts){
         return new VisualPromptPlan(segmentIndex,strategy,factIds,anchorEntities,subject,action,setting,location,timeContext,people,visibleObjects,mustNotShow,composition,prompt,groundingScore,valid,validationIssues,attempts,fallback);
     }
+    public VisualPromptPlan withMustNotShow(List<String> excluded){
+        return new VisualPromptPlan(segmentIndex,strategy,factIds,anchorEntities,subject,action,setting,location,timeContext,people,visibleObjects,excluded,composition,prompt,groundingScore,valid,validationIssues,repairAttempts,fallback);
+    }
     public Map<String,Object> toMap(){
         Map<String,Object>m=new LinkedHashMap<>();
         m.put("segmentIndex",segmentIndex);m.put("strategy",strategy);m.put("factIds",factIds);m.put("anchorEntities",anchorEntities);
