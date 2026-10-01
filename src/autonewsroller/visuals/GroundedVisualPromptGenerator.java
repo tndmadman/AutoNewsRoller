@@ -94,10 +94,9 @@ public final class GroundedVisualPromptGenerator {
         final String factText=fact;
         String entity=cluster.entities.stream().filter(x->containsToken(factText,x)||containsToken(seg.narration(),x)).findFirst().orElse("");
         String subject=!entity.isBlank()?entity:conservativeSubject(factText);
-        String prompt=("Realistic editorial wire-service photograph. Primary subject: "+subject+
-                ". Ordinary contemporary setting documented by the cited verified reporting. Clear natural documentary composition.").replaceAll("\\s+"," ").trim();
-        List<String>mustNotShow=List.of("fire","flames","explosion","burning","smoke plume","weapons","guns","missiles","military activity","police raid","riot","protest","injury","blood","crash","destroyed building","emergency vehicles","symbolic imagery","hologram","futuristic interface");
-        VisualPromptPlan p=new VisualPromptPlan(seg.index(),seg.index()==0?"HOOK":"CONTEXT",ids,entity.isBlank()?List.of():List.of(entity),subject,"","ordinary contemporary setting","","","",List.of(),mustNotShow,"clear documentary composition",prompt,0,false,List.of(),repairs,true);
+        String prompt=("Realistic editorial wire-service photograph grounded in this verified reporting: "+factText+
+                ". Primary subject: "+subject+". Ordinary contemporary setting. Clear natural documentary composition.").replaceAll("\\s+"," ").trim();
+        VisualPromptPlan p=new VisualPromptPlan(seg.index(),seg.index()==0?"HOOK":"CONTEXT",ids,entity.isBlank()?List.of():List.of(entity),subject,"","ordinary contemporary setting","","","",List.of(),List.of(),"clear documentary composition",prompt,0,false,List.of(),repairs,true);
         VisualPromptValidator.Result vr=validator.validate(p,facts,cluster.entities,fp.headline(),excerpts);
         return p.withValidation(vr.score(),vr.valid(),vr.issues());
     }
