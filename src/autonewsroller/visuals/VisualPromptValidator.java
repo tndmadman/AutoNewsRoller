@@ -71,6 +71,19 @@ public final class VisualPromptValidator {
 
     public record Result(double score,boolean valid,List<String>issues){}
 
+    public List<String> negativeSafetyTerms(VisualPromptPlan plan,Map<String,FactClaim>facts){
+        List<String>citedText=new ArrayList<>();
+        for(String id:plan.factIds()){
+            FactClaim f=facts.get(id.toUpperCase(Locale.ROOT));
+            if(f!=null)citedText.add(f.statement());
+        }
+        String citedLower=String.join(" ",citedText).toLowerCase(Locale.ROOT);
+        List<String>out=new ArrayList<>();
+        for(String phrase:DRAMA)if(!wordish(citedLower,phrase))out.add(phrase);
+        for(String phrase:CLICHES)if(!wordish(citedLower,phrase))out.add(phrase);
+        return List.copyOf(out);
+    }
+
     private static Set<String>meaningful(Set<String>in){
         Set<String>out=new LinkedHashSet<>();
         for(String x:in)if(x.length()>=4&&!Set.of("realistic","editorial","news","image","photograph","photo","scene","show","with","from","that","this","only","natural","documentary").contains(x))out.add(x);
