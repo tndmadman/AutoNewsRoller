@@ -93,7 +93,7 @@ public final class GroundedVisualPromptGenerator {
         if(!ids.isEmpty()&&facts.containsKey(ids.get(0)))fact=facts.get(ids.get(0)).statement();
         final String factText=fact;
         String entity=cluster.entities.stream().filter(x->containsToken(factText,x)||containsToken(seg.narration(),x)).findFirst().orElse("");
-        String subject=!entity.isBlank()?entity:conservativeSubject(factText);
+        String subject=!entity.isBlank()&&Text.words(entity)>=2?entity:conservativeSubject(factText);
         String prompt=("Realistic editorial wire-service photograph of "+subject+
                 " in an ordinary contemporary setting, grounded in this verified reporting: "+factText).replaceAll("\\s+"," ").trim();
         VisualPromptPlan p=new VisualPromptPlan(seg.index(),seg.index()==0?"HOOK":"CONTEXT",ids,entity.isBlank()?List.of():List.of(entity),subject,"","ordinary contemporary setting","","","",List.of(),List.of(),"clear documentary composition",prompt,0,false,List.of(),repairs,true);
