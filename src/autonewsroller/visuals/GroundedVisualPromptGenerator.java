@@ -89,13 +89,12 @@ public final class GroundedVisualPromptGenerator {
         final String factText=fact;
         String entity=cluster.entities.stream().filter(x->containsToken(factText,x)||containsToken(seg.narration(),x)).findFirst().orElse("");
         String subject=!entity.isBlank()?entity:conservativeSubject(factText);
-        String prompt=("Realistic editorial wire-service photograph grounded only in this verified fact: "+factText+
-                ". Primary subject: "+subject+". Show the supported subject, object, institution, or location in an ordinary contemporary setting. "+
-                "Do not depict people, actions, crowds, damage, vehicles, weapons, fire, explosions, police, military activity, injuries, protests, or other events unless explicitly stated in the cited fact. "+
-                "No symbolic or metaphorical imagery.").replaceAll("\\s+"," ").trim();
-        VisualPromptPlan p=new VisualPromptPlan(seg.index(),seg.index()==0?"HOOK":"CONTEXT",ids,entity.isBlank()?List.of():List.of(entity),subject,"","ordinary contemporary setting","","","",List.of(),List.of("unsupported violence","unsupported crowds","unsupported emergency activity"),"clear documentary composition",prompt,0,false,List.of(),repairs,true);
+        String prompt=("Realistic editorial wire-service photograph. Primary subject: "+subject+
+                ". Ordinary contemporary setting documented by the cited verified reporting. Clear natural documentary composition.").replaceAll("\\s+"," ").trim();
+        List<String>mustNotShow=List.of("fire","flames","explosion","burning","smoke plume","weapons","guns","missiles","military activity","police raid","riot","protest","injury","blood","crash","destroyed building","emergency vehicles","symbolic imagery","hologram","futuristic interface");
+        VisualPromptPlan p=new VisualPromptPlan(seg.index(),seg.index()==0?"HOOK":"CONTEXT",ids,entity.isBlank()?List.of():List.of(entity),subject,"","ordinary contemporary setting","","","",List.of(),mustNotShow,"clear documentary composition",prompt,0,false,List.of(),repairs,true);
         VisualPromptValidator.Result vr=validator.validate(p,facts,cluster.entities,fp.headline(),excerpts);
-        return p.withValidation(Math.max(vr.score(),cfg.getInt("visualPromptMinimumGroundingScore",65)),true,List.of());
+        return p.withValidation(vr.score(),vr.valid(),vr.issues());
     }
 
     private Map<String,Object>input(NewsScript script,FactPackage fp,StoryCluster cluster,Map<String,FactClaim>facts,List<String>excerpts){
@@ -119,12 +118,13 @@ Images must read as plausible contemporary wire-service photography. Political i
 For war/crime stories, never infer battlefield, weapons, police raids, blood, destruction, or emergency scenes merely from the topic; those details require direct cited support.
 Plan ALL segments together. Use visual variety only from supported evidence; do not repeat the same building/portrait/subject unnecessarily.
 Each scene must cite 1-4 valid FACT IDs, identify a concrete subject, return a controlled strategy, and include mustNotShow constraints.
+The prompt field is POSITIVE image conditioning only. Never write exclusions, negations, "no X", "without X", "do not show X", or forbidden concepts into the prompt field. Put every excluded literal visual concept only in mustNotShow using short concrete phrases.
 For segment 0, preserve the supplied hook FACT IDs when they exist.
 Return strict JSON only.
 """;}
 
     private static String repairPrompt(){return """
-Rewrite ONLY the rejected visual scene. Keep the exact segmentIndex and narration. Use only supplied FACT IDs and evidence. Remove every unsupported entity, action, location, object, violent/dramatic element, and AI cliché named by the validation errors. Do not introduce new named entities. Return exactly one scene object matching the schema, not a scenes wrapper.
+Rewrite ONLY the rejected visual scene. Keep the exact segmentIndex and narration. Use only supplied FACT IDs and evidence. Remove every unsupported entity, action, location, object, violent/dramatic element, and AI cliché named by the validation errors. Do not introduce new named entities. The prompt field is positive conditioning only: never put exclusions, negations, or forbidden concepts into it; put exclusions only in mustNotShow. Return exactly one scene object matching the schema, not a scenes wrapper.
 """;}
 
     private Map<String,Object>repairInput(NewsScript.Segment seg,VisualPromptPlan p,List<String>issues,FactPackage fp,StoryCluster cluster,Map<String,FactClaim>facts,List<String>excerpts){
