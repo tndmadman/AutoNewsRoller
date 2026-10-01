@@ -624,10 +624,11 @@ public final class SelfTest {
         String pipelineSource=Files.readString(root.resolve("src/autonewsroller/orchestration/NewsPipeline.java"));
         ok(pipelineSource.contains("audit.put(\"hook\",script.hook())")&&
                         pipelineSource.contains("openingVisualType")&&pipelineSource.contains("HOOK\".equalsIgnoreCase(chosen.type())")&&
-                        pipelineSource.contains("BroadcastTheme.PACKAGE_ID")&&pipelineSource.contains("no neon lighting")&&
-                        pipelineSource.contains("neutral white balance")&&pipelineSource.contains("no blue wash")&&
-                        pipelineSource.contains("red and blue breaking-news branding is added later"),
-                "pipeline persists hook diagnostics, records broadcast v3, and keeps AI blue casts out of generated news photography");
+                        pipelineSource.contains("BroadcastTheme.PACKAGE_ID")&&pipelineSource.contains("sceneNegativePrompt(chosen)")&&
+                        pipelineSource.contains("assertNoExcludedConceptInPositive(chosen,prompt)")&&
+                        pipelineSource.contains("imageSource.put(\"negativePrompt\",negativePrompt)")&&
+                        pipelineSource.contains("neutral white balance")&&!pipelineSource.contains("no blue wash"),
+                "pipeline separates positive and negative image conditioning and records the negative prompt");
         String defaultsText=Files.readString(root.resolve("defaults.txt"));
         ok(defaultsText.contains("cyan cast")&&defaultsText.contains("electric blue lighting")&&defaultsText.contains("blue monochrome"),
                 "default negative prompt rejects synthetic cyan and electric-blue image grading");
