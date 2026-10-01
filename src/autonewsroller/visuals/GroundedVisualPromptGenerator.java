@@ -69,13 +69,18 @@ public final class GroundedVisualPromptGenerator {
                 }
             }
             if(!p.valid()){p=fallback(script.segments().get(i),script,fp,cluster,facts,excerpts,p.repairAttempts());fallbacks++;}
+            p=p.withMustNotShow(mergeTerms(p.mustNotShow(),validator.negativeSafetyTerms(p,facts)));
             out.add(p);
         }
         return new Result(List.copyOf(out),repairs,fallbacks,rejected,model);
     }
 
     private Result fallbackAll(NewsScript script,FactPackage fp,StoryCluster cluster,Map<String,FactClaim>facts,List<String>excerpts,String model){
-        List<VisualPromptPlan>out=new ArrayList<>();for(NewsScript.Segment s:script.segments())out.add(fallback(s,script,fp,cluster,facts,excerpts,0));
+        List<VisualPromptPlan>out=new ArrayList<>();
+        for(NewsScript.Segment s:script.segments()){
+            VisualPromptPlan p=fallback(s,script,fp,cluster,facts,excerpts,0);
+            out.add(p.withMustNotShow(mergeTerms(p.mustNotShow(),validator.negativeSafetyTerms(p,facts))));
+        }
         return new Result(List.copyOf(out),0,out.size(),0,model);
     }
 
@@ -144,6 +149,7 @@ Rewrite ONLY the rejected visual scene. Keep the exact segmentIndex and narratio
     private static String str(Map<String,Object>m,String k){return Text.clean(String.valueOf(m.getOrDefault(k,"")));}
     private static List<String>stringList(Object x){List<String>out=new ArrayList<>();if(x instanceof List<?>l)for(Object v:l){String s=Text.clean(String.valueOf(v));if(!s.isBlank())out.add(s);}return List.copyOf(out);}
     private static List<String>append(List<String>x,String v){List<String>o=new ArrayList<>(x);o.add(v);return List.copyOf(o);}
+    private static List<String>mergeTerms(List<String>a,List<String>b){LinkedHashSet<String>o=new LinkedHashSet<>();if(a!=null)o.addAll(a);if(b!=null)o.addAll(b);return List.copyOf(o);}
     private static boolean containsToken(String a,String b){return Text.normalize(a).contains(Text.normalize(b));}
     private static String conservativeSubject(String fact){String s=Text.clean(fact);List<String>sent=Text.sentences(s);String first=sent.isEmpty()?s:sent.get(0);String[]w=first.split("\\s+");return String.join(" ",Arrays.copyOfRange(w,0,Math.min(10,w.length)));}
 
