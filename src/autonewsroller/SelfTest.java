@@ -686,8 +686,9 @@ public final class SelfTest {
                 "Command Center exposes a persisted auto-video creation toggle");
         ok(commandCenterHtml.contains("id=\"railFailed\"")&&commandCenterJs.contains("OPERATIONAL_FILTERS")&&
                         commandCenterJs.contains("failurePanelHtml")&&commandCenterJs.contains("RETRY VIDEO")&&
-                        commandCenterJs.contains("allStories.filter(x=>x.status===\"FAILED\")"),
-                "Command Center gives terminal failures a first-class rail, age-independent visibility, diagnostics, and manual retry action");
+                        commandCenterJs.contains("ss.filter(x=>x.status===\"FAILED\")")&&
+                        !commandCenterJs.contains("QUEUED\",\"PRODUCING\",\"FAILED\",\"HOLD"),
+                "Command Center gives terminal failures a first-class rail, supports age filtering on FAILED, and keeps diagnostics/manual retry controls");
         String defaultsText=Files.readString(root.resolve("defaults.txt"));
         ok(defaultsText.contains("cyan cast")&&defaultsText.contains("electric blue lighting")&&defaultsText.contains("blue monochrome"),
                 "default negative prompt rejects synthetic cyan and electric-blue image grading");
