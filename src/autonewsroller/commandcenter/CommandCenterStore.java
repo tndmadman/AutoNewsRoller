@@ -463,7 +463,7 @@ public final class CommandCenterStore {
         String message=safe(error);
         String failedStage=String.valueOf(m.getOrDefault("stage","UNKNOWN"));
         String worker=String.valueOf(m.getOrDefault("assignedWorker","unknown"));
-        String failureType=failureTypeForStage(failedStage);
+        String failureType=failureTypeForStage(failedStage,message);
         m.put("failureCount",failures);
         m.put("lastFailure",message);
         m.put("lastFailedAt",now.toString());
@@ -604,14 +604,16 @@ public final class CommandCenterStore {
         Object raw=target.get("productionAttempts");
         if(raw instanceof List<?> list&&list.size()>20)target.put("productionAttempts",new ArrayList<>(list.subList(list.size()-20,list.size())));
     }
-    private static String failureTypeForStage(String stage){
+    private static String failureTypeForStage(String stage,String message){
+        String lower=message==null?"":message.toLowerCase(Locale.ROOT);
+        if(lower.contains("upload")||lower.contains("/video"))return "UPLOAD_FAILURE";
         return switch(stage==null?"":stage.toUpperCase(Locale.ROOT)){
             case "VERIFY"->"VERIFICATION_FAILURE";
             case "SCRIPT"->"SCRIPT_FAILURE";
             case "TTS"->"TTS_FAILURE";
             case "VISUALS"->"VISUAL_FAILURE";
-            case "RENDER","AUDIT","APPROVED"->"RENDER_FAILURE";
-            case "UPLOAD"->"UPLOAD_FAILURE";
+            case "RENDER","AUDIT"->"RENDER_FAILURE";
+            case "APPROVED"->"POST_PRODUCTION_FAILURE";
             default->"PRODUCTION_FAILURE";
         };
     }
