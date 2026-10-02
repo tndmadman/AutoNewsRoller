@@ -536,9 +536,18 @@ public final class SelfTest {
                         cardSource.contains("renderHookPackage")&&cardSource.contains("renderStoryPackage")&&
                         cardSource.contains("fitHeadlineFont")&&cardSource.contains("verticalBias"),
                 "AWARE visual package includes thumbnail-first hook treatment, adaptive headline sizing, and protected subject cropping");
-        ok(themeSource.contains("aware-broadcast-v3-breaking")&&themeSource.contains("new Color(30,74,132)")&&
+        ok(themeSource.contains("aware-broadcast-v4-motion")&&themeSource.contains("new Color(30,74,132)")&&
                         themeSource.contains("new Color(185,23,38)")&&!themeSource.toLowerCase(Locale.ROOT).contains("56,232,255"),
-                "broadcast v3 uses breaking-news red and restrained royal blue without neon cyan");
+                "broadcast v4 uses breaking-news red and restrained royal blue without neon cyan");
+        ok(themeSource.contains("HEADER_HEIGHT=118")&&themeSource.contains("TICKER_HEIGHT=80")&&
+                        cardSource.contains("renderOverlay")&&cardSource.contains("drawPoliticalLabels")&&
+                        cardSource.contains("int h=68")&&cardSource.contains("int h=72"),
+                "broadcast v4 increases image area and makes political source/framing meters materially more visible");
+        Path overlayFrame=newsPackageDir.resolve("overlay.png");
+        new CardRenderer().renderOverlay(plan.items().get(0),overlayFrame,1080,1920);
+        BufferedImage overlayImage=ImageIO.read(overlayFrame.toFile());
+        ok(overlayImage!=null&&overlayImage.getColorModel().hasAlpha(),
+                "broadcast v4 can render a transparent fixed overlay for moving photographs");
 
         FactPackage hookFacts=new FactPackage(
                 "hook-fixture",
@@ -627,10 +636,14 @@ public final class SelfTest {
                 "This caption contains enough words to split cleanly across two compact lines for a vertical news video.",
                 7.0,"sentence");
         String captionText=Files.readString(ass);
-        ok(captionText.contains("[V4+ Styles]")&&captionText.contains("Style: News,Arial,42")&&captionText.contains("\\N")&&
+        ok(captionText.contains("[V4+ Styles]")&&captionText.contains("Style: News,Arial,44")&&captionText.contains("\\N")&&
                         captionText.contains("B27943")&&!captionText.contains("FFD86F"),
-                "captions use compact two-line ASS styling with broadcast-blue emphasis and no legacy yellow accent");
+                "captions use compact two-line ASS styling, higher safe-area placement, and broadcast-blue emphasis");
 
+        String videoRendererSource=Files.readString(root.resolve("src/autonewsroller/video/VideoRenderer.java"));
+        ok(videoRendererSource.contains("zoompan")&&videoRendererSource.contains("render(List<Path>backgrounds,List<Path>overlays,List<Boolean>motion")&&
+                        videoRendererSource.contains("overlay=0:0"),
+                "video renderer adds restrained photo motion beneath fixed broadcast overlays");
         String pipelineSource=Files.readString(root.resolve("src/autonewsroller/orchestration/NewsPipeline.java"));
         ok(pipelineSource.contains("audit.put(\"hook\",script.hook())")&&
                         pipelineSource.contains("openingVisualType")&&pipelineSource.contains("HOOK\".equalsIgnoreCase(chosen.type())")&&

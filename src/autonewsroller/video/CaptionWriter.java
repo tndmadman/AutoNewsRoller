@@ -20,7 +20,7 @@ public final class CaptionWriter {
            .append("WrapStyle: 2\nScaledBorderAndShadow: yes\n\n")
            .append("[V4+ Styles]\n")
            .append("Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n")
-           .append("Style: News,Arial,42,&H00FFFFFF,&H00B27943,&H001E1105,&HA80F1105,-1,0,0,0,100,100,0,0,3,3,0,2,82,82,205,1\n\n")
+           .append("Style: News,Arial,44,&H00FFFFFF,&H00B27943,&H00140C06,&HC80A0D12,-1,0,0,0,100,100,0,0,3,3,0,2,78,78,420,1\n\n")
            .append("[Events]\n")
            .append("Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n");
 
@@ -49,8 +49,8 @@ public final class CaptionWriter {
         List<String>out=new ArrayList<>();
         for(String sentence:Text.sentences(cleaned)){
             String[]words=sentence.trim().split("\\s+");
-            for(int i=0;i<words.length;i+=11){
-                int end=Math.min(words.length,i+11);
+            for(int i=0;i<words.length;i+=9){
+                int end=Math.min(words.length,i+9);
                 out.add(String.join(" ",Arrays.copyOfRange(words,i,end)));
             }
         }
@@ -61,11 +61,28 @@ public final class CaptionWriter {
     private static String styled(String raw){
         String[]w=raw.replace("{","").replace("}","").trim().split("\\s+");
         if(w.length==0)return "";
-        int highlight=Math.min(2,w.length);
-        String first=String.join(" ",Arrays.copyOfRange(w,0,highlight));
-        String rest=highlight<w.length?" "+String.join(" ",Arrays.copyOfRange(w,highlight,w.length)):"";
-        String text="{\\c&H00B27943&}"+first+"{\\c&H00FFFFFF&}"+rest;
-        return wrapTwoLines(text,w.length);
+        int hi=salientIndex(w);
+        StringBuilder text=new StringBuilder();
+        for(int i=0;i<w.length;i++){
+            if(i>0)text.append(' ');
+            if(i==hi)text.append("{\\c&H00B27943&}").append(w[i]).append("{\\c&H00FFFFFF&}");
+            else text.append(w[i]);
+        }
+        return wrapTwoLines(text.toString(),w.length);
+    }
+
+    private static int salientIndex(String[] words){
+        for(int i=0;i<words.length;i++)if(words[i].matches(".*\\d.*"))return i;
+        for(int i=1;i<words.length;i++){
+            String clean=words[i].replaceAll("[^A-Za-z]","");
+            if(clean.length()>=3&&Character.isUpperCase(clean.charAt(0)))return i;
+        }
+        int best=0,bestLen=0;
+        for(int i=0;i<words.length;i++){
+            String clean=words[i].replaceAll("[^A-Za-z]","");
+            if(clean.length()>bestLen){bestLen=clean.length();best=i;}
+        }
+        return best;
     }
 
     private static String wrapTwoLines(String styled,int wordCount){
