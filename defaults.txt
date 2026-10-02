@@ -64,9 +64,10 @@ commandCenterRequireComfy=true
 commandCenterComfyImages=6
 commandCenterMinimumTargetSeconds=70
 minimumFinalVideoSeconds=61
-commandCenterJobLeaseSeconds=75
+commandCenterJobLeaseSeconds=180
 commandCenterFailureMaxRetries=3
 commandCenterFailureRetryDelaySeconds=20
+commandCenterLeaseRecoveryMaxRetries=3
 commandCenterControllerUrl=http://127.0.0.1:8787
 
 politicalAnalysisModel=llama3.1:8b

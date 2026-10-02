@@ -24,6 +24,7 @@ public final class CommandCenterStore {
     private final double singleSourceAutoQueueThreshold;
     private final int failureMaxRetries;
     private final int failureRetryDelaySeconds;
+    private final int leaseRecoveryMaxRetries;
     private final Consumer<Map<String,Object>>eventSink;
     private final Map<String,Map<String,Object>>stories=new LinkedHashMap<>();
     private final Map<String,Map<String,Object>>feeds=new LinkedHashMap<>();
@@ -33,20 +34,24 @@ public final class CommandCenterStore {
     private boolean scanning;
 
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink){
-        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,75,0.74,0.82,3,20);
+        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,180,0.74,0.82,3,20,3);
     }
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink,int leaseSeconds){
-        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,leaseSeconds,0.74,0.82,3,20);
+        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,leaseSeconds,0.74,0.82,3,20,3);
     }
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink,int leaseSeconds,double softWorthThreshold,double singleSourceAutoQueueThreshold){
-        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,leaseSeconds,softWorthThreshold,singleSourceAutoQueueThreshold,3,20);
+        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,leaseSeconds,softWorthThreshold,singleSourceAutoQueueThreshold,3,20,3);
     }
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink,int leaseSeconds,double softWorthThreshold,double singleSourceAutoQueueThreshold,int failureMaxRetries,int failureRetryDelaySeconds){
+        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,leaseSeconds,softWorthThreshold,singleSourceAutoQueueThreshold,failureMaxRetries,failureRetryDelaySeconds,3);
+    }
+    public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink,int leaseSeconds,double softWorthThreshold,double singleSourceAutoQueueThreshold,int failureMaxRetries,int failureRetryDelaySeconds,int leaseRecoveryMaxRetries){
         this.statePath=statePath;this.bias=bias;this.autoQueue=autoQueue;this.autoThreshold=autoThreshold;this.maxQueued=Math.max(1,maxQueued);this.eventSink=eventSink;this.leaseSeconds=Math.max(30,leaseSeconds);
         this.softWorthThreshold=Math.max(0.0,Math.min(1.0,softWorthThreshold));
         this.singleSourceAutoQueueThreshold=Math.max(this.softWorthThreshold,Math.min(1.0,singleSourceAutoQueueThreshold));
         this.failureMaxRetries=Math.max(0,failureMaxRetries);
         this.failureRetryDelaySeconds=Math.max(0,failureRetryDelaySeconds);
+        this.leaseRecoveryMaxRetries=Math.max(0,leaseRecoveryMaxRetries);
         load();
     }
 
@@ -257,8 +262,11 @@ public final class CommandCenterStore {
                 .findFirst();
         if(bestVideo.isPresent()){
             Map<String,Object>m=bestVideo.get();
-            m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",Instant.now().toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
-            m.put("claimCount",integer(m.get("claimCount"))+1);renewLease(m);
+            Instant claimedAt=Instant.now();
+            m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
+            int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
+            appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY"));
+            renewLease(m);
             persistQuiet();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
             job.put("jobType","VIDEO");job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
@@ -453,11 +461,24 @@ public final class CommandCenterStore {
         Instant now=Instant.now();
         int failures=integer(m.get("failureCount"))+1;
         String message=safe(error);
+        String failedStage=String.valueOf(m.getOrDefault("stage","UNKNOWN"));
+        String worker=String.valueOf(m.getOrDefault("assignedWorker","unknown"));
+        String failureType=failureTypeForStage(failedStage,message);
         m.put("failureCount",failures);
         m.put("lastFailure",message);
         m.put("lastFailedAt",now.toString());
+        m.put("failureType",failureType);
+        m.put("lastAssignedWorker",worker);
         m.put("error",message);
         m.put("updatedAt",now.toString());
+        appendProductionAttempt(m,now,Map.of(
+                "event","FAILED",
+                "attempt",Math.max(1,integer(m.get("claimCount"))),
+                "worker",worker,
+                "stage",failedStage,
+                "failureType",failureType,
+                "error",message
+        ));
         m.remove("assignedWorker");m.remove("jobStartedAt");clearLease(m);
 
         if(failures<=failureMaxRetries){
@@ -502,7 +523,7 @@ public final class CommandCenterStore {
         counts.put("biasQueued",stories.values().stream().filter(x->"QUEUED".equals(x.get("biasAnalysisStatus"))).count());
         counts.put("biasAnalyzing",stories.values().stream().filter(x->"ANALYZING".equals(x.get("biasAnalysisStatus"))).count());
         counts.put("biasComplete",stories.values().stream().filter(x->"COMPLETE".equals(x.get("biasAnalysisStatus"))).count());
-        Map<String,Object>out=new LinkedHashMap<>();out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
+        Map<String,Object>out=new LinkedHashMap<>();out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
     }
 
     private Map<String,Object>feed(SourceConfig s){
@@ -522,7 +543,7 @@ public final class CommandCenterStore {
         catch(Exception ignored){return true;}
     }
     private static void resetFailureRetryState(Map<String,Object>m){
-        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");
+        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("failureType");m.remove("leaseRecoveries");
     }
     private static boolean isToPost(Map<String,Object>m){
         return "COMPLETE".equals(String.valueOf(m.get("status")))
@@ -577,6 +598,25 @@ public final class CommandCenterStore {
         if(values.containsKey("scrapped"))event.put("scrapped",values.get("scrapped"));
         history.add(event);while(history.size()>50)history.remove(0);target.put(key,history);
     }
+
+    private static void appendProductionAttempt(Map<String,Object>target,Instant now,Map<String,Object>values){
+        appendStateHistory(target,"productionAttempts",now,values);
+        Object raw=target.get("productionAttempts");
+        if(raw instanceof List<?> list&&list.size()>20)target.put("productionAttempts",new ArrayList<>(list.subList(list.size()-20,list.size())));
+    }
+    private static String failureTypeForStage(String stage,String message){
+        String lower=message==null?"":message.toLowerCase(Locale.ROOT);
+        if(lower.contains("upload")||lower.contains("/video"))return "UPLOAD_FAILURE";
+        return switch(stage==null?"":stage.toUpperCase(Locale.ROOT)){
+            case "VERIFY"->"VERIFICATION_FAILURE";
+            case "SCRIPT"->"SCRIPT_FAILURE";
+            case "TTS"->"TTS_FAILURE";
+            case "VISUALS"->"VISUAL_FAILURE";
+            case "RENDER","AUDIT"->"RENDER_FAILURE";
+            case "APPROVED"->"POST_PRODUCTION_FAILURE";
+            default->"PRODUCTION_FAILURE";
+        };
+    }
     private static void copyOrRemove(Map<String,Object>from,Map<String,Object>to,String key){
         if(from.containsKey(key))to.put(key,from.get(key));else to.remove(key);
     }
@@ -595,9 +635,27 @@ public final class CommandCenterStore {
             if(raw!=null)try{expired=!Instant.parse(String.valueOf(raw)).isAfter(now);}catch(Exception ignored){}
             if(!expired)continue;
             String previous=String.valueOf(m.getOrDefault("assignedWorker","unknown"));
-            m.put("lastAssignedWorker",previous);m.remove("assignedWorker");m.remove("jobStartedAt");m.remove("leaseUntil");
-            m.put("status","QUEUED");m.put("stage","QUEUED");m.put("progress",15);m.put("queuedAt",now.toString());
-            m.put("detail","Worker lease expired; automatically requeued");m.put("leaseRecoveries",integer(m.get("leaseRecoveries"))+1);
+            String failedStage=String.valueOf(m.getOrDefault("stage","UNKNOWN"));
+            int leaseRecoveries=integer(m.get("leaseRecoveries"))+1;
+            m.put("lastAssignedWorker",previous);m.put("leaseRecoveries",leaseRecoveries);
+            appendProductionAttempt(m,now,Map.of(
+                    "event","LEASE_EXPIRED",
+                    "attempt",Math.max(1,integer(m.get("claimCount"))),
+                    "worker",previous,
+                    "stage",failedStage,
+                    "failureType","WORKER_LEASE_EXPIRED"
+            ));
+            m.remove("assignedWorker");m.remove("jobStartedAt");m.remove("leaseUntil");
+            if(leaseRecoveries<=leaseRecoveryMaxRetries){
+                m.put("status","QUEUED");m.put("stage","QUEUED");m.put("progress",15);m.put("queuedAt",now.toString());
+                m.put("failureType","WORKER_LEASE_EXPIRED");
+                m.put("detail","Worker lease expired; automatic recovery "+leaseRecoveries+"/"+leaseRecoveryMaxRetries+" requeued");
+            }else{
+                m.put("status","FAILED");m.put("stage","FAILED");m.put("progress",0);m.put("failureType","WORKER_LEASE_EXHAUSTED");
+                m.put("lastFailure","Worker lease expired "+leaseRecoveries+" times; automatic lease recovery stopped.");
+                m.put("lastFailedAt",now.toString());m.put("error",m.get("lastFailure"));
+                m.put("detail","Worker lease recovery exhausted; manual retry required");
+            }
             recovered++;if(announce)emit("story",publicStory(m));
         }
         return recovered;

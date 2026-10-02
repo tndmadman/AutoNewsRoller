@@ -198,15 +198,41 @@ public final class SelfTest {
         ok(retryCapStore.claim("retry-worker-2",Map.of("duration",60))!=null,"automatically requeued failure can be claimed again");
         retryCapStore.fail(cluster.id,"second production failure");
         Map<String,Object>terminalFailure=retryCapStore.storyDetail(cluster.id);
-        ok("FAILED".equals(terminalFailure.get("status"))&&((Number)terminalFailure.get("failureCount")).intValue()==2,
-                "job becomes terminal FAILED only after configured automatic retry budget is exhausted");
+        ok("FAILED".equals(terminalFailure.get("status"))&&((Number)terminalFailure.get("failureCount")).intValue()==2&&
+                        terminalFailure.get("productionAttempts") instanceof List<?> attempts&&attempts.size()>=4,
+                "job becomes terminal FAILED only after configured automatic retry budget is exhausted and retains attempt history");
+
+        Path leaseState=dir.resolve("lease-cap-state.json");
+        CommandCenterStore leaseStore=new CommandCenterStore(
+                leaseState,BiasRegistry.load(dir.resolve("bias.json")),
+                true,0.68,12,null,30,0.74,0.82,3,0,1
+        );
+        leaseStore.applyDiscovery(result);
+        ok(leaseStore.claim("lease-worker-1",Map.of("duration",60))!=null,"lease-cap fixture job can be claimed");
+        Map<String,Object>leaseRoot=Json.object(Json.read(leaseState));
+        Map<String,Object>leaseStories=Json.object(leaseRoot.get("stories"));
+        Map<String,Object>leaseStory=Json.object(leaseStories.get(cluster.id));
+        leaseStory.put("leaseUntil",Instant.EPOCH.toString());
+        leaseStory.put("leaseRecoveries",1);
+        leaseStories.put(cluster.id,leaseStory);
+        leaseRoot.put("stories",leaseStories);
+        Json.write(leaseState,leaseRoot);
+        CommandCenterStore recoveredLeaseStore=new CommandCenterStore(
+                leaseState,BiasRegistry.load(dir.resolve("bias.json")),
+                true,0.68,12,null,30,0.74,0.82,3,0,1
+        );
+        Map<String,Object>leaseTerminal=recoveredLeaseStore.storyDetail(cluster.id);
+        ok("FAILED".equals(leaseTerminal.get("status"))&&"WORKER_LEASE_EXHAUSTED".equals(leaseTerminal.get("failureType"))&&
+                        ((Number)leaseTerminal.get("leaseRecoveries")).intValue()==2,
+                "worker lease recovery is separately bounded and becomes terminal FAILED after its safety budget is exhausted");
     }
 
     private void testCommandCenterMediaReporting(Path root,List<Article>a)throws Exception{
         NewsConfig cfg=NewsConfig.load(root);
         ok(cfg.getBool("commandCenterUseComfy",false)&&cfg.getBool("commandCenterRequireComfy",false)&&cfg.getInt("commandCenterComfyImages",0)>=3&&cfg.getBool("comfyAutoPickCheckpoint",false),"command center requires multiple ComfyUI images by default");
-        ok(cfg.getInt("commandCenterFailureMaxRetries",0)>=1&&cfg.getInt("commandCenterFailureRetryDelaySeconds",-1)>=0,
-                "command center failed video jobs have an automatic retry policy");
+        ok(cfg.getInt("commandCenterFailureMaxRetries",0)>=1&&cfg.getInt("commandCenterFailureRetryDelaySeconds",-1)>=0&&
+                        cfg.getInt("commandCenterLeaseRecoveryMaxRetries",0)>=1&&cfg.getInt("commandCenterJobLeaseSeconds",0)>=120,
+                "command center retains bounded production retries and bounded worker lease recovery with a safer lease window");
 
         List<Article>fresh=a.stream().filter(x->!x.title().contains("Old archive")).toList();
         StoryCluster cluster=new StoryClusterer().cluster(fresh).stream().max(Comparator.comparingInt(x->x.articles.size())).orElseThrow();
@@ -658,6 +684,10 @@ public final class SelfTest {
         ok(commandCenterHtml.contains("id=\"autoVideoToggle\"")&&commandCenterJs.contains("/api/settings/auto-video")&&
                         commandCenterServer.contains("store.setAutoQueue(enabled)"),
                 "Command Center exposes a persisted auto-video creation toggle");
+        ok(commandCenterHtml.contains("id=\"railFailed\"")&&commandCenterJs.contains("OPERATIONAL_FILTERS")&&
+                        commandCenterJs.contains("failurePanelHtml")&&commandCenterJs.contains("RETRY VIDEO")&&
+                        commandCenterJs.contains("allStories.filter(x=>x.status===\"FAILED\")"),
+                "Command Center gives terminal failures a first-class rail, age-independent visibility, diagnostics, and manual retry action");
         String defaultsText=Files.readString(root.resolve("defaults.txt"));
         ok(defaultsText.contains("cyan cast")&&defaultsText.contains("electric blue lighting")&&defaultsText.contains("blue monochrome"),
                 "default negative prompt rejects synthetic cyan and electric-blue image grading");
