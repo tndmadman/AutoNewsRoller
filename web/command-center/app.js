@@ -45,11 +45,14 @@ function syncStoryAgeControl(){
   const el=$("#storyAgeFilter");
   if(!el)return;
   el.value=String(storyAgeLimitHours);
-  el.disabled=false;
-  el.classList.toggle("activeFilterControl",storyAgeLimitHours>0);
-  el.title=storyAgeLimitHours>0
-    ?"Showing stories published within the last "+storyAgeLimitHours+" hour(s)."
-    :"Showing stories of any age.";
+  const operational=OPERATIONAL_FILTERS.has(currentStoryFilter());
+  el.disabled=operational;
+  el.classList.toggle("activeFilterControl",storyAgeLimitHours>0&&!operational);
+  el.title=operational
+    ?"Age filtering is ignored for active operational states so unresolved work cannot disappear."
+    :storyAgeLimitHours>0
+      ?"Showing stories published within the last "+storyAgeLimitHours+" hour(s)."
+      :"Showing stories of any age.";
 }
 function safeHttpUrl(v){try{const u=new URL(String(v||""));return (u.protocol==="https:"||u.protocol==="http:")?u.href:""}catch{return ""}}
 function feedEndpointLabel(url){
@@ -112,8 +115,8 @@ function renderRails(){
   $("#railAll").textContent=ss.length;
   $("#railFound").textContent=ss.filter(x=>x.status==="DISCOVERED").length;
   $("#railVerified").textContent=ss.filter(isActionableWorthy).length;
-  $("#railQueued").textContent=ss.filter(x=>x.status==="QUEUED").length;
-  $("#railProducing").textContent=ss.filter(x=>x.status==="PRODUCING").length;
+  $("#railQueued").textContent=allStories.filter(x=>x.status==="QUEUED").length;
+  $("#railProducing").textContent=allStories.filter(x=>x.status==="PRODUCING").length;
   $("#railFailed").textContent=allStories.filter(x=>x.status==="FAILED").length;
   $("#railComplete").textContent=ss.filter(x=>String(x.status).startsWith("COMPLETE")).length;
   $("#railToPost").textContent=ss.filter(x=>String(x.status)==="COMPLETE"&&!x.uploaded&&!x.scrapped).length;
