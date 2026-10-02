@@ -165,6 +165,29 @@ function renderStories(){
   }
   root.innerHTML=ss.map(s=>storyCard(s)).join("");
 }
+function failurePanelHtml(s,status){
+  if(status!=="FAILED")return "";
+  const attempts=Array.isArray(s.productionAttempts)?s.productionAttempts:[];
+  const recent=attempts.slice(-5).reverse().map(a=>{
+    const when=a.at?new Date(a.at).toLocaleString():"";
+    const detail=[a.stage||"UNKNOWN",a.worker||"unknown"].join(" // ");
+    const err=a.error?(" // "+esc(a.error)):"";
+    return '<div class="attemptRow"><b>'+esc(a.event||"EVENT")+'</b><span>#'+(num(a.attempt)||"?")+' // '+esc(detail)+'</span><small>'+esc(when)+err+'</small></div>';
+  }).join("");
+  const history=recent?'<details class="attemptHistory"><summary>SHOW RECENT ATTEMPTS ('+attempts.length+')</summary>'+recent+'</details>':"";
+  return '<div class="failurePanel">'+
+    '<div class="failureHead"><b>PRODUCTION FAILED</b><span>'+esc(s.failureType||"PRODUCTION_FAILURE")+'</span></div>'+
+    '<div class="failureStats">'+
+      '<span><b>CLAIMS</b> '+num(s.claimCount)+'</span>'+
+      '<span><b>FAILURES</b> '+num(s.failureCount)+'</span>'+
+      '<span><b>LEASE RECOVERIES</b> '+num(s.leaseRecoveries)+'</span>'+
+      '<span><b>LAST WORKER</b> '+esc(s.lastAssignedWorker||"unknown")+'</span>'+
+    '</div>'+
+    '<div class="failureReason">'+esc(s.lastFailure||s.error||s.detail||"Automatic retry or lease-recovery guard was exhausted.")+'</div>'+
+    history+
+  '</div>';
+}
+
 function storyCard(s){
   const score=Math.round(num(s.score)*100),verified=!!s.verified,status=String(s.status||"DISCOVERED"),mix=s.sourceMix||{},total=Math.max(1,num(mix.left)+num(mix.center)+num(mix.right)+num(mix.unknown));
   const bar=k=>Math.round(num(mix[k])/total*100);
@@ -178,6 +201,7 @@ function storyCard(s){
   const checkpoint=esc(s.comfyCheckpoint||"");
   const liveMessage=s.error||s.comfyStatus||s.detail||"";
   const liveDetail=liveMessage?`<div class="liveDetail">${esc(liveMessage)}</div>`:"";
+  const failurePanel=failurePanelHtml(s,status);
   const sourceDetails=mix.publisherDetails||{};
   const baselineDetails=Object.entries(sourceDetails).map(([publisher,d])=>{
     const href=safeHttpUrl(d&&d.url);
@@ -233,6 +257,7 @@ function storyCard(s){
     <div class="verifyReason">${verified?"✓ VERIFIED // ":s.worthy?"★ WORTHY // ":"⚠ "}${esc(s.verificationReason||"")}</div>
     <div class="sources">${pubs||'<span class="sourceChip">NO SOURCE LABELS</span>'}</div>
     <div class="progressWrap"><div class="progressText"><span>${esc(s.stage||status)}</span><span>${Math.round(num(s.progress))}%</span></div><div class="progress"><i style="width:${pct(s.progress)}%"></i></div></div>
+    ${failurePanel}
     ${liveDetail}
     ${productionFacts}
     ${uploadState}
@@ -246,7 +271,7 @@ function storyCard(s){
     <div class="storyActions">
       ${!completeLike?`
         <button class="btn good" onclick="storyAction('${esc(s.id)}','WORTH')" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
-        <button class="btn primary" onclick="storyAction('${esc(s.id)}','MAKE')" ${makeDisabled?"disabled":""}>▶ MAKE VIDEO</button>
+        <button class="btn primary" onclick="storyAction('${esc(s.id)}','MAKE')" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
         <button class="btn warn" onclick="storyAction('${esc(s.id)}','HOLD')">Ⅱ HOLD</button>
         <button class="btn bad" onclick="storyAction('${esc(s.id)}','SKIP')">× NOT WORTH</button>
         <button class="btn ghost" onclick="storyAction('${esc(s.id)}','AUTO')">↻ AUTO</button>`:""}
