@@ -160,7 +160,7 @@ public final class CardRenderer {
         g.setColor(MUTED);g.setFont(new Font("SansSerif",Font.PLAIN,23));
         g.drawString("Independent reporting and primary material used to build this video.",x+42,y+132);
 
-        List<String>sources=new ArrayList<>();
+        java.util.List<String>sources=new ArrayList<>();
         for(String raw:(item.body()==null?"":item.body()).split("\\s*[•|]\\s*")){
             String s=raw.replaceAll("\\s+"," ").trim();
             if(!s.isBlank()&&!sources.contains(s))sources.add(s);
