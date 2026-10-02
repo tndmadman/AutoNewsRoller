@@ -53,6 +53,7 @@ public final class CommandCenterServer {
         server.createContext("/api/state",this::state);
         server.createContext("/api/events",this::events);
         server.createContext("/api/scan",this::scanNow);
+        server.createContext("/api/settings/auto-video",this::autoVideoSetting);
         server.createContext("/api/stories/",this::stories);
         server.createContext("/api/workers/heartbeat",this::heartbeat);
         server.createContext("/api/jobs/claim",this::claim);
@@ -105,6 +106,14 @@ public final class CommandCenterServer {
         if(!api(x))return;if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         if(scanInFlight.get()){json(x,202,Map.of("ok",true,"status","already-scanning"));return;}
         scheduler.submit(this::scanSafe);json(x,202,Map.of("ok",true,"status","scan-started"));
+    }
+
+    private void autoVideoSetting(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        Map<String,Object>body=bodyObject(x);
+        if(!(body.get("enabled") instanceof Boolean enabled)){json(x,400,Map.of("error","enabled boolean required"));return;}
+        json(x,200,store.setAutoQueue(enabled));
     }
 
     private void stories(HttpExchange x)throws IOException{
