@@ -150,7 +150,7 @@ public final class CardRenderer {
     private static void renderSourceCard(Graphics2D g,VisualPlan.Item item,int w,int h){
         paintTopBar(g,w,"SOURCES",false);
         int x=62,y=210,panelW=w-124,panelH=h-210-BroadcastTheme.TICKER_HEIGHT-70;
-        g.setColor(PANEL);g.fillRoundRect(x,y,panelW,panelH,22,22);
+        g.setColor(BroadcastTheme.PANEL);g.fillRoundRect(x,y,panelW,panelH,22,22);
         g.setColor(RULE);g.drawRoundRect(x,y,panelW,panelH,22,22);
         g.setColor(BLUE);g.fillRect(x,y,panelW/2,8);
         g.setColor(RED);g.fillRect(x+panelW/2,y,panelW-panelW/2,8);
