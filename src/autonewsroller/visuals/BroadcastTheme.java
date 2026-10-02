@@ -13,7 +13,7 @@ import java.awt.Color;
 public final class BroadcastTheme {
     private BroadcastTheme(){}
 
-    public static final String PACKAGE_ID="aware-broadcast-v3-breaking";
+    public static final String PACKAGE_ID="aware-broadcast-v4-motion";
 
     public static final Color BACKGROUND=new Color(6,10,16);
     public static final Color NAVY=new Color(9,21,36);
@@ -33,10 +33,10 @@ public final class BroadcastTheme {
     public static final Color POLITICAL_UNKNOWN=new Color(117,122,128);
     public static final Color PANEL=new Color(11,22,35);
 
-    public static final int HEADER_HEIGHT=170;
-    public static final int TICKER_HEIGHT=105;
+    public static final int HEADER_HEIGHT=118;
+    public static final int TICKER_HEIGHT=80;
     public static final int SAFE_SIDE=48;
     public static final int POLITICAL_PANEL_X=58;
-    public static final int POLITICAL_PANEL_Y=265;
-    public static final int POLITICAL_PANEL_BOTTOM_SAFE=1370;
+    public static final int POLITICAL_PANEL_Y=185;
+    public static final int POLITICAL_PANEL_BOTTOM_SAFE=1660;
 }
