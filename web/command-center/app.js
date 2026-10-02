@@ -24,7 +24,7 @@ function pct(v){return Math.max(0,Math.min(100,Number(v)||0))}
 function age(t){if(!t)return "";const d=(Date.now()-Date.parse(t))/60000;if(d<60)return Math.max(0,Math.round(d))+"m";if(d<1440)return Math.round(d/60)+"h";return Math.round(d/1440)+"d"}
 function num(v,d=0){return Number.isFinite(Number(v))?Number(v):d}
 const ACTIONABLE_WORTHY_STATUSES=new Set(["DISCOVERED","VERIFIED","WORTHY"]);
-const OPERATIONAL_FILTERS=new Set(["QUEUED","PRODUCING","FAILED","HOLD"]);
+const OPERATIONAL_FILTERS=new Set(["QUEUED","PRODUCING","HOLD"]);
 function isActionableWorthy(s){
   if(!s)return false;
   if(s.actionableWorthy!==undefined&&s.actionableWorthy!==null)return !!s.actionableWorthy;
@@ -117,7 +117,7 @@ function renderRails(){
   $("#railVerified").textContent=ss.filter(isActionableWorthy).length;
   $("#railQueued").textContent=allStories.filter(x=>x.status==="QUEUED").length;
   $("#railProducing").textContent=allStories.filter(x=>x.status==="PRODUCING").length;
-  $("#railFailed").textContent=allStories.filter(x=>x.status==="FAILED").length;
+  $("#railFailed").textContent=ss.filter(x=>x.status==="FAILED").length;
   $("#railComplete").textContent=ss.filter(x=>String(x.status).startsWith("COMPLETE")).length;
   $("#railToPost").textContent=ss.filter(x=>String(x.status)==="COMPLETE"&&!x.uploaded&&!x.scrapped).length;
   $("#railUploaded").textContent=ss.filter(x=>!!x.uploaded&&!x.scrapped).length;
