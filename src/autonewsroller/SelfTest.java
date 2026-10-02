@@ -338,6 +338,16 @@ public final class SelfTest {
         ok(((Number)initialCounts.get("worthy")).intValue()==1&&Boolean.TRUE.equals(initialPublic.get("actionableWorthy")),
                 "verified unqueued story appears in actionable Worthy");
 
+        ok(!Boolean.TRUE.equals(initialSnapshot.get("autoQueue")),"Command Center exposes automatic video creation as disabled");
+        filterStore.setAutoQueue(true);
+        ok(Boolean.TRUE.equals(filterStore.snapshot().get("autoQueue")),"runtime auto-video toggle enables automatic queueing");
+        CommandCenterStore persistedToggleStore=new CommandCenterStore(
+                filterDir.resolve("state.json"),BiasRegistry.load(filterDir.resolve("bias.json")),
+                false,0.68,12,null,75,0.74,0.82
+        );
+        ok(Boolean.TRUE.equals(persistedToggleStore.snapshot().get("autoQueue")),"auto-video toggle survives Command Center restart");
+        filterStore.setAutoQueue(false);
+
         filterStore.action(cluster.id,"HOLD");
         ok(((Number)Json.object(filterStore.snapshot().get("counts")).get("worthy")).intValue()==0,
                 "held story leaves actionable Worthy");
@@ -629,6 +639,12 @@ public final class SelfTest {
                         pipelineSource.contains("imageSource.put(\"negativePrompt\",negativePrompt)")&&
                         pipelineSource.contains("neutral white balance")&&!pipelineSource.contains("no blue wash"),
                 "pipeline separates positive and negative image conditioning and records the negative prompt");
+        String commandCenterHtml=Files.readString(root.resolve("web/command-center/index.html"));
+        String commandCenterJs=Files.readString(root.resolve("web/command-center/app.js"));
+        String commandCenterServer=Files.readString(root.resolve("src/autonewsroller/commandcenter/CommandCenterServer.java"));
+        ok(commandCenterHtml.contains("id=\"autoVideoToggle\"")&&commandCenterJs.contains("/api/settings/auto-video")&&
+                        commandCenterServer.contains("store.setAutoQueue(enabled)"),
+                "Command Center exposes a persisted auto-video creation toggle");
         String defaultsText=Files.readString(root.resolve("defaults.txt"));
         ok(defaultsText.contains("cyan cast")&&defaultsText.contains("electric blue lighting")&&defaultsText.contains("blue monochrome"),
                 "default negative prompt rejects synthetic cyan and electric-blue image grading");

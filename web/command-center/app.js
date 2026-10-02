@@ -91,6 +91,16 @@ function render(){
   $("#autoQueueState").textContent=state.autoQueue
     ? "SOFT "+Math.round(num(state.softWorthThreshold)*100)+"% // 1-SRC AUTO "+Math.round(num(state.singleSourceAutoQueueThreshold)*100)+"%"
     : "MANUAL QUEUE";
+  const autoToggle=$("#autoVideoToggle");
+  if(autoToggle){
+    autoToggle.classList.toggle("on",!!state.autoQueue);
+    autoToggle.classList.toggle("off",!state.autoQueue);
+    autoToggle.setAttribute("aria-pressed",state.autoQueue?"true":"false");
+    $("#autoVideoToggleText").textContent=state.autoQueue?"AUTO VIDEO ON":"AUTO VIDEO OFF";
+    autoToggle.title=state.autoQueue
+      ?"Automatic video queueing is ON. Click to switch to manual-only video creation."
+      :"Automatic video queueing is OFF. Manual MAKE VIDEO still works.";
+  }
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
   syncStoryAgeControl();renderRails();renderWorkers();renderStories();renderFeeds();renderVideos();drawRadar();
@@ -358,6 +368,21 @@ async function analyzeBias(id){
 }
 window.analyzeBias=analyzeBias;
 
+$("#autoVideoToggle").onclick=async()=>{
+  const enabled=!state.autoQueue;
+  const btn=$("#autoVideoToggle");
+  btn.disabled=true;
+  try{
+    await api("/api/settings/auto-video",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({enabled})
+    });
+    toast(enabled?"Automatic video creation enabled.":"Automatic video creation disabled. Manual MAKE VIDEO remains available.");
+    await loadState();
+  }catch(e){toast(e.message,true)}
+  finally{btn.disabled=false}
+};
 $("#scanBtn").onclick=async()=>{try{await api("/api/scan",{method:"POST"});toast("Full RSS scan started.")}catch(e){toast(e.message,true)}};
 $("#authBtn").onclick=authPrompt;
 function authPrompt(){const v=prompt("Command Center API token (leave blank for localhost/no-token):",token);if(v===null)return;token=v.trim();localStorage.setItem("autonewsToken",token);connectEvents();loadState()}
