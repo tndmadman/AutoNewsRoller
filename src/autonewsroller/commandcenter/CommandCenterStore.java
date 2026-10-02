@@ -16,7 +16,7 @@ import java.util.function.Consumer;
 public final class CommandCenterStore {
     private final Path statePath;
     private final BiasRegistry bias;
-    private final boolean autoQueue;
+    private boolean autoQueue;
     private final double autoThreshold;
     private final int maxQueued;
     private final int leaseSeconds;
@@ -476,6 +476,14 @@ public final class CommandCenterStore {
         Map<String,Object>m=stories.get(id);return m==null?null:deepCopyMap(m);
     }
 
+    public synchronized Map<String,Object> setAutoQueue(boolean enabled){
+        autoQueue=enabled;
+        persistQuiet();
+        Map<String,Object>payload=Map.of("autoQueue",autoQueue,"changedAt",Instant.now().toString());
+        emit("settings",payload);
+        return payload;
+    }
+
     public synchronized Map<String,Object> snapshot(){
         List<Map<String,Object>>ss=stories.values().stream().map(this::publicStory).sorted(Comparator.comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed()).toList();
         List<Map<String,Object>>ff=feeds.values().stream().map(CommandCenterStore::publicCopy).sorted(Comparator.comparing(x->String.valueOf(x.get("name")))).toList();
@@ -631,6 +639,7 @@ public final class CommandCenterStore {
         if(!Files.isRegularFile(statePath))return;
         try{
             Map<String,Object>root=Json.object(Json.read(statePath));copyMap(root.get("stories"),stories);copyMap(root.get("feeds"),feeds);copyMap(root.get("videos"),videos);
+            if(root.get("autoQueue") instanceof Boolean b)autoQueue=b;
             Object scan=root.get("lastScan");if(scan instanceof Map<?,?>)lastScan=new LinkedHashMap<>(Json.object(scan));
             boolean migrated=migrateVideoArchive();
             if(migrated||recoverExpiredLeases(false)+recoverExpiredBiasLeases(false)>0)persistQuiet();
@@ -687,7 +696,7 @@ public final class CommandCenterStore {
 
     private void persistQuiet(){
         try{
-            Map<String,Object>root=new LinkedHashMap<>();root.put("stories",stories);root.put("feeds",feeds);root.put("videos",videos);root.put("lastScan",lastScan);Json.write(statePath,root);
+            Map<String,Object>root=new LinkedHashMap<>();root.put("stories",stories);root.put("feeds",feeds);root.put("videos",videos);root.put("lastScan",lastScan);root.put("autoQueue",autoQueue);Json.write(statePath,root);
         }catch(Exception e){System.err.println("Command center state save failed: "+e.getMessage());}
     }
 }
