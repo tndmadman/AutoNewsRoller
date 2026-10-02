@@ -24,6 +24,7 @@ function pct(v){return Math.max(0,Math.min(100,Number(v)||0))}
 function age(t){if(!t)return "";const d=(Date.now()-Date.parse(t))/60000;if(d<60)return Math.max(0,Math.round(d))+"m";if(d<1440)return Math.round(d/60)+"h";return Math.round(d/1440)+"d"}
 function num(v,d=0){return Number.isFinite(Number(v))?Number(v):d}
 const ACTIONABLE_WORTHY_STATUSES=new Set(["DISCOVERED","VERIFIED","WORTHY"]);
+const OPERATIONAL_FILTERS=new Set(["QUEUED","PRODUCING","FAILED","HOLD"]);
 function isActionableWorthy(s){
   if(!s)return false;
   if(s.actionableWorthy!==undefined&&s.actionableWorthy!==null)return !!s.actionableWorthy;
@@ -83,7 +84,7 @@ function render(){
   const c=state.counts||{};
   $("#feedsOnline").textContent=c.feedsOk||0;$("#feedsFailed").textContent=(c.feedsFailed||0)+" failed";
   $("#storiesTracked").textContent=c.stories||0;$("#verifiedCount").textContent=(c.worthy||0)+" worthy / "+(c.verified||0)+" verified";
-  $("#queuedCount").textContent=c.queued||0;$("#producingCount").textContent=(c.producing||0)+" active";
+  $("#queuedCount").textContent=c.queued||0;$("#producingCount").textContent=(c.producing||0)+" active // "+(c.failed||0)+" failed";
   $("#completeCount").textContent=c.videoVersions!=null?c.videoVersions:(c.complete||0);
   $("#completeSub").textContent=(c.toPost||0)+" to post // "+(c.uploaded||0)+" uploaded // "+(c.scrapped||0)+" scrapped";
   $("#workersOnline").textContent=c.workersOnline||0;
@@ -113,6 +114,7 @@ function renderRails(){
   $("#railVerified").textContent=ss.filter(isActionableWorthy).length;
   $("#railQueued").textContent=ss.filter(x=>x.status==="QUEUED").length;
   $("#railProducing").textContent=ss.filter(x=>x.status==="PRODUCING").length;
+  $("#railFailed").textContent=allStories.filter(x=>x.status==="FAILED").length;
   $("#railComplete").textContent=ss.filter(x=>String(x.status).startsWith("COMPLETE")).length;
   $("#railToPost").textContent=ss.filter(x=>String(x.status)==="COMPLETE"&&!x.uploaded&&!x.scrapped).length;
   $("#railUploaded").textContent=ss.filter(x=>!!x.uploaded&&!x.scrapped).length;
@@ -149,9 +151,9 @@ function storyMatches(s){
     else if(filter==="WORTHY"){if(!isActionableWorthy(s))return false;}
     else if(status!==filter)return false;
   }
-  if(!withinStoryAge(s))return false;
+  if(!OPERATIONAL_FILTERS.has(filter)&&!withinStoryAge(s))return false;
   if(!q)return true;
-  return [s.topic,s.category,s.uploadedPlatform,s.uploadNote,s.scrapReason,...(s.publishers||[])].join(" ").toLowerCase().includes(q);
+  return [s.topic,s.category,s.uploadedPlatform,s.uploadNote,s.scrapReason,s.lastFailure,s.failureType,s.lastAssignedWorker,...(s.publishers||[])].join(" ").toLowerCase().includes(q);
 }
 function renderStories(){
   const root=$("#stories"),ss=(state.stories||[]).filter(storyMatches);
