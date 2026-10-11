@@ -293,3 +293,20 @@ test("scoped feed and worker SSE updates do not request or rebuild the full dash
       window.__feedCard===document.querySelector(".feed"))).toBe(true);
   }finally{await f.stop()}
 });
+
+test("a snapshot started before SSE cannot overwrite newer worker status",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator(".workerCard")).toHaveCount(5);
+    await page.waitForTimeout(350);
+    f.setGetDelay(900);
+    const count=f.getCount;
+    f.event("story");
+    await expect.poll(()=>f.getCount).toBeGreaterThan(count);
+    f.event("worker",{...f.state.workers[0],state:"PRODUCING"});
+    await expect(page.locator(".workerCard .workerState").first()).toContainText("PRODUCING");
+    await page.waitForTimeout(1200);
+    await expect(page.locator(".workerCard .workerState").first()).toContainText("PRODUCING");
+  }finally{await f.stop()}
+});
