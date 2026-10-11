@@ -278,14 +278,14 @@ public final class CommandCenterStore {
         if(bestVideo.isPresent()){
             Map<String,Object>m=bestVideo.get();
             Instant claimedAt=Instant.now();
-            m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
+            m.put("claimId",UUID.randomUUID().toString());m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
             int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
             appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY"));
             renewLease(m);
             persistQuiet();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
             job.put("jobType","VIDEO");job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
-            job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
+            job.put("claimId",m.get("claimId"));job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
             Map<String,Object>sourceMix=m.get("sourceMix") instanceof Map<?,?>?Json.object(m.get("sourceMix")):Map.of();
             Map<String,Object>framing=m.get("framingAnalysis") instanceof Map<?,?>?Json.object(m.get("framingAnalysis")):Map.of();
             PoliticalVisualData political=PoliticalVisualData.from(
@@ -314,10 +314,11 @@ public final class CommandCenterStore {
         return job;
     }
 
-    public synchronized void progress(String jobId,WorkerState state){progress(jobId,state,"");}
-    public synchronized void progress(String jobId,WorkerState state,String workerId){
+    public synchronized void progress(String jobId,WorkerState state){progress(jobId,state,"","");}
+    public synchronized void progress(String jobId,WorkerState state,String workerId){progress(jobId,state,workerId,"");}
+    public synchronized void progress(String jobId,WorkerState state,String workerId,String claimId){
         Map<String,Object>m=stories.get(jobId);
-        if(m==null||!workerOwnsActiveJob(m,workerId))return;
+        if(m==null||!workerOwnsActiveJob(m,workerId,claimId))return;
         String detail=state.detail()==null?"":state.detail();
         m.put("stage",state.stage().name());m.put("detail",detail);m.put("progress",Math.max(number(m.get("progress")),stageProgress(state.stage().name())));m.put("updatedAt",Instant.now().toString());renewLease(m);
         if(detail.startsWith("KOKORO USED")){m.put("ttsEngine","Kokoro");m.put("ttsVoice",valueAfter(detail,"voice="));}
@@ -333,7 +334,8 @@ public final class CommandCenterStore {
         String currentJob=String.valueOf(payload.getOrDefault("currentJob",""));
         if(!currentJob.isBlank()){
             Map<String,Object>story=stories.get(currentJob);
-            if(story!=null&&"PRODUCING".equals(String.valueOf(story.get("status")))&&workerId.equals(String.valueOf(story.get("assignedWorker")))){
+            if(story!=null&&"PRODUCING".equals(String.valueOf(story.get("status")))&&workerId.equals(String.valueOf(story.get("assignedWorker")))
+                    &&claimMatches(story,String.valueOf(payload.getOrDefault("claimId","")))){
                 renewLease(story);
             }else if(story!=null&&"ANALYZING".equals(String.valueOf(story.get("biasAnalysisStatus")))&&workerId.equals(String.valueOf(story.get("biasAssignedWorker")))){
                 story.put("biasAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());
@@ -375,17 +377,19 @@ public final class CommandCenterStore {
         if(recovered>0)persistQuiet();
     }
 
-    public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes){videoUploaded(jobId,path,filename,bytes,"");}
-    public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes,String workerId){
+    public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes){videoUploaded(jobId,path,filename,bytes,"","");}
+    public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes,String workerId){videoUploaded(jobId,path,filename,bytes,workerId,"");}
+    public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes,String workerId,String claimId){
         Map<String,Object>m=requireStory(jobId);
-        if(!workerOwnsActiveJob(m,workerId))throw new IllegalStateException("Video arrived from an inactive or superseded worker claim.");
+        if(!workerOwnsActiveJob(m,workerId,claimId))throw new IllegalStateException("Video arrived from an inactive or superseded worker claim.");
         m.put("serverVideo",path.toString());m.put("videoFilename",filename);m.put("videoBytes",bytes);m.put("stage","UPLOAD");m.put("progress",99);
         emit("story",publicStory(m));
     }
 
     public synchronized void complete(String jobId,Map<String,Object>metadata){
         Map<String,Object>m=requireStory(jobId);
-        if(!workerOwnsActiveJob(m,String.valueOf(metadata.getOrDefault("workerId",""))))
+        if(!workerOwnsActiveJob(m,String.valueOf(metadata.getOrDefault("workerId","")),
+                String.valueOf(metadata.getOrDefault("claimId",""))))
             throw new IllegalStateException("Completion rejected: inactive or superseded worker claim.");
         int version=nextVideoVersion(jobId);
         String versionId=videoVersionId(jobId,version);
@@ -498,10 +502,11 @@ public final class CommandCenterStore {
         return pub;
     }
 
-    public synchronized void fail(String jobId,String error){fail(jobId,error,"");}
-    public synchronized void fail(String jobId,String error,String workerId){
+    public synchronized void fail(String jobId,String error){fail(jobId,error,"","");}
+    public synchronized void fail(String jobId,String error,String workerId){fail(jobId,error,workerId,"");}
+    public synchronized void fail(String jobId,String error,String workerId,String claimId){
         Map<String,Object>m=stories.get(jobId);
-        if(m==null||!workerOwnsActiveJob(m,workerId))return;
+        if(m==null||!workerOwnsActiveJob(m,workerId,claimId))return;
         Instant now=Instant.now();
         int failures=integer(m.get("failureCount"))+1;
         String message=safe(error);
@@ -689,7 +694,7 @@ public final class CommandCenterStore {
                     "stage",failedStage,
                     "failureType","WORKER_LEASE_EXPIRED"
             ));
-            m.remove("assignedWorker");m.remove("jobStartedAt");m.remove("leaseUntil");
+            m.remove("assignedWorker");m.remove("jobStartedAt");m.remove("leaseUntil");m.remove("claimId");
             if(leaseRecoveries<=leaseRecoveryMaxRetries){
                 m.put("status","QUEUED");m.put("stage","QUEUED");m.put("progress",15);m.put("queuedAt",now.toString());
                 m.put("failureType","WORKER_LEASE_EXPIRED");
@@ -723,8 +728,15 @@ public final class CommandCenterStore {
     private static String valueAfter(String text,String marker){int i=text.indexOf(marker);return i<0?"":text.substring(i+marker.length()).trim();}
     private static String valueAfter(String text,String marker,String until){int i=text.indexOf(marker);if(i<0)return "";String tail=text.substring(i+marker.length());int j=tail.indexOf(until);return (j<0?tail:tail.substring(0,j)).trim();}
     private static String safe(String x){return x==null?"":x.length()>1000?x.substring(0,1000):x;}
-    private static boolean workerOwnsActiveJob(Map<String,Object>m,String workerId){
-        return "PRODUCING".equals(m.get("status"))&&(workerId==null||workerId.isBlank()||workerId.equals(m.get("assignedWorker")));
+    private static boolean claimMatches(Map<String,Object>m,String claimId){
+        // Older workers may not send a token. Updated workers always do, so stale
+        // callbacks remain distinguishable even when the same worker ID reclaims a job.
+        return claimId==null||claimId.isBlank()||claimId.equals(m.get("claimId"));
+    }
+    private static boolean workerOwnsActiveJob(Map<String,Object>m,String workerId,String claimId){
+        return "PRODUCING".equals(m.get("status"))
+            &&(workerId==null||workerId.isBlank()||workerId.equals(m.get("assignedWorker")))
+            &&claimMatches(m,claimId);
     }
     private static boolean isOnline(Map<String,Object>x){try{return Duration.between(Instant.parse(String.valueOf(x.get("lastSeen"))),Instant.now()).toSeconds()<45;}catch(Exception e){return false;}}
     private Map<String,Object>publicStory(Map<String,Object>m){Map<String,Object>x=new LinkedHashMap<>(m);x.remove("candidate");x.put("actionableWorthy",isActionableWorthy(m));return x;}
