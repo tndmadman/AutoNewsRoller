@@ -112,14 +112,14 @@ public final class RemoteWorker {
     }
 
     private Map<String,Object>uploadVideo(String jobId,Path file)throws Exception{
-        HttpRequest.Builder b=request("/api/jobs/"+enc(jobId)+"/video").timeout(Duration.ofMinutes(30)).header("Content-Type","video/mp4").header("X-Filename",file.getFileName().toString());
+        HttpRequest.Builder b=request("/api/jobs/"+enc(jobId)+"/video").timeout(Duration.ofMinutes(30)).header("Content-Type","video/mp4").header("X-Filename",file.getFileName().toString()).header("X-Worker-Id",workerId);
         HttpResponse<String>r=http.send(b.PUT(HttpRequest.BodyPublishers.ofFile(file)).build(),HttpResponse.BodyHandlers.ofString());
         if(r.statusCode()!=200)throw new IllegalStateException("video upload HTTP "+r.statusCode()+": "+r.body());
         return Json.object(Json.parse(r.body()));
     }
 
     private void progressSafe(String jobId,WorkerState event){
-        try{post("/api/jobs/"+enc(jobId)+"/progress",Map.of("stage",event.stage().name(),"detail",event.detail(),"timestamp",event.timestamp().toString()));}catch(Exception ignored){}
+        try{post("/api/jobs/"+enc(jobId)+"/progress",Map.of("stage",event.stage().name(),"detail",event.detail(),"timestamp",event.timestamp().toString(),"workerId",workerId));}catch(Exception ignored){}
     }
 
     private void heartbeatSafe(){
