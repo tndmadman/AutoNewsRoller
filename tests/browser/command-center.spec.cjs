@@ -2,9 +2,10 @@ const {test,expect}=require("@playwright/test");
 const http=require("node:http");
 const fs=require("node:fs");
 const path=require("node:path");
+const {execFileSync}=require("node:child_process");
 const ROOT=path.resolve(__dirname,"../..");
 const files={"": "index.html","/":"index.html","/app.js":"app.js","/styles.css":"styles.css"};
-function fixture(){
+function fixture(appOverride=null){
   const story={id:"story-1",topic:"Selected text must survive updates and worker activity",status:"VERIFIED",stage:"DISCOVERED",progress:12,score:.9,verified:true,worthy:true,
     latestPublishedAt:new Date().toISOString(),publishers:["Associated Press","Reuters"],category:"general",independentSources:2,sourceMix:{left:0,center:2,right:0,unknown:0}};
   const version={storyId:"story-1",versionId:"story-1#v1",version:1,current:true,topic:story.topic,
@@ -54,7 +55,7 @@ function fixture(){
     }
     const name=files[url.pathname];
     if(name){
-      const body=fs.readFileSync(path.join(ROOT,"web/command-center",name));
+      const body=name==="app.js"&&appOverride!==null?Buffer.from(appOverride):fs.readFileSync(path.join(ROOT,"web/command-center",name));
       res.writeHead(200,{"Content-Type":name.endsWith(".js")?"application/javascript":name.endsWith(".css")?"text/css":"text/html"});res.end(body);return;
     }
     res.writeHead(404);res.end("Not found");
@@ -154,4 +155,42 @@ test("snapshot begun before action cannot replace acknowledged result",async({pa
     await page.waitForTimeout(1400);
     await expect(page.locator(".storyCard .statusTag").first()).toContainText("QUEUED");
   }finally{await f.stop()}
+});
+
+test("before/after baseline: live refresh no longer replaces story cards",async({page})=>{
+  const baseline=execFileSync("git",["show","538370e30fd0dcbd011af47eaa868d4842c4c345:web/command-center/app.js"],{cwd:ROOT,encoding:"utf8"});
+  async function measure(app){
+    const f=fixture(app),url=await f.start();
+    try{
+      await page.goto(url);
+      await expect(page.locator(".storyCard")).toHaveCount(1);
+      await page.evaluate(()=>{
+        const root=document.getElementById("stories");
+        window.__domChurn=0;
+        window.__initialCard=root.firstElementChild;
+        window.__watch=new MutationObserver(entries=>{
+          for(const entry of entries)if(entry.target===root)window.__domChurn+=entry.removedNodes.length;
+        });
+        window.__watch.observe(root,{childList:true,subtree:false});
+      });
+      for(let i=0;i<10;i++){
+        f.state.workers[0].metrics.cpuLoad=20+i;
+        f.event("worker");
+        await page.waitForTimeout(430);
+      }
+      await page.waitForTimeout(500);
+      const metric=await page.evaluate(()=>{
+        window.__watch.disconnect();
+        return {removedStoryNodes:window.__domChurn,originalCardSurvived:window.__initialCard.isConnected};
+      });
+      return {...metric,refreshRequests:f.getCount};
+    }finally{await f.stop()}
+  }
+  const before=await measure(baseline);
+  const after=await measure(null);
+  console.log("Command Center live-refresh DOM churn benchmark",JSON.stringify({before,after}));
+  expect(before.removedStoryNodes).toBeGreaterThan(5);
+  expect(before.originalCardSurvived).toBe(false);
+  expect(after.removedStoryNodes).toBe(0);
+  expect(after.originalCardSurvived).toBe(true);
 });
