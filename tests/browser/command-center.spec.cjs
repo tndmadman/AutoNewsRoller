@@ -223,7 +223,15 @@ test("lost response after server commit is reported as uncertain and refreshes s
   try{
     await page.goto(url);
     await expect(page.locator(".storyCard")).toHaveCount(1);
-    f.dropNextPost();
+    // Emulate a committed server-side mutation whose response never reaches fetch.
+    // Routing is deterministic across Firefox/Chromium, unlike socket destruction
+    // after the Node HTTP request stream has completed.
+    await page.route("**/api/stories/story-1/action",async route=>{
+      const body=JSON.parse(route.request().postData()||"{}");
+      f.posts.push({path:"/api/stories/story-1/action",body});
+      f.story.status="QUEUED";f.story.stage="QUEUED";f.story.progress=15;f.state.counts.queued=1;
+      await route.abort("failed");
+    });
     await page.locator('.storyCard [data-command="MAKE"]').click();
     await expect(page.locator("#toast")).toContainText("may have completed");
     await expect(page.locator(".storyCard .statusTag").first()).toContainText("QUEUED");
