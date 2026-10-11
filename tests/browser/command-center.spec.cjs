@@ -98,7 +98,11 @@ test("pointerdown plus refresh before pointerup results in exactly one MAKE acti
     await page.goto(url);
     const button=page.locator('.storyCard [data-command="MAKE"]');
     await expect(button).toBeVisible();
+    await button.scrollIntoViewIfNeeded();
     const rect=await button.boundingBox();
+    const hit=await page.evaluate(({x,y})=>document.elementFromPoint(x,y)?.closest("[data-command]")?.dataset.command,
+      {x:rect.x+rect.width/2,y:rect.y+rect.height/2});
+    expect(hit).toBe("MAKE");
     await page.mouse.move(rect.x+rect.width/2,rect.y+rect.height/2);
     await page.mouse.down();
     f.story.progress=14;f.event("story");
