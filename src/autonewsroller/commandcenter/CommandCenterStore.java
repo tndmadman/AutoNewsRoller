@@ -32,6 +32,7 @@ public final class CommandCenterStore {
     private final Map<String,Map<String,Object>>videos=new LinkedHashMap<>();
     private final Map<String,String>processedOperations=new LinkedHashMap<>();
     private long lastHeartbeatSave;
+    private boolean stateDirty;
     private Map<String,Object>lastScan=new LinkedHashMap<>();
     private boolean scanning;
 
@@ -813,6 +814,9 @@ public final class CommandCenterStore {
     }
 
     private boolean alreadyHandled(String operationId,String identity){
+        // A previous required write may have failed after mutating memory.
+        // Never acknowledge its retry as completed until state is saved.
+        if(stateDirty)persistRequired();
         if(operationId==null||operationId.isBlank())return false;
         if(operationId.length()>128)throw new IllegalArgumentException("Operation ID too long.");
         String previous=processedOperations.get(operationId);
@@ -831,11 +835,11 @@ public final class CommandCenterStore {
         return root;
     }
     private void persistRequired(){
-        try{Json.write(statePath,persistenceState());}
-        catch(java.io.IOException e){throw new java.io.UncheckedIOException("Command Center state could not be saved",e);}
+        try{Json.write(statePath,persistenceState());stateDirty=false;}
+        catch(java.io.IOException e){stateDirty=true;throw new java.io.UncheckedIOException("Command Center state could not be saved",e);}
     }
     private void persistQuiet(){
-        try{Json.write(statePath,persistenceState());}
-        catch(Exception e){System.err.println("Command center state save failed: "+e.getMessage());}
+        try{Json.write(statePath,persistenceState());stateDirty=false;}
+        catch(Exception e){stateDirty=true;System.err.println("Command center state save failed: "+e.getMessage());}
     }
 }
