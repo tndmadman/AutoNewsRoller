@@ -155,14 +155,39 @@ public final class SelfTest {
         Map<String,Object>job=store.claim("test-worker",Map.of("duration",60,"encoder","x264","useComfy",false));
         NewsPipeline.Candidate rebuilt=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
         ok(rebuilt.cluster().id.equals(cluster.id)&&rebuilt.factPackage().independentSourceCount()>=2,"remote worker candidate round trip");
+        Map<String,Object>activeBefore=store.storyDetail(cluster.id);
+        store.action(cluster.id,"MAKE","repeated-making");
+        store.action(cluster.id,"WORTH","repeated-worthy");
+        Map<String,Object>activeAfter=store.storyDetail(cluster.id);
+        ok("PRODUCING".equals(activeAfter.get("status"))
+            &&Objects.equals(activeBefore.get("leaseUntil"),activeAfter.get("leaseUntil"))
+            &&Objects.equals(activeBefore.get("assignedWorker"),activeAfter.get("assignedWorker"))
+            &&Objects.equals(activeBefore.get("claimCount"),activeAfter.get("claimCount")),
+            "duplicate MAKE/WORTH cannot requeue or replace an active worker lease");
+        boolean rejectedHold=false;
+        try{store.action(cluster.id,"HOLD");}catch(IllegalStateException expected){rejectedHold=true;}
+        ok(rejectedHold&&"PRODUCING".equals(store.storyDetail(cluster.id).get("status")),
+            "manual HOLD cannot silently cancel a producing job");
+        store.progress(cluster.id,new WorkerState(1,1,PipelineStage.TTS,"stale worker",Instant.now()),"other-worker");
+        store.progress(cluster.id,new WorkerState(1,1,PipelineStage.TTS,"stale claim",Instant.now()),"test-worker","old-claim-token");
+        ok(Objects.equals(activeAfter.get("stage"),store.storyDetail(cluster.id).get("stage")),
+            "progress from another worker or an old claim cannot change the active job");
+        boolean rejectedStaleComplete=false;
+        try{store.complete(cluster.id,Map.of("workerId","test-worker","claimId","old-claim-token"));}
+        catch(IllegalStateException expected){rejectedStaleComplete=true;}
+        ok(rejectedStaleComplete&&"PRODUCING".equals(store.storyDetail(cluster.id).get("status")),
+            "late completion from an earlier claim cannot create a duplicate video version");
         store.fail(cluster.id,"expected test failure");
         Map<String,Object>failedRequeued=store.storyDetail(cluster.id);
         ok("QUEUED".equals(failedRequeued.get("status"))&&((Number)failedRequeued.get("failureCount")).intValue()==1&&failedRequeued.get("retryNotBefore")!=null,
                 "failed video job automatically returns to queue with retry metadata");
         store.action(cluster.id,"MAKE");
         Map<String,Object>manualRequeued=store.storyDetail(cluster.id);
-        ok("QUEUED".equals(manualRequeued.get("status"))&&manualRequeued.get("failureCount")==null&&manualRequeued.get("retryNotBefore")==null,
-                "manual MAKE resets automatic failure retry budget");
+        ok("QUEUED".equals(manualRequeued.get("status"))
+                &&Objects.equals(failedRequeued.get("failureCount"),manualRequeued.get("failureCount"))
+                &&Objects.equals(failedRequeued.get("retryNotBefore"),manualRequeued.get("retryNotBefore"))
+                &&Objects.equals(failedRequeued.get("queuedAt"),manualRequeued.get("queuedAt")),
+                "duplicate MAKE preserves queued retry metadata, timestamp, and retry budget");
 
         Article single=fresh.get(0);
         StoryCluster unverifiedCluster=new StoryCluster("manual-override-story",single.title(),List.of(single),Set.of(),"manual-override-fingerprint");
@@ -289,7 +314,15 @@ public final class SelfTest {
                 "unmarking returns video to TO POST while retaining manual upload history");
 
         String version1=String.valueOf(unmarkedStory.get("currentVideoVersionId"));
-        reloadedUploadStore.setUploadStatus(cluster.id,version1,true,"TikTok","version one posted");
+        reloadedUploadStore.setUploadStatus(cluster.id,version1,true,"TikTok","version one posted","version-one-upload");
+        int historyCount=((List<?>)reloadedUploadStore.storyDetail(cluster.id).get("uploadHistory")).size();
+        reloadedUploadStore.setUploadStatus(cluster.id,version1,true,"TikTok","version one posted","version-one-upload");
+        ok(((List<?>)reloadedUploadStore.storyDetail(cluster.id).get("uploadHistory")).size()==historyCount,
+            "duplicate upload operation ID does not append a second history entry");
+        boolean reusedIdRejected=false;
+        try{reloadedUploadStore.setScrapStatus(cluster.id,version1,true,"test","version-one-upload");}
+        catch(IllegalArgumentException expected){reusedIdRejected=true;}
+        ok(reusedIdRejected,"operation IDs cannot be reused for a different mutation");
         reloadedUploadStore.setScrapStatus(cluster.id,version1,true,"bad pacing");
         Map<String,Object>scrappedSnapshot=reloadedUploadStore.snapshot();
         Map<String,Object>scrappedCounts=Json.object(scrappedSnapshot.get("counts"));
@@ -330,7 +363,12 @@ public final class SelfTest {
                 "version one remains uploaded while fresh version two enters TO POST");
 
         String version2=String.valueOf(remadeStory.get("currentVideoVersionId"));
-        reloadedUploadStore.setScrapStatus(cluster.id,version2,true,"visual issue");
+        reloadedUploadStore.setScrapStatus(cluster.id,version2,true,"visual issue","scrap-version-two");
+        reloadedUploadStore.setScrapStatus(cluster.id,version2,true,"visual issue","scrap-version-two");
+        Map<String,Object>v1=Json.object(((List<?>)reloadedUploadStore.snapshot().get("videos")).stream()
+            .filter(v->version1.equals(Json.object(v).get("versionId"))).findFirst().orElseThrow());
+        ok(!Boolean.TRUE.equals(v1.get("scrapped")) && Boolean.TRUE.equals(reloadedUploadStore.storyDetail(cluster.id).get("scrapped")),
+            "scrapping current version does not affect older version; duplicate request is safe");
         CommandCenterStore reloadedVersions=new CommandCenterStore(mediaState,BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null);
         Map<String,Object>persistedVersionStory=reloadedVersions.storyDetail(cluster.id);
         Map<String,Object>persistedVersionCounts=Json.object(reloadedVersions.snapshot().get("counts"));

@@ -1,0 +1,10 @@
+{
+  "name": "autonewsroller-command-center-tests",
+  "private": true,
+  "scripts": {
+    "test:browser": "playwright test tests/browser/command-center.spec.cjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

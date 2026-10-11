@@ -20,7 +20,7 @@ public final class RemoteWorker {
     private final String controller,workerId,token;
     private final HttpClient http;
     private final ScheduledExecutorService heartbeat=Executors.newSingleThreadScheduledExecutor();
-    private volatile String state="IDLE",currentJob="",currentTopic="";
+    private volatile String state="IDLE",currentJob="",currentTopic="",currentClaimId="";
     private volatile boolean running=true;
 
     public RemoteWorker(Path root,NewsConfig cfg,String controller,String workerId,String token){
@@ -55,7 +55,7 @@ public final class RemoteWorker {
     private void runJob(Map<String,Object>job){
         String jobId=String.valueOf(job.get("jobId"));
         String jobType=String.valueOf(job.getOrDefault("jobType","VIDEO")).toUpperCase(Locale.ROOT);
-        currentJob=jobId;currentTopic=String.valueOf(job.getOrDefault("topic",""));state="POLITICAL_ANALYSIS".equals(jobType)?"ANALYZING_BIAS":"PRODUCING";
+        currentJob=jobId;currentClaimId=String.valueOf(job.getOrDefault("claimId",""));currentTopic=String.valueOf(job.getOrDefault("topic",""));state="POLITICAL_ANALYSIS".equals(jobType)?"ANALYZING_BIAS":"PRODUCING";
         if("POLITICAL_ANALYSIS".equals(jobType)){runPoliticalAnalysis(job);return;}
         try{
             NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
@@ -71,26 +71,27 @@ public final class RemoteWorker {
             System.out.println("Claimed job: "+currentTopic+" | durationTarget="+duration+"s | comfy="+useComfy+" required="+requireComfy+" images="+comfyImages+" | encoder="+encoder);
             String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
             Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+stamp);
-            NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,event->progressSafe(jobId,event));
+            final String claimId=currentClaimId;
+            NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,event->progressSafe(jobId,claimId,event));
             PoliticalVisualData political=job.get("politicalVisualData") instanceof Map<?,?>?PoliticalVisualData.fromMap(Json.object(job.get("politicalVisualData"))):null;
             Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,dryRun);
             if(!dryRun&&output.toString().toLowerCase(Locale.ROOT).endsWith(".mp4")){
-                Map<String,Object>upload=uploadVideo(jobId,output);
+                Map<String,Object>upload=uploadVideo(jobId,claimId,output);
                 Map<String,Object>complete=new LinkedHashMap<>();
-                complete.put("workerId",workerId);complete.put("localPath",output.toString());complete.put("uploaded",upload);
+                complete.put("workerId",workerId);complete.put("claimId",claimId);complete.put("localPath",output.toString());complete.put("uploaded",upload);
                 complete.put("completedAt",Instant.now().toString());
                 Path sidecar=output.resolveSibling(output.getFileName()+".json");
                 if(Files.isRegularFile(sidecar))try{complete.put("sidecar",Json.read(sidecar));}catch(Exception ignored){}
                 post("/api/jobs/"+enc(jobId)+"/complete",complete);
             }else{
-                post("/api/jobs/"+enc(jobId)+"/complete",Map.of("workerId",workerId,"dryRun",true,"localPath",output.toString(),"completedAt",Instant.now().toString()));
+                post("/api/jobs/"+enc(jobId)+"/complete",Map.of("workerId",workerId,"claimId",claimId,"dryRun",true,"localPath",output.toString(),"completedAt",Instant.now().toString()));
             }
             System.out.println("Worker completed: "+currentTopic);
         }catch(Exception e){
             e.printStackTrace();
-            try{post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));}catch(Exception ignored){}
+            try{post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"claimId",currentClaimId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));}catch(Exception ignored){}
         }finally{
-            state="IDLE";currentJob="";currentTopic="";
+            state="IDLE";currentJob="";currentTopic="";currentClaimId="";
         }
     }
 
@@ -111,20 +112,20 @@ public final class RemoteWorker {
         }
     }
 
-    private Map<String,Object>uploadVideo(String jobId,Path file)throws Exception{
-        HttpRequest.Builder b=request("/api/jobs/"+enc(jobId)+"/video").timeout(Duration.ofMinutes(30)).header("Content-Type","video/mp4").header("X-Filename",file.getFileName().toString());
+    private Map<String,Object>uploadVideo(String jobId,String claimId,Path file)throws Exception{
+        HttpRequest.Builder b=request("/api/jobs/"+enc(jobId)+"/video").timeout(Duration.ofMinutes(30)).header("Content-Type","video/mp4").header("X-Filename",file.getFileName().toString()).header("X-Worker-Id",workerId).header("X-Claim-Id",claimId);
         HttpResponse<String>r=http.send(b.PUT(HttpRequest.BodyPublishers.ofFile(file)).build(),HttpResponse.BodyHandlers.ofString());
         if(r.statusCode()!=200)throw new IllegalStateException("video upload HTTP "+r.statusCode()+": "+r.body());
         return Json.object(Json.parse(r.body()));
     }
 
-    private void progressSafe(String jobId,WorkerState event){
-        try{post("/api/jobs/"+enc(jobId)+"/progress",Map.of("stage",event.stage().name(),"detail",event.detail(),"timestamp",event.timestamp().toString()));}catch(Exception ignored){}
+    private void progressSafe(String jobId,String claimId,WorkerState event){
+        try{post("/api/jobs/"+enc(jobId)+"/progress",Map.of("stage",event.stage().name(),"detail",event.detail(),"timestamp",event.timestamp().toString(),"workerId",workerId,"claimId",claimId));}catch(Exception ignored){}
     }
 
     private void heartbeatSafe(){
         try{
-            Map<String,Object>m=new LinkedHashMap<>();m.put("id",workerId);m.put("state",state);m.put("currentJob",currentJob);m.put("currentTopic",currentTopic);m.put("metrics",SystemMetrics.snapshot());m.put("timestamp",Instant.now().toString());
+            Map<String,Object>m=new LinkedHashMap<>();m.put("id",workerId);m.put("state",state);m.put("currentJob",currentJob);m.put("currentTopic",currentTopic);m.put("claimId",currentClaimId);m.put("metrics",SystemMetrics.snapshot());m.put("timestamp",Instant.now().toString());
             post("/api/workers/heartbeat",m);
         }catch(Exception e){System.err.println("Worker heartbeat failed: "+e.getMessage());}
     }
