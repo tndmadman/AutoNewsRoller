@@ -56,3 +56,22 @@ jobs:
           curl --fail --silent http://127.0.0.1:18787/api/state > /tmp/state.json
           curl --fail --silent http://127.0.0.1:18787/ | grep -q "AUTONEWSROLLER"
           grep -q '"ok":true' /tmp/health.json
+
+  dashboard-browser-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install browser test runner
+        run: npm install --no-audit --no-fund
+      - name: Install Chromium and Firefox
+        run: npx playwright install --with-deps chromium firefox
+      - name: Test selection stability, click handling and video version identity
+        run: npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-test-results
+          path: test-results/
