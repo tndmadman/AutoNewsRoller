@@ -190,7 +190,7 @@ public final class CommandCenterServer {
                     Map<String,Object>b=bodyObject(x);
                     autonewsroller.orchestration.PipelineStage stage;
                     try{stage=autonewsroller.orchestration.PipelineStage.valueOf(String.valueOf(b.getOrDefault("stage","VERIFY")));}catch(Exception e){stage=autonewsroller.orchestration.PipelineStage.VERIFY;}
-                    store.progress(id,new autonewsroller.orchestration.WorkerState(1,1,stage,String.valueOf(b.getOrDefault("detail","")),Instant.now()),String.valueOf(b.getOrDefault("workerId","")));
+                    store.progress(id,new autonewsroller.orchestration.WorkerState(1,1,stage,String.valueOf(b.getOrDefault("detail","")),Instant.now()),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")));
                     json(x,200,Map.of("ok",true));
                 }
                 case "video"->{
@@ -201,7 +201,9 @@ public final class CommandCenterServer {
                     Path out=unique(dir,id+"_"+filename);
                     try(InputStream in=x.getRequestBody();OutputStream os=Files.newOutputStream(out,StandardOpenOption.CREATE_NEW)){in.transferTo(os);}
                     long bytes=Files.size(out);
-                    try{store.videoUploaded(id,out,out.getFileName().toString(),bytes,String.valueOf(x.getRequestHeaders().getFirst("X-Worker-Id")==null?"":x.getRequestHeaders().getFirst("X-Worker-Id")));}
+                    try{store.videoUploaded(id,out,out.getFileName().toString(),bytes,
+                            String.valueOf(x.getRequestHeaders().getFirst("X-Worker-Id")==null?"":x.getRequestHeaders().getFirst("X-Worker-Id")),
+                            String.valueOf(x.getRequestHeaders().getFirst("X-Claim-Id")==null?"":x.getRequestHeaders().getFirst("X-Claim-Id")));}
                     catch(RuntimeException e){Files.deleteIfExists(out);throw e;}
                     json(x,200,Map.of("ok",true,"filename",out.getFileName().toString(),"bytes",bytes));
                 }
@@ -216,7 +218,7 @@ public final class CommandCenterServer {
                 }
                 case "fail"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    Map<String,Object>b=bodyObject(x);store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")),String.valueOf(b.getOrDefault("workerId","")));json(x,200,Map.of("ok",true));
+                    Map<String,Object>b=bodyObject(x);store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")));json(x,200,Map.of("ok",true));
                 }
                 case "bias-complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
