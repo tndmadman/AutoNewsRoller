@@ -114,7 +114,8 @@ public final class CommandCenterServer {
         if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         Map<String,Object>body=bodyObject(x);
         if(!(body.get("enabled") instanceof Boolean enabled)){json(x,400,Map.of("error","enabled boolean required"));return;}
-        json(x,200,store.setAutoQueue(enabled));
+        try{json(x,200,store.setAutoQueue(enabled));}
+        catch(UncheckedIOException e){json(x,500,Map.of("error","Unable to save auto-video setting"));}
     }
 
     private void stories(HttpExchange x)throws IOException{
@@ -128,7 +129,7 @@ public final class CommandCenterServer {
                 Map<String,Object>m=store.storyDetail(id);if(m==null){json(x,404,Map.of("error","story not found"));return;}json(x,200,m);return;
             }
             if(p.length>=2&&"action".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
-                Map<String,Object>body=bodyObject(x);String action=String.valueOf(body.getOrDefault("action",""));json(x,200,store.action(id,action));return;
+                Map<String,Object>body=bodyObject(x);String action=String.valueOf(body.getOrDefault("action",""));json(x,200,store.action(id,action,String.valueOf(body.getOrDefault("operationId",""))));return;
             }
             if(p.length>=2&&"upload-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>body=bodyObject(x);
@@ -136,20 +137,21 @@ public final class CommandCenterServer {
                 String platform=String.valueOf(body.getOrDefault("platform",""));
                 String note=String.valueOf(body.getOrDefault("note",""));
                 String versionId=String.valueOf(body.getOrDefault("versionId",""));
-                json(x,200,store.setUploadStatus(id,versionId,uploaded,platform,note));return;
+                json(x,200,store.setUploadStatus(id,versionId,uploaded,platform,note,String.valueOf(body.getOrDefault("operationId",""))));return;
             }
             if(p.length>=2&&"scrap-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>body=bodyObject(x);
                 boolean scrapped=Boolean.TRUE.equals(body.get("scrapped"));
                 String reason=String.valueOf(body.getOrDefault("reason",""));
                 String versionId=String.valueOf(body.getOrDefault("versionId",""));
-                json(x,200,store.setScrapStatus(id,versionId,scrapped,reason));return;
+                json(x,200,store.setScrapStatus(id,versionId,scrapped,reason,String.valueOf(body.getOrDefault("operationId",""))));return;
             }
             if(p.length>=2&&"analyze-bias".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
-                json(x,202,store.queuePoliticalAnalysis(id));return;
+                Map<String,Object>b=bodyObject(x);json(x,202,store.queuePoliticalAnalysis(id,String.valueOf(b.getOrDefault("operationId",""))));return;
             }
             method(x);
-        }catch(IllegalStateException e){json(x,409,Map.of("error",safe(e.getMessage())));}
+        }catch(UncheckedIOException e){json(x,500,Map.of("error","State save failed; check server logs."));}
+        catch(IllegalStateException e){json(x,409,Map.of("error",safe(e.getMessage())));}
         catch(IllegalArgumentException e){json(x,400,Map.of("error",safe(e.getMessage())));}
     }
 
@@ -188,7 +190,7 @@ public final class CommandCenterServer {
                     Map<String,Object>b=bodyObject(x);
                     autonewsroller.orchestration.PipelineStage stage;
                     try{stage=autonewsroller.orchestration.PipelineStage.valueOf(String.valueOf(b.getOrDefault("stage","VERIFY")));}catch(Exception e){stage=autonewsroller.orchestration.PipelineStage.VERIFY;}
-                    store.progress(id,new autonewsroller.orchestration.WorkerState(1,1,stage,String.valueOf(b.getOrDefault("detail","")),Instant.now()));
+                    store.progress(id,new autonewsroller.orchestration.WorkerState(1,1,stage,String.valueOf(b.getOrDefault("detail","")),Instant.now()),String.valueOf(b.getOrDefault("workerId","")));
                     json(x,200,Map.of("ok",true));
                 }
                 case "video"->{
@@ -198,7 +200,9 @@ public final class CommandCenterServer {
                     Path dir=root.resolve("output/command_center/videos");Files.createDirectories(dir);
                     Path out=unique(dir,id+"_"+filename);
                     try(InputStream in=x.getRequestBody();OutputStream os=Files.newOutputStream(out,StandardOpenOption.CREATE_NEW)){in.transferTo(os);}
-                    long bytes=Files.size(out);store.videoUploaded(id,out,out.getFileName().toString(),bytes);
+                    long bytes=Files.size(out);
+                    try{store.videoUploaded(id,out,out.getFileName().toString(),bytes,String.valueOf(x.getRequestHeaders().getFirst("X-Worker-Id")==null?"":x.getRequestHeaders().getFirst("X-Worker-Id")));}
+                    catch(RuntimeException e){Files.deleteIfExists(out);throw e;}
                     json(x,200,Map.of("ok",true,"filename",out.getFileName().toString(),"bytes",bytes));
                 }
                 case "complete"->{
@@ -212,7 +216,7 @@ public final class CommandCenterServer {
                 }
                 case "fail"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    Map<String,Object>b=bodyObject(x);store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")));json(x,200,Map.of("ok",true));
+                    Map<String,Object>b=bodyObject(x);store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")),String.valueOf(b.getOrDefault("workerId","")));json(x,200,Map.of("ok",true));
                 }
                 case "bias-complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
@@ -228,6 +232,7 @@ public final class CommandCenterServer {
                 default->json(x,404,Map.of("error","unknown job operation"));
             }
         }catch(IllegalArgumentException e){json(x,404,Map.of("error",safe(e.getMessage())));}
+        catch(IllegalStateException e){json(x,409,Map.of("error",safe(e.getMessage())));}
         catch(Exception e){json(x,500,Map.of("error",safe(e.getMessage())));}
     }
 
