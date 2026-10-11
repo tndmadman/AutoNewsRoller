@@ -739,7 +739,7 @@ public final class CommandCenterStore {
             &&claimMatches(m,claimId);
     }
     private static boolean isOnline(Map<String,Object>x){try{return Duration.between(Instant.parse(String.valueOf(x.get("lastSeen"))),Instant.now()).toSeconds()<45;}catch(Exception e){return false;}}
-    private Map<String,Object>publicStory(Map<String,Object>m){Map<String,Object>x=new LinkedHashMap<>(m);x.remove("candidate");x.put("actionableWorthy",isActionableWorthy(m));return x;}
+    private Map<String,Object>publicStory(Map<String,Object>m){Map<String,Object>x=new LinkedHashMap<>(m);x.remove("candidate");x=deepCopyMap(x);x.put("actionableWorthy",isActionableWorthy(m));return x;}
     private static boolean isActionableWorthy(Map<String,Object>m){
         if(!Boolean.TRUE.equals(m.get("worthy")))return false;
         String status=String.valueOf(m.getOrDefault("status",""));
