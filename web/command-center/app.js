@@ -2,6 +2,8 @@ const $=s=>document.querySelector(s);
 let state={stories:[],feeds:[],workers:[],videos:[],counts:{}}, token="", activeFilter="ALL", eventSource=null, refreshTimer=null;
 let refreshInFlight=null, refreshAgain=false, stateEpoch=0, pointerTarget=null;
 const pendingActions=new Map();
+let liveSequence=0;
+const liveOverrides=new Map();
 document.addEventListener("pointerdown",e=>{pointerTarget=e.target},true);
 document.addEventListener("pointerup",()=>setTimeout(()=>{pointerTarget=null},150),true);
 document.addEventListener("pointercancel",()=>{pointerTarget=null},true);
@@ -81,11 +83,16 @@ function toast(msg,error=false){const t=$("#toast");t.textContent=msg;t.classNam
 // One network refresh at a time. Mutations invalidate responses started before their acknowledgement.
 async function loadState(){
   if(refreshInFlight){refreshAgain=true;return refreshInFlight}
-  const epoch=stateEpoch;
+  const epoch=stateEpoch, liveAtStart=liveSequence;
   refreshInFlight=(async()=>{
     try{
       const snapshot=await api("/api/state");
       if(epoch!==stateEpoch){refreshAgain=true;return}
+      // A worker/feed event may arrive while this GET is in flight.
+      // Reapply just those newer entities so the older snapshot cannot undo them.
+      for(const {sequence,event} of liveOverrides.values()){
+        if(sequence>liveAtStart)mergeLiveEntity(snapshot,event);
+      }
       state=snapshot;
       $("#connection").textContent="LIVE";$("#connection").className="pill ok";
       render();
@@ -542,36 +549,46 @@ document.querySelectorAll(".rail").forEach(b=>b.onclick=()=>{
 
 // Worker and feed SSE payloads are full entity updates. Render only their keyed
 // rows; retain the periodic snapshot to reconcile offline status and missed events.
-function applyLiveEvent(event){
+function mergeLiveEntity(target,event){
   const p=event.payload||{};
   if(event.type==="worker"&&p.id){
-    const ws=state.workers||[];
+    const ws=target.workers||[];
     const idx=ws.findIndex(w=>w.id===p.id);
     const value={...(idx>=0?ws[idx]:{}),...p,online:true};
     if(idx<0)ws.push(value);else ws[idx]=value;
-    state.workers=ws;
-    state.counts=state.counts||{};
-    state.counts.workersOnline=ws.filter(x=>x.online).length;
-    $("#workersOnline").textContent=state.counts.workersOnline;
-    renderWorkers();
+    target.workers=ws;
+    target.counts=target.counts||{};
+    target.counts.workersOnline=ws.filter(x=>x.online).length;
     return true;
   }
   if(event.type==="feed"&&p.url){
-    const feeds=state.feeds||[];
+    const feeds=target.feeds||[];
     const idx=feeds.findIndex(f=>f.url===p.url);
     const value={...(idx>=0?feeds[idx]:{}),...p};
     if(idx<0)feeds.push(value);else feeds[idx]=value;
-    state.feeds=feeds;
-    state.counts=state.counts||{};
-    state.counts.feedsOk=feeds.filter(x=>x.status==="OK").length;
-    state.counts.feedsFailed=feeds.filter(x=>x.status==="FAILED").length;
-    $("#feedsOnline").textContent=state.counts.feedsOk;
-    $("#feedsFailed").textContent=state.counts.feedsFailed+" failed";
-    $("#feedSummary").textContent=feeds.length+" FEEDS";
-    renderFeeds();
+    target.feeds=feeds;
+    target.counts=target.counts||{};
+    target.counts.feedsOk=feeds.filter(x=>x.status==="OK").length;
+    target.counts.feedsFailed=feeds.filter(x=>x.status==="FAILED").length;
     return true;
   }
   return false;
+}
+function applyLiveEvent(event){
+  if(!mergeLiveEntity(state,event))return false;
+  const p=event.payload;
+  const key=event.type+":"+(event.type==="worker"?p.id:p.url);
+  liveOverrides.set(key,{sequence:++liveSequence,event});
+  if(event.type==="worker"){
+    $("#workersOnline").textContent=state.counts.workersOnline;
+    renderWorkers();
+  }else{
+    $("#feedsOnline").textContent=state.counts.feedsOk;
+    $("#feedsFailed").textContent=state.counts.feedsFailed+" failed";
+    $("#feedSummary").textContent=state.feeds.length+" FEEDS";
+    renderFeeds();
+  }
+  return true;
 }
 function connectEvents(){
   if(eventSource)eventSource.close();
