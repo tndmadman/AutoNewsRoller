@@ -15,7 +15,7 @@ function fixture(appOverride=null){
     counts:{stories:1,worthy:1,verified:1,feedsOk:90,feedsFailed:0,workersOnline:5,queued:0,producing:0,complete:1,videoVersions:1,toPost:1,uploaded:0,scrapped:0},
     autoQueue:false,autoThreshold:.75,scanning:false};
   const clients=new Set(),posts=[];
-  let getDelay=0,postDelay=0,getCount=0;
+  let getDelay=0,postDelay=0,getCount=0,postStatus=200,dropResponse=false;
   const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,"http://127.0.0.1");
     if(url.pathname==="/api/events"){
@@ -31,6 +31,11 @@ function fixture(appOverride=null){
       let raw="";for await(const chunk of req)raw+=chunk;
       const body=raw?JSON.parse(raw):{};
       posts.push({path:url.pathname,body});
+      if(postStatus!==200){
+        const status=postStatus, response=JSON.stringify({error:status===409?"Job is already producing":status===500?"State could not be saved":"authentication required"});
+        setTimeout(()=>{if(!res.writableEnded){res.writeHead(status,{"Content-Type":"application/json"});res.end(response)}},postDelay);
+        return;
+      }
       let storyResult={...story};
       if(url.pathname.endsWith("/action")){
         const a=body.action;
@@ -50,6 +55,7 @@ function fixture(appOverride=null){
         state.counts.scrapped=+version.scrapped;
         storyResult={...story};
       }
+      if(dropResponse){dropResponse=false;req.socket.destroy();return}
       const response=JSON.stringify(storyResult);
       setTimeout(()=>{if(!res.writableEnded){res.writeHead(200,{"Content-Type":"application/json"});res.end(response)}},postDelay);return;
     }
@@ -64,7 +70,7 @@ function fixture(appOverride=null){
     const data="data: "+JSON.stringify({type,timestamp:new Date().toISOString(),payload:{status:"UPDATE"}})+"\n\n";
     for(const client of clients)if(!client.writableEnded)client.write(data);
   }
-  return {server,state,story,version,posts,event,setGetDelay:v=>{getDelay=v},setPostDelay:v=>{postDelay=v},get getCount(){return getCount},
+  return {server,state,story,version,posts,event,setGetDelay:v=>{getDelay=v},setPostDelay:v=>{postDelay=v},setPostStatus:v=>{postStatus=v},dropNextPost:()=>{dropResponse=true},get getCount(){return getCount},
     async start(){await new Promise(ok=>server.listen(0,"127.0.0.1",ok));return "http://127.0.0.1:"+server.address().port},
     async stop(){for(const client of clients)client.destroy();await new Promise(ok=>server.close(ok))}};
 }
@@ -81,6 +87,7 @@ test("selected text and card identity survive thirty seconds of live worker/feed
     });
     for(let i=0;i<310;i++){
       f.state.workers[0].metrics.cpuLoad=i%100;
+      f.story.progress=i%100;
       f.state.feeds[i%90].status=i%2?"OK":"SCANNING";
       f.event("worker");f.event("feed");
       await page.waitForTimeout(100);
@@ -193,4 +200,66 @@ test("before/after baseline: live refresh no longer replaces story cards",async(
   expect(before.originalCardSurvived).toBe(false);
   expect(after.removedStoryNodes).toBe(0);
   expect(after.originalCardSurvived).toBe(true);
+});
+
+test("HTTP 401, 409, and 500 display errors and restore usable controls",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    const button=page.locator('.storyCard [data-command="MAKE"]');
+    await expect(button).toBeVisible();
+    for(const [status,message] of [[401,"Authentication required"],[409,"already producing"],[500,"could not be saved"]]){
+      f.setPostStatus(status);
+      await button.click();
+      await expect(page.locator("#toast")).toContainText(message);
+      await expect(button).toBeEnabled();
+    }
+    expect(f.posts.filter(p=>p.body.action==="MAKE").length).toBe(3);
+    await expect(page.locator(".storyCard .statusTag").first()).toContainText("VERIFIED");
+  }finally{await f.stop()}
+});
+test("lost response after server commit is reported as uncertain and refreshes state",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator(".storyCard")).toHaveCount(1);
+    f.dropNextPost();
+    await page.locator('.storyCard [data-command="MAKE"]').click();
+    await expect(page.locator("#toast")).toContainText("may have completed");
+    await expect(page.locator(".storyCard .statusTag").first()).toContainText("QUEUED");
+    expect(f.posts.filter(p=>p.body.action==="MAKE").length).toBe(1);
+  }finally{await f.stop()}
+});
+test("expanded failure history remains open during live updates",async({page})=>{
+  const f=fixture();f.story.status="FAILED";f.story.failureType="RENDER_FAILURE";f.story.lastFailure="retry budget exhausted";
+  f.story.productionAttempts=[{event:"FAILED",attempt:1,stage:"RENDER",worker:"worker-1",error:"timeout",at:new Date().toISOString()}];
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    const details=page.locator(".storyCard details.attemptHistory");
+    await expect(details).toBeVisible();
+    await details.locator("summary").click();
+    await expect(details).toHaveAttribute("open","");
+    for(let i=0;i<12;i++){f.story.progress=i;f.event("story");await page.waitForTimeout(340)}
+    await expect(details).toHaveAttribute("open","");
+  }finally{await f.stop()}
+});
+test("high-volume dashboard preserves card identity with 120 stories, 90 feeds and five workers",async({page})=>{
+  const f=fixture();
+  f.state.stories=Array.from({length:120},(_,i)=>({...f.story,id:"story-"+i,topic:"High-volume story #"+i}));
+  f.state.counts.stories=120;
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    const cards=page.locator(".storyCard");
+    await expect(cards).toHaveCount(120);
+    await page.evaluate(()=>{window.__firstCard=document.querySelector(".storyCard")});
+    for(let i=0;i<12;i++){
+      f.state.workers[i%5].metrics.cpuLoad=i*5;
+      f.event("worker");await page.waitForTimeout(340);
+    }
+    expect(await page.evaluate(()=>window.__firstCard===document.querySelector(".storyCard")&&window.__firstCard.isConnected)).toBe(true);
+    await expect(cards).toHaveCount(120);
+    await expect(page.locator(".feed")).toHaveCount(90);
+  }finally{await f.stop()}
 });
