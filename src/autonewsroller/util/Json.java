@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.util.*;
 
 /** Tiny dependency-free JSON parser/writer for configuration and sidecar files. */
@@ -37,7 +39,14 @@ public final class Json {
     public static void write(Path path, Object value) throws IOException {
         Path parent = path.getParent();
         if (parent != null) Files.createDirectories(parent);
-        Files.writeString(path, stringify(value) + System.lineSeparator(), StandardCharsets.UTF_8);
+        // Never leave a partially written state file after a crash or interrupted save.
+        Path directory=parent==null?Path.of("."):parent;
+        Path temp=Files.createTempFile(directory,".json-write-",".tmp");
+        try {
+            Files.writeString(temp, stringify(value) + System.lineSeparator(), StandardCharsets.UTF_8);
+            try{Files.move(temp,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}
+            catch(AtomicMoveNotSupportedException e){Files.move(temp,path,StandardCopyOption.REPLACE_EXISTING);}
+        }finally{Files.deleteIfExists(temp);}
     }
 
     public static String stringify(Object value) {
