@@ -169,8 +169,14 @@ public final class SelfTest {
         ok(rejectedHold&&"PRODUCING".equals(store.storyDetail(cluster.id).get("status")),
             "manual HOLD cannot silently cancel a producing job");
         store.progress(cluster.id,new WorkerState(1,1,PipelineStage.TTS,"stale worker",Instant.now()),"other-worker");
+        store.progress(cluster.id,new WorkerState(1,1,PipelineStage.TTS,"stale claim",Instant.now()),"test-worker","old-claim-token");
         ok(Objects.equals(activeAfter.get("stage"),store.storyDetail(cluster.id).get("stage")),
-            "progress from another worker cannot change the active job");
+            "progress from another worker or an old claim cannot change the active job");
+        boolean rejectedStaleComplete=false;
+        try{store.complete(cluster.id,Map.of("workerId","test-worker","claimId","old-claim-token"));}
+        catch(IllegalStateException expected){rejectedStaleComplete=true;}
+        ok(rejectedStaleComplete&&"PRODUCING".equals(store.storyDetail(cluster.id).get("status")),
+            "late completion from an earlier claim cannot create a duplicate video version");
         store.fail(cluster.id,"expected test failure");
         Map<String,Object>failedRequeued=store.storyDetail(cluster.id);
         ok("QUEUED".equals(failedRequeued.get("status"))&&((Number)failedRequeued.get("failureCount")).intValue()==1&&failedRequeued.get("retryNotBefore")!=null,
