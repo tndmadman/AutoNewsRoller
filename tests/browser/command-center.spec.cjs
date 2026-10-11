@@ -130,7 +130,7 @@ test("five click burst locks pending action and never posts duplicate",async({pa
       for(let i=0;i<5;i++)button.dispatchEvent(new MouseEvent("click",{bubbles:true}));
     });
     await expect(page.locator('.storyCard [data-command="WORTH"]')).toBeDisabled();
-    expect(f.posts.filter(p=>p.body.action==="WORTH").length).toBe(1);
+    await expect.poll(()=>f.posts.filter(p=>p.body.action==="WORTH").length).toBe(1);
     await expect(page.locator(".storyCard .statusTag").first()).toContainText("QUEUED");
   }finally{await f.stop()}
 });
