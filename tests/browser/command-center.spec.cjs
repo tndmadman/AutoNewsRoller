@@ -66,8 +66,8 @@ function fixture(appOverride=null){
     }
     res.writeHead(404);res.end("Not found");
   });
-  function event(type="worker"){
-    const data="data: "+JSON.stringify({type,timestamp:new Date().toISOString(),payload:{status:"UPDATE"}})+"\n\n";
+  function event(type="worker",payload={status:"UPDATE"}){
+    const data="data: "+JSON.stringify({type,timestamp:new Date().toISOString(),payload})+"\n\n";
     for(const client of clients)if(!client.writableEnded)client.write(data);
   }
   return {server,state,story,version,posts,event,setGetDelay:v=>{getDelay=v},setPostDelay:v=>{postDelay=v},setPostStatus:v=>{postStatus=v},dropNextPost:()=>{dropResponse=true},get getCount(){return getCount},
@@ -269,5 +269,27 @@ test("high-volume dashboard preserves card identity with 120 stories, 90 feeds a
     expect(await page.evaluate(()=>window.__firstCard===document.querySelector(".storyCard")&&window.__firstCard.isConnected)).toBe(true);
     await expect(cards).toHaveCount(120);
     await expect(page.locator(".feed")).toHaveCount(90);
+  }finally{await f.stop()}
+});
+
+test("scoped feed and worker SSE updates do not request or rebuild the full dashboard",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator(".workerCard")).toHaveCount(5);
+    await expect(page.locator(".feed")).toHaveCount(90);
+    await page.waitForTimeout(600);
+    const count=f.getCount;
+    await page.evaluate(()=>{
+      window.__workerCard=document.querySelector(".workerCard");
+      window.__feedCard=document.querySelector(".feed");
+    });
+    f.event("worker",{...f.state.workers[0],state:"PRODUCING"});
+    f.event("feed",{...f.state.feeds[0],status:"SCANNING"});
+    await expect(page.locator(".workerCard .workerState").first()).toContainText("PRODUCING");
+    await expect(page.locator(".feed").first()).toHaveClass(/scanning/);
+    expect(f.getCount).toBe(count);
+    expect(await page.evaluate(()=>window.__workerCard===document.querySelector(".workerCard")&&
+      window.__feedCard===document.querySelector(".feed"))).toBe(true);
   }finally{await f.stop()}
 });
