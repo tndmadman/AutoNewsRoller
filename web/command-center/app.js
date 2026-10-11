@@ -440,7 +440,7 @@ async function submitOperation(id,button,path,body,verb,success){
     loadState().catch(()=>toast("Action saved, but dashboard refresh failed. Reconnect to verify.",true));
   }catch(e){
     const uncertain=e.name==="AbortError"||e.name==="TypeError";
-    toast(uncertain?"Connection interrupted; action may have completed. Refreshing status.":e.message,true);
+    toast(uncertain?"Connection interrupted; action may have completed. Refreshing status.":e.message==="AUTH_REQUIRED"?"Authentication required. Enter your API token using KEY.":e.message,true);
     loadState().catch(()=>{});
   }finally{
     clearTimeout(timeout);pendingActions.delete(id);updatePendingControls();render();
@@ -489,22 +489,35 @@ document.addEventListener("click",e=>{
   submitOperation(id,button,path+"/action",{action:command},"POST",
     command==="MAKE"?"Queued for video production.":command==="WORTH"?"Marked WORTH IT and queued.":command==="REMAKE"?"Re-make queued; previous version archived.":command+" saved.");
 });
+// Toolbar actions also acknowledge the initial click and lock while the request runs.
 $("#autoVideoToggle").onclick=async()=>{
-  const enabled=!state.autoQueue;
   const btn=$("#autoVideoToggle");
+  if(btn.disabled)return;
+  const enabled=!state.autoQueue;
   btn.disabled=true;
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),20000);
   try{
-    await api("/api/settings/auto-video",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({enabled})
+    const result=await api("/api/settings/auto-video",{
+      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled}),signal:controller.signal
     });
+    stateEpoch++;state.autoQueue=!!result.autoQueue;render();
     toast(enabled?"Automatic video creation enabled.":"Automatic video creation disabled. Manual MAKE VIDEO remains available.");
-    await loadState();
-  }catch(e){toast(e.message,true)}
-  finally{btn.disabled=false}
+    loadState().catch(()=>toast("Setting saved but status refresh failed.",true));
+  }catch(e){toast(e.name==="AbortError"?"Request timed out; verify toggle status.":e.message,true);loadState().catch(()=>{})}
+  finally{clearTimeout(timeout);btn.disabled=false}
 };
-$("#scanBtn").onclick=async()=>{try{await api("/api/scan",{method:"POST"});toast("Full RSS scan started.")}catch(e){toast(e.message,true)}};
+$("#scanBtn").onclick=async()=>{
+  const btn=$("#scanBtn");
+  if(btn.disabled)return;
+  btn.disabled=true;
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),20000);
+  try{
+    const result=await api("/api/scan",{method:"POST",signal:controller.signal});
+    toast(result.status==="already-scanning"?"RSS scan is already running.":"Full RSS scan started.");
+    loadState().catch(()=>{});
+  }catch(e){toast(e.name==="AbortError"?"Scan request timed out; check the scan status.":e.message,true)}
+  finally{clearTimeout(timeout);btn.disabled=false}
+};
 $("#authBtn").onclick=authPrompt;
 function authPrompt(){const v=prompt("Command Center API token (leave blank for localhost/no-token):",token);if(v===null)return;token=v.trim();localStorage.setItem("autonewsToken",token);connectEvents();loadState()}
 $("#search").addEventListener("input",renderStories);
