@@ -151,6 +151,7 @@ function reconcileList(root,records,emptyText=""){
     wanted.add(key);
     const template=document.createElement("template");template.innerHTML=r.html.trim();
     const next=template.content.firstElementChild;if(!next)return;
+    next.dataset.recordKey=key;
     let existing=current.get(key);
     if(!existing){existing=next;existing.dataset.recordKey=key;root.appendChild(existing)}
     else if(!interactionProtected(existing))patchNode(existing,next);
@@ -165,12 +166,17 @@ function updatePendingControls(){
     const row=button.closest("[data-story-id]");
     const blocked=row&&pendingActions.has(row.dataset.storyId);
     if(blocked){
-      if(button.dataset.pendingOriginal===undefined)button.dataset.pendingOriginal=button.textContent;
+      if(button.dataset.pendingOriginal===undefined){
+        button.dataset.pendingOriginal=button.textContent;
+        button.dataset.pendingWasDisabled=String(button.disabled);
+      }
       button.disabled=true;
       if(button===pendingActions.get(row.dataset.storyId)?.button)button.textContent="WORKING…";
     }else if(button.dataset.pendingOriginal!==undefined){
       button.textContent=button.dataset.pendingOriginal;
+      button.disabled=button.dataset.pendingWasDisabled==="true";
       delete button.dataset.pendingOriginal;
+      delete button.dataset.pendingWasDisabled;
     }
   });
 }
@@ -437,7 +443,7 @@ async function submitOperation(id,button,path,body,verb,success){
     toast(uncertain?"Connection interrupted; action may have completed. Refreshing status.":e.message,true);
     loadState().catch(()=>{});
   }finally{
-    clearTimeout(timeout);pendingActions.delete(id);updatePendingControls();
+    clearTimeout(timeout);pendingActions.delete(id);updatePendingControls();render();
   }
 }
 document.addEventListener("click",e=>{
