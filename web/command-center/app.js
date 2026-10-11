@@ -540,12 +540,51 @@ document.querySelectorAll(".rail").forEach(b=>b.onclick=()=>{
   syncStoryAgeControl();renderRails();renderStories();
 });
 
+// Worker and feed SSE payloads are full entity updates. Render only their keyed
+// rows; retain the periodic snapshot to reconcile offline status and missed events.
+function applyLiveEvent(event){
+  const p=event.payload||{};
+  if(event.type==="worker"&&p.id){
+    const ws=state.workers||[];
+    const idx=ws.findIndex(w=>w.id===p.id);
+    const value={...(idx>=0?ws[idx]:{}),...p,online:true};
+    if(idx<0)ws.push(value);else ws[idx]=value;
+    state.workers=ws;
+    state.counts=state.counts||{};
+    state.counts.workersOnline=ws.filter(x=>x.online).length;
+    $("#workersOnline").textContent=state.counts.workersOnline;
+    renderWorkers();
+    return true;
+  }
+  if(event.type==="feed"&&p.url){
+    const feeds=state.feeds||[];
+    const idx=feeds.findIndex(f=>f.url===p.url);
+    const value={...(idx>=0?feeds[idx]:{}),...p};
+    if(idx<0)feeds.push(value);else feeds[idx]=value;
+    state.feeds=feeds;
+    state.counts=state.counts||{};
+    state.counts.feedsOk=feeds.filter(x=>x.status==="OK").length;
+    state.counts.feedsFailed=feeds.filter(x=>x.status==="FAILED").length;
+    $("#feedsOnline").textContent=state.counts.feedsOk;
+    $("#feedsFailed").textContent=state.counts.feedsFailed+" failed";
+    $("#feedSummary").textContent=feeds.length+" FEEDS";
+    renderFeeds();
+    return true;
+  }
+  return false;
+}
 function connectEvents(){
   if(eventSource)eventSource.close();
   const u="/api/events"+(token?"?token="+encodeURIComponent(token):"");
   eventSource=new EventSource(u);
   eventSource.onopen=()=>{$("#connection").textContent="LIVE";$("#connection").className="pill ok"};
-  eventSource.onmessage=e=>{try{const v=JSON.parse(e.data);logEvent(v);if(v.type!=="connected")debouncedRefresh()}catch{}};
+  eventSource.onmessage=e=>{
+    try{
+      const event=JSON.parse(e.data);
+      logEvent(event);
+      if(event.type!=="connected"&&!applyLiveEvent(event))debouncedRefresh();
+    }catch{}
+  };
   eventSource.onerror=()=>{$("#connection").textContent="RECONNECTING";$("#connection").className="pill danger"};
 }
 function logEvent(e){
