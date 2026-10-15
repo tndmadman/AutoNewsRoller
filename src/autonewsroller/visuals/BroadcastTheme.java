@@ -13,7 +13,7 @@ import java.awt.Color;
 public final class BroadcastTheme {
     private BroadcastTheme(){}
 
-    public static final String PACKAGE_ID="aware-broadcast-v4-motion";
+    public static final String PACKAGE_ID="aware-broadcast-v5-editorial";
 
     public static final Color BACKGROUND=new Color(6,10,16);
     public static final Color NAVY=new Color(9,21,36);

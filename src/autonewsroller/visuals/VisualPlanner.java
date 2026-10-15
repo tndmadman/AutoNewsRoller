@@ -43,6 +43,7 @@ public final class VisualPlanner {
                 if(prompt.isBlank())prompt="Realistic editorial news photograph grounded only in verified reporting about: "+seg.narration();
             }
             if(idx==0)type="HOOK";
+            else type=editorialType(seg,fp,grounded,idx);
             String body=seg.narration()==null?"":seg.narration();
             out.add(new VisualPlan.Item(idx,type,script.headline(),body,Math.max(idx==0?3.0:4.0,seg.durationTarget()),prompt,data));
             idx++;
@@ -66,4 +67,24 @@ public final class VisualPlanner {
         }
         return new VisualPlan(script.storyId(),List.copyOf(reindexed));
     }
+    /** Choose graphics only for details explicitly present in the verified fact package. */
+    private static String editorialType(NewsScript.Segment seg,FactPackage facts,VisualPromptPlan grounded,int index){
+        String narration=seg.narration()==null?"":seg.narration();
+        String verified=facts.facts().stream().map(FactClaim::statement).reduce("",(a,b)->a+" "+b);
+        String lowered=narration.toLowerCase(Locale.ROOT);
+        if(grounded!=null&&!grounded.factIds().isEmpty()){
+            java.util.regex.Matcher numbers=java.util.regex.Pattern.compile("\\b\\d+(?:[.,]\\d+)?%\\b|\\b\\d{2,}(?:[.,]\\d+)?\\b").matcher(narration);
+            while(numbers.find())if(verified.contains(numbers.group()))return "STATISTIC";
+            java.util.regex.Matcher quoted=java.util.regex.Pattern.compile("[“\\\"]([^”\\\"]{12,120})[”\\\"]").matcher(narration);
+            if(quoted.find()&&verified.contains(quoted.group(1)))return "QUOTE";
+            if(lowered.matches(".*\\b(january|february|march|april|may|june|july|august|september|october|november|december|yesterday|today|tomorrow)\\b.*")
+                    &&verified.toLowerCase(Locale.ROOT).matches(".*\\b(20\\d{2}|january|february|march|april|may|june|july|august|september|october|november|december)\\b.*"))
+                return "TIMELINE";
+        }
+        if(index%3==0)return "FACT_HIGHLIGHT";
+        if(grounded!=null&&(grounded.strategy().equalsIgnoreCase("DIRECT_EVENT")||grounded.strategy().equalsIgnoreCase("LOCATION")
+                ||grounded.strategy().equalsIgnoreCase("PERSON")))return "EDITORIAL_PHOTO";
+        return index%2==0?"EDITORIAL_PHOTO":"FACT_HIGHLIGHT";
+    }
+
 }
