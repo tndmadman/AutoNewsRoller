@@ -48,6 +48,7 @@ public final class CaptionWriter {
                 }
             }
             double start=words.get(i).start(),end=words.get(endIndex-1).end();
+            i=endIndex;
             if(end<=start||end>duration+.1)continue;
             List<String>unit=new ArrayList<>();
             for(int n=i;n<endIndex;n++)unit.add(escape(displayWords.size()==words.size()?displayWords.get(n):words.get(n).text()));
@@ -67,7 +68,6 @@ public final class CaptionWriter {
             if(single&&timing.exact())visual="{\\c&H00B27943&}"+visual+"{\\c&H00FFFFFF&}";
             ass.append("Dialogue: 0,").append(ts(start)).append(',').append(ts(Math.min(duration,end)))
                .append(",News,,0,0,0,,").append(visual).append('\n');
-            i=endIndex;
         }
         Files.createDirectories(out.toAbsolutePath().getParent());
         Files.writeString(out,ass.toString(),StandardCharsets.UTF_8);return out;
