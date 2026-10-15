@@ -817,6 +817,19 @@ public final class SelfTest {
                 new FactPackage("v5-story",script.headline(),narration,List.of(),List.of(),List.of(),1,1,.8,false));
         ok(ungrounded.items().stream().filter(item->!item.type().equals("SOURCE_CARD")).allMatch(item->item.data().containsKey("segmentIndex")),
                 "narration timing still retains segment references without optional grounded prompting");
+
+        VisualPlan anchored=new VisualPlan("anchored",List.of(
+                new VisualPlan.Item(0,"HOOK","Headline","First fact",2,"",Map.of("segmentIndex",0)),
+                new VisualPlan.Item(1,"POLITICAL_CONTEXT","Context","",1,"",Map.of("segmentIndex",0,"supplemental",true,"supplementFraction",.25)),
+                new VisualPlan.Item(2,"EDITORIAL_PHOTO","Detail","Second fact",2,"",Map.of("segmentIndex",1)),
+                new VisualPlan.Item(3,"SOURCE_CARD","Sources","Trusted Wire",1,"",
+                        Map.of("segmentIndex",1,"supplemental",true,"supplementFraction",.18))));
+        Storyboard anchoredTimeline=new VisualDirector().direct(anchored,script,exact,5.0);
+        double firstBoundary=anchoredTimeline.scenes().get(1).end();
+        ok(Math.abs(firstBoundary-exact.segmentDurations().get(0))<.01 &&
+                Math.abs(anchoredTimeline.scenes().get(3).end()-5)<.01,
+                "political and source context are contained within original narration segment windows");
+
         Storyboard storyboard=new VisualDirector().direct(plan,script,exact,5.0);
         storyboard.validate();
         ok(storyboard.scenes().size()==2&&storyboard.scenes().get(0).start()==0.0&&

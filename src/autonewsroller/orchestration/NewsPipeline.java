@@ -270,10 +270,14 @@ public final class NewsPipeline {
                 for(int n=0;n<plan.items().size();n++){
                     VisualPlan.Item item=plan.items().get(n);
                     if(item.type().equals("HEADLINE_CARD")||item.type().equals("SOURCE_CARD")||item.type().equals("POLITICAL_CONTEXT")
-                            ||item.type().equals("STATISTIC")||item.type().equals("FACT_HIGHLIGHT")||item.type().equals("QUOTE")||item.type().equals("TIMELINE"))continue;
+                            ||item.type().equals("STATISTIC")||item.type().equals("QUOTE")||item.type().equals("TIMELINE"))continue;
                     eligible.add(n);
                 }
 
+                if(eligible.size()>limit){
+                    // Image scenes are already ordered by narration, so stop after requested count.
+                    eligible=new ArrayList<>(eligible.subList(0,limit));
+                }
                 if(eligible.isEmpty()){
                     throw new IllegalStateException("visual plan contained no replaceable story visuals");
                 }
@@ -367,7 +371,10 @@ public final class NewsPipeline {
                     }
                 }
 
-                if(comfyGenerated==0)throw new IllegalStateException("ComfyUI produced zero images");
+                int requiredCount=Math.min(limit,eligible.size());
+                if(requireComfy&&comfyGenerated<requiredCount)
+                    throw new IllegalStateException("ComfyUI accepted "+comfyGenerated+"/"+requiredCount+" requested images");
+                if(comfyGenerated==0)throw new IllegalStateException("ComfyUI produced zero accepted images");
             }catch(Exception e){
                 String msg="COMFYUI FAILED: "+e.getMessage();
                 System.err.println(msg);
@@ -508,6 +515,10 @@ public final class NewsPipeline {
     }
 
     private NarrationResult narrate(StoryCluster c,NewsScript script,Path wav,int worker,int slot)throws Exception{
+        // The same WAV path is reused after duration-repair and Kokoro may fail.
+        // Never reuse a stale Kokoro timing sidecar with a Qwen3 WAV.
+        Files.deleteIfExists(wav.resolveSibling(wav.getFileName().toString().replaceFirst("\\.wav$",".timing.tsv")));
+
         List<String>configuredKokoro=cfg.csv("kokoroVoices","af_sarah,am_michael");
         List<String>kv=allowedKokoroVoices(configuredKokoro);
         if(kv.size()!=configuredKokoro.size()){

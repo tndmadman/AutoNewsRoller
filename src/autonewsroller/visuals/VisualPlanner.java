@@ -54,13 +54,21 @@ public final class VisualPlanner {
         if(political!=null&&political.shouldRender(minimumRelevance,showUncertain)){
             int insertAt=Math.min(3,out.size());
             Map<String,Object>renderData=new LinkedHashMap<>(political.toMap());
+            // Use a small slice of an existing narrated beat, not additional video time.
+            renderData.put("segmentIndex",Math.min(2,Math.max(0,segments.size()-1)));
+            renderData.put("supplemental",true);
+            renderData.put("supplementFraction",0.27);
             renderData.put("showConfidence",showConfidence);
             renderData.put("showSourceMix",showSourceMix);
             out.add(insertAt,new VisualPlan.Item(-1,"POLITICAL_CONTEXT","Political context",political.storySummary(),Math.max(3.5,Math.min(8.0,politicalSceneSeconds)),"",renderData));
         }
 
         String src=fp.sources().stream().map(x->String.valueOf(x.get("publisher"))).distinct().limit(5).reduce((a,b)->a+" • "+b).orElse("");
-        out.add(new VisualPlan.Item(-1,"SOURCE_CARD","Sources",src,2.5,""));
+        Map<String,Object>sourceData=new LinkedHashMap<>();
+        sourceData.put("segmentIndex",segments.isEmpty()?0:segments.get(Math.min(7,segments.size()-1)).index());
+        sourceData.put("supplemental",true);
+        sourceData.put("supplementFraction",0.18);
+        out.add(new VisualPlan.Item(-1,"SOURCE_CARD","Sources",src,2.5,"",sourceData));
 
         List<VisualPlan.Item> reindexed=new ArrayList<>();
         for(int i=0;i<out.size();i++){
