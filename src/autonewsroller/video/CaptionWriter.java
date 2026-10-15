@@ -1,113 +1,63 @@
 package autonewsroller.video;
 
-import autonewsroller.util.Text;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 
+/** Accessible, two-line ASS captions with optional validated Kokoro speech timing. */
 public final class CaptionWriter {
     private CaptionWriter(){}
-
     public static Path write(Path out,String narration,double duration,String mode)throws Exception{
+        return write(out,narration,duration,mode,null,1080,1920);
+    }
+    public static Path write(Path out,String narration,double duration,String mode,Path sidecar,int width,int height)throws Exception{
         if("off".equalsIgnoreCase(mode))return null;
-        List<String>units=captionUnits(narration,mode);
-        if(units.isEmpty())return null;
-
+        if(!(duration>0)||!Double.isFinite(duration))return null;
+        SpeechTiming.Alignment timing=SpeechTiming.align(narration,List.of(),sidecar,duration);
+        List<SpeechTiming.Word> words=timing.words();
+        if(words.isEmpty())return null;
+        int font=Math.max(18,(int)Math.round(44.0*width/1080));
+        int marginH=Math.max(20,(int)Math.round(width*.072));
+        int marginV=Math.max(80,(int)Math.round(height*.268));
         StringBuilder ass=new StringBuilder();
         ass.append("[Script Info]\n")
            .append("ScriptType: v4.00+\n")
-           .append("PlayResX: 1080\nPlayResY: 1920\n")
+           .append("PlayResX: ").append(width).append("\nPlayResY: ").append(height).append("\n")
            .append("WrapStyle: 2\nScaledBorderAndShadow: yes\n\n")
            .append("[V4+ Styles]\n")
            .append("Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n")
-           .append("Style: News,Arial,44,&H00FFFFFF,&H00B27943,&H00140C06,&HC80A0D12,-1,0,0,0,100,100,0,0,3,3,0,2,78,78,420,1\n\n")
-           .append("[Events]\n")
-           .append("Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n");
-
-        int total=units.stream().mapToInt(Text::words).sum();
-        double t=0;
-        for(int i=0;i<units.size();i++){
-            String unit=units.get(i);
-            double d=i==units.size()-1?duration-t:Math.max(.55,duration*Math.max(1,Text.words(unit))/Math.max(1,total));
-            double end=Math.min(duration,t+d);
-            ass.append("Dialogue: 0,").append(ts(t)).append(',').append(ts(end))
-               .append(",News,,0,0,0,,").append(styled(unit)).append("\n");
-            t=end;
-        }
-        Files.writeString(out,ass.toString(),StandardCharsets.UTF_8);
-        return out;
-    }
-
-    private static List<String>captionUnits(String narration,String mode){
-        String cleaned=Text.clean(narration);
-        if(cleaned.isBlank())return List.of();
-        if("word".equalsIgnoreCase(mode)){
-            List<String>one=new ArrayList<>();
-            for(String w:cleaned.split("\\s+"))if(!w.isBlank())one.add(w);
-            return one;
-        }
-        List<String>out=new ArrayList<>();
-        for(String sentence:Text.sentences(cleaned)){
-            String[]words=sentence.trim().split("\\s+");
-            for(int i=0;i<words.length;i+=9){
-                int end=Math.min(words.length,i+9);
-                out.add(String.join(" ",Arrays.copyOfRange(words,i,end)));
+           .append("Style: News,Arial,").append(font).append(",&H00FFFFFF,&H00B27943,&H00140C06,&HC80A0D12,-1,0,0,0,100,100,0,0,3,3,0,2,")
+           .append(marginH).append(',').append(marginH).append(',').append(marginV).append(",1\n\n")
+           .append("[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n");
+        boolean single="word".equalsIgnoreCase(mode);
+        int group=single?1:7;
+        for(int i=0;i<words.size();i+=group){
+            int endIndex=Math.min(i+group,words.size());
+            double start=words.get(i).start(),end=words.get(endIndex-1).end();
+            if(end<=start||end>duration+.1)continue;
+            List<String>unit=new ArrayList<>();
+            for(int n=i;n<endIndex;n++)unit.add(escape(words.get(n).text()));
+            String visual=String.join(" ",unit);
+            if(!single&&unit.size()>6){
+                int mid=Math.max(3,unit.size()/2);
+                visual=String.join(" ",unit.subList(0,mid))+"\\N"+String.join(" ",unit.subList(mid,unit.size()));
             }
+            if(single&&timing.exact())visual="{\\c&H00B27943&}"+visual+"{\\c&H00FFFFFF&}";
+            ass.append("Dialogue: 0,").append(ts(start)).append(',').append(ts(Math.min(duration,end)))
+               .append(",News,,0,0,0,,").append(visual).append('\n');
         }
-        if(out.isEmpty())out.add(cleaned);
-        return out;
+        Files.createDirectories(out.toAbsolutePath().getParent());
+        Files.writeString(out,ass.toString(),StandardCharsets.UTF_8);return out;
     }
-
-    private static String styled(String raw){
-        String[]w=raw.replace("{","").replace("}","").trim().split("\\s+");
-        if(w.length==0)return "";
-        int hi=salientIndex(w);
-        StringBuilder text=new StringBuilder();
-        for(int i=0;i<w.length;i++){
-            if(i>0)text.append(' ');
-            if(i==hi)text.append("{\\c&H00B27943&}").append(w[i]).append("{\\c&H00FFFFFF&}");
-            else text.append(w[i]);
-        }
-        return wrapTwoLines(text.toString(),w.length);
+    private static String escape(String s){
+        if(s==null)return "";
+        // Untrusted script text may not inject ASS override tags, escapes, or line breaks.
+        return s.replace("\\","").replace("{","").replace("}","")
+                .replace("\r"," ").replace("\n"," ").strip();
     }
-
-    private static int salientIndex(String[] words){
-        for(int i=0;i<words.length;i++)if(words[i].matches(".*\\d.*"))return i;
-        for(int i=1;i<words.length;i++){
-            String clean=words[i].replaceAll("[^A-Za-z]","");
-            if(clean.length()>=3&&Character.isUpperCase(clean.charAt(0)))return i;
-        }
-        int best=0,bestLen=0;
-        for(int i=0;i<words.length;i++){
-            String clean=words[i].replaceAll("[^A-Za-z]","");
-            if(clean.length()>bestLen){bestLen=clean.length();best=i;}
-        }
-        return best;
-    }
-
-    private static String wrapTwoLines(String styled,int wordCount){
-        if(wordCount<=6)return styled;
-        // Insert a single ASS line break near the midpoint while preserving style tags.
-        String plain=styled;
-        int visible=0,breakAt=Math.max(3,wordCount/2),pos=-1;
-        boolean inTag=false;
-        for(int i=0;i<plain.length();i++){
-            char ch=plain.charAt(i);
-            if(ch=='{')inTag=true;
-            else if(ch=='}')inTag=false;
-            else if(!inTag&&ch==' '){
-                visible++;
-                if(visible==breakAt){pos=i;break;}
-            }
-        }
-        return pos>0?plain.substring(0,pos)+"\\N"+plain.substring(pos+1):plain;
-    }
-
     private static String ts(double seconds){
         long cs=Math.max(0,Math.round(seconds*100));
-        long h=cs/360000;cs%=360000;
-        long m=cs/6000;cs%=6000;
-        long s=cs/100;cs%=100;
+        long h=cs/360000;cs%=360000;long m=cs/6000;cs%=6000;long s=cs/100;cs%=100;
         return String.format(Locale.ROOT,"%d:%02d:%02d.%02d",h,m,s,cs);
     }
 }
