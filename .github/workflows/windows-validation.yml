@@ -43,6 +43,11 @@ jobs:
           bash build_linux.sh
           java -cp build/classes autonewsroller.Main --self-test
           java -cp build/classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264
+      - name: V5 FFmpeg render and actual MP4 contact sheet
+        shell: bash
+        run: |
+          ffmpeg -version | head -n 1
+          java -cp build/classes autonewsroller.video.VisualSmoke
       - name: Headless command center smoke test
         shell: bash
         run: |
