@@ -17,6 +17,7 @@ visualImageReviewRetries=2
 visualGenerateContactSheet=true
 visualDebugFrames=true
 visualImageReviewModel=
+visualImageReviewOllamaUrl=
 visualPromptEnabled=true
 visualPromptModel=
 visualPromptOllamaUrl=

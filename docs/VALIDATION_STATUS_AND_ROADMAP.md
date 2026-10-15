@@ -515,7 +515,7 @@ approved by CI. Inspect a live 70-second production run, six accepted
 Comfy assets, frame-zero hook, timing, graphic readability, GPU
 coordination, fallback and source grounding before merging this PR.
 
-Pending V5 design work: full classic-preset switch, optional compatible
+Pending V5 design work: full classic-preset switch, production validation for the opt-in
 vision-model adapter, exact per-beat storyboard timing with separate
 political/source overlays, richer animated bars/timelines, and large
 screen-size collision detection.

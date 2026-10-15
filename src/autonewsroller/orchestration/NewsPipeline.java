@@ -245,6 +245,8 @@ public final class NewsPipeline {
         List<Map<String,Object>>imageReviews=new ArrayList<>();
         List<Long>acceptedHashes=new ArrayList<>();
         ImageQualityInspector inspector=new ImageQualityInspector();
+        OllamaVisionReviewer visionReviewer=new OllamaVisionReviewer(root,cfg.get("visualImageReviewModel",""),
+                cfg.get("visualImageReviewOllamaUrl",cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate")));
         String usedCheckpoint="";
         int comfyGenerated=0;
         if(requireComfy&&!useComfy)throw new IllegalStateException("ComfyUI is required for this job but useComfy=false");
@@ -310,9 +312,22 @@ public final class NewsPipeline {
                         Map<String,Object>review=new LinkedHashMap<>(inspection.toMap());
                         review.put("sceneIndex",replace);review.put("attempt",attempt+1);review.put("seed",seed);
                         review.put("factIds",chosen.data().getOrDefault("factIds",List.of()));
-                        imageReviews.add(review);
                         if(!inspection.accepted()){
+                            imageReviews.add(review);
                             events.emit(worker,slot,PipelineStage.VISUALS,"IMAGE REJECTED scene="+replace+" reason="+inspection.reason());
+                            Files.deleteIfExists(generated);
+                            continue;
+                        }
+                        List<String>expected=chosen.data().get("anchorEntities") instanceof List<?> l
+                                ?l.stream().map(String::valueOf).toList():List.of();
+                        List<String>forbidden=chosen.data().get("mustNotShow") instanceof List<?> l
+                                ?l.stream().map(String::valueOf).toList():List.of();
+                        OllamaVisionReviewer.Result semantic=visionReviewer.review(generated,chosen.prompt(),expected,forbidden);
+                        review.put("vision",semantic.toMap());
+                        review.put("accepted",semantic.accepted());
+                        imageReviews.add(review);
+                        if(!semantic.accepted()){
+                            events.emit(worker,slot,PipelineStage.VISUALS,"IMAGE VISION WARNING scene="+replace+" reason="+semantic.reason());
                             Files.deleteIfExists(generated);
                             continue;
                         }
@@ -336,7 +351,7 @@ public final class NewsPipeline {
                         imageSource.put("seed",seed);imageSource.put("steps",cfg.getInt("imageSteps",24));imageSource.put("cfg",cfg.getDouble("imageCfg",5.0));
                         imageSource.put("sampler","dpmpp_2m_sde");imageSource.put("scheduler","karras");
                         imageSource.put("resolution",requestedWidth+"x"+requestedHeight);
-                        imageSource.put("inspection",inspection.toMap());imageSource.put("retryCount",attempt);
+                        imageSource.put("inspection",inspection.toMap());imageSource.put("visionReview",semantic.toMap());imageSource.put("retryCount",attempt);
                         imageSource.put("aiIllustrationDisclosure",true);
                         imageSource.put("visualType",chosen.type());imageSource.put("segmentIndex",chosen.data().getOrDefault("segmentIndex",chosen.index()));
                         imageSource.put("visualStrategy",chosen.data().getOrDefault("visualStrategy",chosen.type()));

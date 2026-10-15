@@ -841,6 +841,10 @@ public final class SelfTest {
         ImageQualityInspector.Result valid=inspector.inspect(image,640,1136,List.of());
         ok(valid.accepted()&&!inspector.inspect(image,640,1136,List.of(valid.perceptualHash())).accepted(),
                 "valid images pass basic inspection and perceptually repeated images are rejected");
+        OllamaVisionReviewer.Result unconfiguredVision=
+                new OllamaVisionReviewer(dir,"","").review(image,"Council facility",List.of("council"),List.of("fire"));
+        ok(!unconfiguredVision.evaluated()&&unconfiguredVision.accepted(),
+                "optional vision review is disabled by default and never adds mandatory GPU work");
         CardRenderer cards=new CardRenderer();
         Path graphic=dir.resolve("statistic.png");cards.render(plan.items().get(1),graphic,540,960);
         ok(Files.isRegularFile(graphic)&&ImageIO.read(graphic.toFile()).getHeight()==960,

@@ -548,10 +548,11 @@ ComfyUI generation remains inside the existing GPU lane. A stable
 per-attempt seed, checkpoint, prompts, sampler, scheduler, steps and
 CFG are preserved in provenance. Checks reject corrupt, flat or duplicated
 images and retry a bounded number of times; these automated checks
-CANNOT verify that a photo depicts a genuine event. The optional
-visualImageReviewModel setting is a placeholder: no compatible local
-vision verifier is currently integrated. llama3.1:8b is not assumed
-to have image understanding.
+CANNOT verify that a photo depicts a genuine event. An optional local Ollama multimodal verifier can be explicitly enabled with
+visualImageReviewModel. Its warnings are advisory and require a high-confidence
+major mismatch to reject an image. Failed or incompatible reviewer calls
+are recorded but cannot silently claim verification. llama3.1:8b is not
+assumed to have image understanding.
 
 The visual_storyboard.json and visual_quality_report.json files are
 per-job. The contact sheet in visual_preview is sampled from the actual

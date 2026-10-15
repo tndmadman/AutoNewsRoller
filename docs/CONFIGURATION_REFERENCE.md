@@ -633,8 +633,12 @@ Blank visual-specific model/URL settings intentionally reuse the normal Ollama s
   rejection in addition to mandatory decode, aspect and flatness checks.
 - visualImageReviewRetries=2 : retries rejected generated images
   from 0 to 4 extra times.
-- visualImageReviewModel= : reserved for a future optional compatible
-  local vision-model verifier; currently no model is invoked.
+- visualImageReviewModel= : empty disables multimodal checking; explicitly
+  configure a compatible installed Ollama vision model to enable advisory
+  content review with bounded retries and GPU coordination. No models are
+  automatically installed. Reviewer failure is reported as unevaluated.
+- visualImageReviewOllamaUrl= : optional Ollama /api/generate endpoint override
+  (blank uses localhost default).
 - visualGenerateContactSheet=true : decodes five actual MP4 frames
   and writes a representative contact sheet.
 - visualDebugFrames=true : reserved for future detailed diagnostics.
