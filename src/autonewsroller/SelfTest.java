@@ -41,6 +41,7 @@ public final class SelfTest {
         testMalformed(root);
         testScriptValidation(a);
         testProductionVideoContract(root,a);
+        testVisualV5();
         testWorthyHourFilterContract(root);
         testFeedCardIdentityContract(root);
         testTtsFallback();
@@ -600,7 +601,7 @@ public final class SelfTest {
                         cardSource.contains("renderHookPackage")&&cardSource.contains("renderStoryPackage")&&
                         cardSource.contains("fitHeadlineFont")&&cardSource.contains("verticalBias"),
                 "AWARE visual package includes thumbnail-first hook treatment, adaptive headline sizing, and protected subject cropping");
-        ok(themeSource.contains("aware-broadcast-v4-motion")&&themeSource.contains("new Color(30,74,132)")&&
+        ok(themeSource.contains("aware-broadcast-v5-editorial")&&themeSource.contains("new Color(30,74,132)")&&
                         themeSource.contains("new Color(185,23,38)")&&!themeSource.toLowerCase(Locale.ROOT).contains("56,232,255"),
                 "broadcast v4 uses breaking-news red and restrained royal blue without neon cyan");
         ok(themeSource.contains("HEADER_HEIGHT=118")&&themeSource.contains("TICKER_HEIGHT=80")&&
@@ -783,6 +784,72 @@ public final class SelfTest {
         int generate=comfySource.indexOf("public Path generate(");
         ok(generate>=0&&recovery>generate&&!comfySource.substring(generate,recovery).contains("/free")&&comfySource.substring(recovery).contains("/free"),
                 "ComfyUI success path keeps models warm and only OOM recovery frees them");
+    }
+
+    private void testVisualV5()throws Exception{
+        Path dir=Files.createTempDirectory("autonews-v5-fixture-");
+        List<NewsScript.Segment>segments=List.of(
+                new NewsScript.Segment(0,"The council approved twelve projects.","hook","HOOK","",2),
+                new NewsScript.Segment(1,"The budget increased by twenty percent.","fact","CONTEXT","",2));
+        String narration=segments.get(0).narration()+" "+segments.get(1).narration();
+        List<String>words=SpeechTiming.tokens(narration);
+        Path sidecar=dir.resolve("narration.timing.tsv");
+        StringBuilder tsv=new StringBuilder("autonewsroller-kokoro-timing-v1\n");
+        for(int i=0;i<words.size();i++){
+            String token=Base64.getUrlEncoder().withoutPadding().encodeToString(words.get(i).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            tsv.append(String.format(Locale.ROOT,"word\t%.3f\t%.3f\t%s\n",i*.35,i*.35+.3,token));
+        }
+        Files.writeString(sidecar,tsv.toString());
+        SpeechTiming.Alignment exact=SpeechTiming.align(narration,segments,sidecar,5.0);
+        ok(exact.exact()&&exact.words().size()==words.size()&&exact.segmentDurations().size()==2,
+                "Kokoro sidecar aligns verified spoken tokens with segment boundaries");
+        Files.writeString(sidecar,"untrusted timing payload\n");
+        SpeechTiming.Alignment fallback=SpeechTiming.align(narration,segments,sidecar,5.0);
+        ok(!fallback.exact()&&fallback.words().size()==words.size(),
+                "invalid or missing timing sidecars fall back without claiming exact word timing");
+        NewsScript script=new NewsScript("v5-story","Council approves projects",narration,segments,5,List.of("Fixture News"));
+        VisualPlan plan=new VisualPlan("v5-story",List.of(
+                new VisualPlan.Item(0,"HOOK",script.headline(),segments.get(0).narration(),2,"",Map.of("segmentIndex",0,"factIds",List.of("FACT_A"))),
+                new VisualPlan.Item(1,"STATISTIC",script.headline(),segments.get(1).narration(),2,"",Map.of("segmentIndex",1,"factIds",List.of("FACT_B")))));
+        Storyboard storyboard=new VisualDirector().direct(plan,script,exact,5.0);
+        storyboard.validate();
+        ok(storyboard.scenes().size()==2&&storyboard.scenes().get(0).start()==0.0&&
+                        Math.abs(storyboard.scenes().get(1).end()-5.0)<.001,
+                "typed storyboard covers actual narration duration with no gap");
+        Path ass=dir.resolve("caption.ass");
+        CaptionWriter.write(ass,narration,5.0,"sentence",sidecar,540,960);
+        String captions=Files.readString(ass);
+        ok(captions.contains("PlayResX: 540")&&captions.contains("PlayResY: 960")&&
+                        !captions.contains("Dialogue: 0,0:00:05.00,0:00:05.00"),
+                "captions use requested output geometry and skip zero-length events");
+        BufferedImage flat=new BufferedImage(640,1136,BufferedImage.TYPE_INT_RGB);
+        Path blank=dir.resolve("blank.png");ImageIO.write(flat,"png",blank.toFile());
+        ImageQualityInspector inspector=new ImageQualityInspector();
+        ok(!inspector.inspect(blank,640,1136,List.of()).accepted(),
+                "deterministic visual inspection rejects blank images");
+        BufferedImage stripes=new BufferedImage(640,1136,BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g=stripes.createGraphics();
+        for(int y=0;y<1136;y+=142){g.setColor((y/142)%2==0?java.awt.Color.WHITE:java.awt.Color.BLACK);g.fillRect(0,y,640,142);}
+        g.dispose();
+        Path image=dir.resolve("stripes.png");ImageIO.write(stripes,"png",image.toFile());
+        ImageQualityInspector.Result valid=inspector.inspect(image,640,1136,List.of());
+        ok(valid.accepted()&&!inspector.inspect(image,640,1136,List.of(valid.perceptualHash())).accepted(),
+                "valid images pass basic inspection and perceptually repeated images are rejected");
+        CardRenderer cards=new CardRenderer();
+        Path graphic=dir.resolve("statistic.png");cards.render(plan.items().get(1),graphic,540,960);
+        ok(Files.isRegularFile(graphic)&&ImageIO.read(graphic.toFile()).getHeight()==960,
+                "V5 statistic card renders a responsive verified-content layout");
+        Path background=dir.resolve("normalized.png"),overlay=dir.resolve("overlay.png"),preview=dir.resolve("preview.png");
+        cards.renderBackground(plan.items().get(0),image,background,540,960);
+        cards.renderOverlay(plan.items().get(0),overlay,540,960);
+        cards.renderWithImage(plan.items().get(0),image,preview,540,960);
+        BufferedImage normalized=ImageIO.read(background.toFile()),full=ImageIO.read(preview.toFile());
+        ok(normalized.getHeight()==full.getHeight()&&normalized.getWidth()==full.getWidth(),
+                "static previews and FFmpeg backgrounds share the same output crop geometry");
+        Path hostile=dir.resolve("hostile.ass");
+        CaptionWriter.write(hostile,"This contains {\\rInjected} formatting.",3,"sentence",null,540,960);
+        ok(!Files.readString(hostile).contains("{\\rInjected}"),
+                "caption generation escapes script-authored ASS overrides");
     }
 
     private void testWorthyHourFilterContract(Path root)throws Exception{
