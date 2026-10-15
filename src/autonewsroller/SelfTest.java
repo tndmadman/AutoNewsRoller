@@ -564,10 +564,12 @@ public final class SelfTest {
                 "production defaults enable bounded political context graphics");
         ok(!cfg.csv("kokoroVoices","").stream().anyMatch(v->v.equalsIgnoreCase("af_nicole")||v.equalsIgnoreCase("af-nicole")),
                 "production defaults exclude blacklisted Kokoro voice af_nicole");
+        ok(cfg.csv("kokoroVoices","").equals(List.of("af_sarah","am_michael")),
+                "default news narration prefers Sarah and Michael");
         List<String>safeKokoro=NewsPipeline.allowedKokoroVoices(List.of("af_heart","af_nicole","af-nicole","bf_emma"));
         ok(safeKokoro.equals(List.of("af_heart","bf_emma")),
                 "runtime Kokoro voice filter blocks af_nicole and af-nicole aliases");
-        ok(NewsPipeline.allowedKokoroVoices(List.of("af_nicole")).equals(List.of("af_heart","af_bella","bf_emma")),
+        ok(NewsPipeline.allowedKokoroVoices(List.of("af_nicole")).equals(List.of("af_sarah","am_michael")),
                 "all-blacklisted Kokoro configuration falls back to safe voices");
         String kokoroHelper=Files.readString(root.resolve("tools/kokoro_tts.py"));
         ok(kokoroHelper.contains("voice_key == 'af_nicole'")&&kokoroHelper.contains("blacklisted"),
