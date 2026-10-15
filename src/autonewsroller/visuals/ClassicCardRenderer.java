@@ -25,10 +25,11 @@ public final class ClassicCardRenderer extends CardRenderer {
         Files.createDirectories(out.getParent());
         BufferedImage canvas=new BufferedImage(w,h,BufferedImage.TYPE_INT_RGB);
         Graphics2D g=prepare(canvas);
-        if("HOOK".equalsIgnoreCase(item.type()))renderHookPlaceholder(g,item,w,h);
-        else if("SOURCE_CARD".equalsIgnoreCase(item.type()))renderSourceCard(g,item,w,h);
-        else if("POLITICAL_CONTEXT".equalsIgnoreCase(item.type()))renderPoliticalContext(g,item,w,h);
-        else renderStoryPlaceholder(g,item,w,h);
+        g.scale(w/1080.0,h/1920.0);
+        if("HOOK".equalsIgnoreCase(item.type()))renderHookPlaceholder(g,item,1080,1920);
+        else if("SOURCE_CARD".equalsIgnoreCase(item.type()))renderSourceCard(g,item,1080,1920);
+        else if("POLITICAL_CONTEXT".equalsIgnoreCase(item.type()))renderPoliticalContext(g,item,1080,1920);
+        else renderStoryPlaceholder(g,item,1080,1920);
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
         return out;
@@ -40,8 +41,10 @@ public final class ClassicCardRenderer extends CardRenderer {
         if(source==null)throw new IllegalArgumentException("Unsupported image: "+imagePath);
         BufferedImage canvas=new BufferedImage(w,h,BufferedImage.TYPE_INT_RGB);
         Graphics2D g=prepare(canvas);
-        if("HOOK".equalsIgnoreCase(item.type()))renderHookPackage(g,item,source,w,h);
-        else renderStoryPackage(g,item,source,w,h);
+        g.scale(w/1080.0,h/1920.0);
+        if("HOOK".equalsIgnoreCase(item.type()))renderHookPackage(g,item,source,1080,1920);
+        else renderStoryPackage(g,item,source,1080,1920);
+        paintAiDisclosure(g);
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
         return out;
@@ -51,11 +54,21 @@ public final class ClassicCardRenderer extends CardRenderer {
         Files.createDirectories(out.getParent());
         BufferedImage canvas=new BufferedImage(w,h,BufferedImage.TYPE_INT_ARGB);
         Graphics2D g=prepareTransparent(canvas);
-        if("HOOK".equalsIgnoreCase(item.type()))paintHookOverlay(g,item,w,h);
-        else paintStoryOverlay(g,item,w,h);
+        g.scale(w/1080.0,h/1920.0);
+        if("HOOK".equalsIgnoreCase(item.type()))paintHookOverlay(g,item,1080,1920);
+        else paintStoryOverlay(g,item,1080,1920);
+        paintAiDisclosure(g);
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
         return out;
+    }
+
+    private static void paintAiDisclosure(Graphics2D g){
+        g.setColor(new Color(6,10,16,230));
+        g.fillRoundRect(785,142,255,46,7,7);
+        g.setColor(Color.WHITE);
+        g.setFont(new Font("SansSerif",Font.BOLD,21));
+        g.drawString("AI ILLUSTRATION",804,172);
     }
 
     private static void renderHookPackage(Graphics2D g,VisualPlan.Item item,BufferedImage source,int w,int h){
