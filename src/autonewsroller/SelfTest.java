@@ -833,6 +833,8 @@ public final class SelfTest {
 
         Storyboard storyboard=new VisualDirector().direct(plan,script,exact,5.0);
         storyboard.validate();
+        ok(Boolean.FALSE.equals(BroadcastLayout.review(storyboard,1080,1920,false).get("captionEnabled")),
+                "captions-off mode is explicitly reflected in visual layout validation");
         ok("passed".equals(BroadcastLayout.review(storyboard,1080,1920,true).get("status"))&&
                 "passed".equals(BroadcastLayout.review(storyboard,540,960,true).get("status")),
                 "shared caption safety geometry prevents overlap with fixed lower-thirds");

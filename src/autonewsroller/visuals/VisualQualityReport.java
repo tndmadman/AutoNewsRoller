@@ -17,6 +17,10 @@ import javax.imageio.ImageIO;
 public final class VisualQualityReport {
     private VisualQualityReport(){}
     public static Map<String,Object> create(String ffmpeg,Path video,Path jobDir,double seconds,Storyboard board,boolean framesEnabled)throws Exception{
+        return create(ffmpeg,video,jobDir,seconds,board,framesEnabled,true);
+    }
+    public static Map<String,Object> create(String ffmpeg,Path video,Path jobDir,double seconds,Storyboard board,
+                                            boolean framesEnabled,boolean captionsEnabled)throws Exception{
         board.validate();
         if(!Double.isFinite(seconds)||seconds<=0||Math.abs(board.duration()-seconds)>.45)
             throw new IllegalStateException("Storyboard and rendered duration disagree: "+board.duration()+" vs "+seconds);
@@ -86,7 +90,7 @@ public final class VisualQualityReport {
         if(framesEnabled){
             Map<String,Object>layout=BroadcastLayout.review(board,
                     ((Number)captures.get(0).get("width")).intValue(),
-                    ((Number)captures.get(0).get("height")).intValue(),true);
+                    ((Number)captures.get(0).get("height")).intValue(),captionsEnabled);
             report.put("captionSafeLayout",layout);
             if("rejected".equals(layout.get("status")))
                 throw new IllegalStateException("Caption and lower-third safe areas collide");
