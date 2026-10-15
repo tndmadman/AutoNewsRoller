@@ -46,7 +46,7 @@ public final class VisualSmoke {
         for(String captions:java.util.List.of("off","sentence")){
             Path output=d.resolve("test-"+captions+".mp4");
             VideoRenderer.RenderResult result=renderer.render(backgrounds,overlays,
-                    java.util.List.of(true,false),java.util.List.of(1.3,1.3),audio,output,
+                    java.util.List.of(true,false,false),java.util.List.of(.85,.85,.9),audio,output,
                     "x264",captions,"The council confirmed infrastructure funding for the region.");
             if(!Files.isRegularFile(result.path())||Files.size(result.path())<1024)
                 throw new AssertionError("MP4 missing for captions="+captions);
@@ -74,8 +74,9 @@ public final class VisualSmoke {
             double measured=renderer.probeDuration(longVideo);
             if(measured<69.5||measured>70.5)throw new AssertionError("70-second target duration not preserved: "+measured);
             Storyboard longBoard=new Storyboard("70-second-smoke",70,"fixture",java.util.List.of(
-                    new Storyboard.Scene(0,0,33,"HOOK",0,java.util.List.of("FACT_A"),"PUSH_IN","CUT","fixture"),
-                    new Storyboard.Scene(1,33,70,"EDITORIAL_PHOTO",1,java.util.List.of("FACT_B"),"STATIC","CUT","fixture")));
+                    new Storyboard.Scene(0,0,30,"HOOK",0,java.util.List.of("FACT_A"),"PUSH_IN","CUT","fixture"),
+                    new Storyboard.Scene(1,30,40,"STATISTIC",1,java.util.List.of("FACT_B"),"STATIC","CUT","fixture"),
+                    new Storyboard.Scene(2,40,70,"EDITORIAL_PHOTO",2,java.util.List.of("FACT_C"),"STATIC","CUT","fixture")));
             Map<String,Object>longReport=VisualQualityReport.create("ffmpeg",longVideo,d.resolve("long-review"),measured,longBoard,true);
             if(((java.util.List<?>)longReport.get("capturedFrames")).size()<3)
                 throw new AssertionError("70-second review did not sample opening, scenes and ending");
