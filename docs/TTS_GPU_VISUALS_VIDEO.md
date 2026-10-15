@@ -528,3 +528,33 @@ Each generated-image scene must cite verified FACT IDs and pass deterministic va
 
 The standard Comfy photography suffix remains responsible for wire-service realism and natural color. Breaking-news red/blue styling remains in `CardRenderer`; it is not baked into generated photographs. The negative prompt also rejects common conceptual/surreal/holographic/cyberpunk AI-news imagery.
 
+## V5 story-directed visuals and timing
+
+VisualPlanner chooses source-grounded photographic treatments alongside
+fact, statistic, quote, and chronology graphics when supported by the
+verified fact package. VisualDirector converts the plan into a typed,
+validated duration timeline. Source and political-context standalone
+scenes still reserve time in the narration; exact sentence-boundary cuts
+are not promised. A real Kokoro sidecar is validated before use. An
+invalid or unavailable timing file falls back to approximate word timing,
+including Qwen3 narration.
+
+The new AWARE NEWS layout emphasizes actual subjects, compact lower-thirds
+and controlled camera pans/pushes. Java and FFmpeg use the same normalized
+source crop. First-frame story information appears immediately. Generated
+photorealistic images are plainly marked AI ILLUSTRATION and logged as
+illustrations, not verified event photography.
+
+ComfyUI generation remains inside the existing GPU lane. A stable
+per-attempt seed, checkpoint, prompts, sampler, scheduler, steps and
+CFG are preserved in provenance. Checks reject corrupt, flat or duplicated
+images and retry a bounded number of times; these automated checks
+CANNOT verify that a photo depicts a genuine event. The optional
+visualImageReviewModel setting is a placeholder: no compatible local
+vision verifier is currently integrated. llama3.1:8b is not assumed
+to have image understanding.
+
+The visual_storyboard.json and visual_quality_report.json files are
+per-job. The contact sheet in visual_preview is sampled from the actual
+rendered MP4, not a simulated preview. Original visual_plan.json and
+visual_prompt_plan.json are still emitted for compatibility.

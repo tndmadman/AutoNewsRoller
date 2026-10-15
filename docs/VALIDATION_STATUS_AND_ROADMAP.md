@@ -499,3 +499,23 @@ Current validation now includes deterministic coverage for valid FACT-grounded s
 
 Live image relevance is still a target-machine validation item: passing Java/CI validation proves the prompt-planning and grounding contracts, not that RealVisXL output quality was visually reviewed. A future local vision relevance stage can consume the new prompt-plan/provenance artifacts without changing the planner contract.
 
+## V5 validation status and pending production acceptance
+
+Implementation is on feature/video-visual-quality-v5 (GitHub PR #34).
+Cross-platform Java tests exercise sidecar validation and fallback,
+storyboard timeline coverage, image checks, resilient ASS captions
+and responsive graphics. Linux CI is configured for a real FFmpeg
+x264 render using synthetic voice/assets with captions both on and off,
+plus decoding the output to a contact sheet.
+
+The GitHub runner does not have access to the user's Windows RTX 3090,
+RealVisXL checkpoint, live ComfyUI jobs, or the installed Kokoro setup.
+Do not claim representative image quality or factual relevance was
+approved by CI. Inspect a live 70-second production run, six accepted
+Comfy assets, frame-zero hook, timing, graphic readability, GPU
+coordination, fallback and source grounding before merging this PR.
+
+Pending V5 design work: full classic-preset switch, optional compatible
+vision-model adapter, exact per-beat storyboard timing with separate
+political/source overlays, richer animated bars/timelines, and large
+screen-size collision detection.

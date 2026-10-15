@@ -618,3 +618,27 @@ These are good cleanup targets because configuration should ideally be authorita
 
 Blank visual-specific model/URL settings intentionally reuse the normal Ollama service and the existing serialized `output/runtime/ollama.lock`.
 
+## V5 optional visual settings
+
+- visualQualityPreset=enhanced : a reserved design-preset setting;
+  currently only enhanced scene templates are wired. A classic preset
+  is not yet implemented.
+- visualMotionIntensity=moderate : reserved intensity setting;
+  deterministic low-amplitude motion currently applies to selected
+  Comfy scenes.
+- visualNarrationSyncEnabled=true : reserved compatibility flag;
+  V5 storyboard timing currently applies to every production job.
+- visualUseExactTtsTiming=true : uses valid Kokoro timing TSV for
+  captions and scene weights; otherwise estimates using WAV duration.
+- visualPostGenerationChecks=true : enables perceptual-duplicate
+  rejection in addition to mandatory decode, aspect and flatness checks.
+- visualImageReviewRetries=2 : retries rejected generated images
+  from 0 to 4 extra times.
+- visualImageReviewModel= : reserved for a future optional compatible
+  local vision-model verifier; currently no model is invoked.
+- visualGenerateContactSheet=true : decodes five actual MP4 frames
+  and writes a representative contact sheet.
+- visualDebugFrames=true : reserved for future detailed diagnostics.
+
+Automated image checks are limited to deterministic technical quality;
+they must not be treated as confirmation of depicted facts.
