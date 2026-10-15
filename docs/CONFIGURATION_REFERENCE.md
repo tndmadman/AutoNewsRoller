@@ -620,9 +620,10 @@ Blank visual-specific model/URL settings intentionally reuse the normal Ollama s
 
 ## V5 optional visual settings
 
-- visualQualityPreset=enhanced : a reserved design-preset setting;
-  currently only enhanced scene templates are wired. A classic preset
-  is not yet implemented.
+- visualQualityPreset=enhanced : uses the V5 editorial package by default;
+  set classic to retain the legacy V4 news card presentation. A classic job
+  disables image camera movement, uses original scene weights, and preserves
+  the generated-photo AI disclosure in its final provenance.
 - visualMotionIntensity=moderate : the value off disables Comfy scene camera motion;
   otherwise deterministic low-amplitude motion applies.
 - visualNarrationSyncEnabled=true : set false to retain legacy scene-duration weights;

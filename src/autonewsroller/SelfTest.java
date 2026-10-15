@@ -858,6 +858,11 @@ public final class SelfTest {
                 new OllamaVisionReviewer(dir,"","").review(image,"Council facility",List.of("council"),List.of("fire"));
         ok(!unconfiguredVision.evaluated()&&unconfiguredVision.accepted(),
                 "optional vision review is disabled by default and never adds mandatory GPU work");
+        CardRenderer classic=new ClassicCardRenderer();
+        Path classicFrame=dir.resolve("classic.png");
+        classic.render(plan.items().get(0),classicFrame,540,960);
+        ok(ImageIO.read(classicFrame.toFile()).getHeight()==960,
+                "classic broadcast package preserves V4 rendering fallback");
         CardRenderer cards=new CardRenderer();
         Path graphic=dir.resolve("statistic.png");cards.render(plan.items().get(1),graphic,540,960);
         ok(Files.isRegularFile(graphic)&&ImageIO.read(graphic.toFile()).getHeight()==960,

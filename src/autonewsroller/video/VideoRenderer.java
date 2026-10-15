@@ -110,7 +110,9 @@ public final class VideoRenderer {
             int overlayInput=overlayInputs.get(i);
             if(overlayInput>=0){
                 fc.append("[").append(overlayInput).append(":v]scale=").append(width).append(":").append(height)
-                  .append(",format=rgba,trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[ov").append(i).append("];")
+                  .append(",format=rgba,");
+                if(i>0)fc.append("fade=t=in:st=0:d=0.18:alpha=1,");
+                fc.append("trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[ov").append(i).append("];")
                   .append("[bg").append(i).append("][ov").append(i).append("]overlay=0:0:format=auto,")
                   .append("trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[s").append(i).append("];");
             }else{

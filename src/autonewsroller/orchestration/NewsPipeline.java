@@ -235,7 +235,8 @@ public final class NewsPipeline {
         List<Path>renderOverlays=new ArrayList<>();
         List<Boolean>renderMotion=new ArrayList<>();
         List<Map<String,Object>>imageSources=new ArrayList<>();
-        CardRenderer cards=new CardRenderer();int i=0;
+        boolean classic="classic".equalsIgnoreCase(cfg.get("visualQualityPreset","enhanced"));
+        CardRenderer cards=classic?new ClassicCardRenderer():new CardRenderer();int i=0;
         for(VisualPlan.Item item:plan.items()){
             Path p=visuals.resolve(String.format("%02d_%s.png",i++,item.type().toLowerCase(Locale.ROOT)));
             cards.render(item,p,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
@@ -266,14 +267,18 @@ public final class NewsPipeline {
                 }else throw new IllegalStateException("no imageCheckpoint configured and ComfyUI returned no usable checkpoints");
 
                 int limit=Math.max(1,maxComfyImages);
+                List<Integer>secondaryEligible=new ArrayList<>();
                 List<Integer>eligible=new ArrayList<>();
                 for(int n=0;n<plan.items().size();n++){
                     VisualPlan.Item item=plan.items().get(n);
                     if(item.type().equals("HEADLINE_CARD")||item.type().equals("SOURCE_CARD")||item.type().equals("POLITICAL_CONTEXT")
                             ||item.type().equals("STATISTIC")||item.type().equals("QUOTE")||item.type().equals("TIMELINE"))continue;
-                    eligible.add(n);
+                    if(item.type().equals("FACT_HIGHLIGHT"))secondaryEligible.add(n);
+                    else eligible.add(n);
                 }
 
+                for(int n:secondaryEligible)if(eligible.size()<limit)eligible.add(n);
+                eligible.sort(Integer::compareTo);
                 if(eligible.size()>limit){
                     // Image scenes are already ordered by narration, so stop after requested count.
                     eligible=new ArrayList<>(eligible.subList(0,limit));
@@ -345,7 +350,7 @@ public final class NewsPipeline {
                         imgs.set(replace,composed);
                         renderBackgrounds.set(replace,background);
                         renderOverlays.set(replace,overlay);
-                        renderMotion.set(replace,!"off".equalsIgnoreCase(cfg.get("visualMotionIntensity","moderate")));
+                        renderMotion.set(replace,!classic&&!"off".equalsIgnoreCase(cfg.get("visualMotionIntensity","moderate")));
                         Map<String,Object>imageSource=new LinkedHashMap<>();
                         imageSource.put("type","comfyui-generated-ai-illustration");
                         imageSource.put("path",composed.toString());imageSource.put("generatedPath",generated.toString());
@@ -387,7 +392,7 @@ public final class NewsPipeline {
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI DISABLED for this job");
         }
 
-        Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v5-editorial");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));List<Double>sceneWeights=cfg.getBool("visualNarrationSyncEnabled",true)?storyboard.durations():plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration(),cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null);
+        Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v5-editorial");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));List<Double>sceneWeights=!classic&&cfg.getBool("visualNarrationSyncEnabled",true)?storyboard.durations():plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration(),cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null);
         Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();Map<String,Object>visualQuality=VisualQualityReport.create(cfg.get("ffmpegCommand","ffmpeg"),render,slotDir,finalSeconds,storyboard,cfg.getBool("visualGenerateContactSheet",true));
         visualQuality.put("imageInspections",imageReviews);
         visualQuality.put("acceptedComfyImages",comfyGenerated);

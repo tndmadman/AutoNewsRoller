@@ -8,7 +8,7 @@ import java.nio.file.*;
 import java.util.*;
 import javax.imageio.ImageIO;
 
-public final class CardRenderer {
+public class CardRenderer {
     private static final Color BG=BroadcastTheme.BACKGROUND;
     private static final Color NAVY=BroadcastTheme.NAVY;
     private static final Color NAVY_2=BroadcastTheme.NAVY_2;
