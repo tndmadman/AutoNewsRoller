@@ -24,7 +24,7 @@ Current defaults:
     ollamaKeepAlive=30m
     ttsPrimary=kokoro
     ttsFallback=qwen3
-    kokoroVoices=af_heart,af_bella,af_nicole,bf_emma
+    kokoroVoices=af_sarah,am_michael
     qwenVoices=Ryan,Aiden,Ono_Anna,Sohee
     qwenUrl=http://127.0.0.1:8765
     comfyUrl=http://127.0.0.1:8188
@@ -140,14 +140,12 @@ Important: the live NewsPipeline code currently explicitly attempts Kokoro first
 
 ### kokoroVoices
 
-Default pool:
+Preferred/default pool:
 
-- af_heart
-- af_bella
-- af_nicole
-- bf_emma
+- af_sarah (American female)
+- am_michael (American male)
 
-A stable voice is chosen for a video based on the story ID hash.
+A stable voice is chosen for a video based on the story ID hash. With only these two in the default pool, both are used in preference to older voices. Other Kokoro voices can be added manually to `kokoroVoices`; `af_nicole` (including `af-nicole`) remains blacklisted.
 
 ### qwenVoices
 

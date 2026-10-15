@@ -77,11 +77,12 @@ Kokoro helper defaults:
 - default language code: a
 - default speed: 1.0
 
-The configured Java voice pool is:
+The preferred/default Java voice pool is:
 
-- af_heart
-- af_bella
-- bf_emma
+- af_sarah (American female)
+- am_michael (American male)
+
+Story IDs deterministically select between these two voices. Other supported Kokoro voices (including af_heart, af_bella, and bf_emma) can still be selected by explicitly configuring `kokoroVoices` in `defaults.txt`.
 
 `af_nicole` is intentionally blacklisted. AutoNewsRoller removes both `af_nicole` and `af-nicole` from configured Kokoro voice pools at runtime, and the Python Kokoro helper refuses direct use of that voice. If an old/custom configuration contains only blacklisted entries, the runtime falls back to the safe pool above.
 

@@ -24,7 +24,7 @@ import java.util.function.Consumer;
 
 public final class NewsPipeline {
     private static final Set<String> KOKORO_VOICE_BLACKLIST=Set.of("af_nicole");
-    private static final List<String> SAFE_KOKORO_VOICES=List.of("af_heart","af_bella","bf_emma");
+    private static final List<String> SAFE_KOKORO_VOICES=List.of("af_sarah","am_michael");
 
     private final Path root,batchDir;private final NewsConfig cfg;private final EventLog events;private final RuntimeLog logs;private final StoryHistory history;private final PublishHistory publishHistory;
     public NewsPipeline(Path root,NewsConfig cfg,Path batchDir){this(root,cfg,batchDir,null);}
@@ -444,7 +444,7 @@ public final class NewsPipeline {
     }
 
     private NarrationResult narrate(StoryCluster c,NewsScript script,Path wav,int worker,int slot)throws Exception{
-        List<String>configuredKokoro=cfg.csv("kokoroVoices","af_heart,af_bella,bf_emma");
+        List<String>configuredKokoro=cfg.csv("kokoroVoices","af_sarah,am_michael");
         List<String>kv=allowedKokoroVoices(configuredKokoro);
         if(kv.size()!=configuredKokoro.size()){
             String blacklistMsg="KOKORO VOICE BLACKLIST: af_nicole removed from configured pool";
