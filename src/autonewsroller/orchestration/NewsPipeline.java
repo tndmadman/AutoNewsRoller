@@ -173,11 +173,6 @@ public final class NewsPipeline {
             Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
             VisualPlan plan=new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
             Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
-        Path timingSidecar=nr.wav().resolveSibling(nr.wav().getFileName().toString().replaceFirst("\\.wav$",".timing.tsv"));
-        SpeechTiming.Alignment alignment=SpeechTiming.align(script.narration(),script.segments(),
-                cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null,narrationSeconds);
-        Storyboard storyboard=new VisualDirector().direct(plan,script,alignment,narrationSeconds);
-        Json.write(slotDir.resolve("visual_storyboard.json"),storyboard.toMap());
 
             SpeechTiming.Alignment dryTiming=SpeechTiming.align(script.narration(),script.segments(),null,Math.max(1,script.estimatedDuration()));
             Storyboard dryBoard=new VisualDirector().direct(plan,script,dryTiming,Math.max(1,script.estimatedDuration()));
@@ -227,6 +222,12 @@ public final class NewsPipeline {
         Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
         VisualPlan plan=new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
         Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
+
+        Path timingSidecar=nr.wav().resolveSibling(nr.wav().getFileName().toString().replaceFirst("\\.wav$",".timing.tsv"));
+        SpeechTiming.Alignment alignment=SpeechTiming.align(script.narration(),script.segments(),
+                cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null,narrationSeconds);
+        Storyboard storyboard=new VisualDirector().direct(plan,script,alignment,narrationSeconds);
+        Json.write(slotDir.resolve("visual_storyboard.json"),storyboard.toMap());
 
         Path visuals=slotDir.resolve("visuals");
         List<Path>imgs=new ArrayList<>();
