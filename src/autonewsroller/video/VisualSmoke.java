@@ -53,11 +53,34 @@ public final class VisualSmoke {
                 if(!report.containsKey("contactSheet"))throw new AssertionError("No actual MP4 contact sheet");
             }
         }
+        if("true".equalsIgnoreCase(System.getenv("V5_LONG_SMOKE"))){
+            Path longAudio=d.resolve("long-voice.wav");
+            FfmpegRunner.run(java.util.List.of("ffmpeg","-y","-hide_banner","-loglevel","error",
+                    "-f","lavfi","-i","sine=frequency=440:sample_rate=24000",
+                    "-t","70","-c:a","pcm_s16le",longAudio.toString()),40);
+            Path longVideo=d.resolve("synthetic_70s.mp4");
+            renderer.render(backgrounds,overlays,java.util.List.of(true,false),java.util.List.of(33.0,37.0),
+                    longAudio,longVideo,"x264","sentence",
+                    "Verified reporting about infrastructure and local officials.",null);
+            double measured=renderer.probeDuration(longVideo);
+            if(measured<69.5||measured>70.5)throw new AssertionError("70-second target duration not preserved: "+measured);
+            Storyboard longBoard=new Storyboard("70-second-smoke",70,"fixture",java.util.List.of(
+                    new Storyboard.Scene(0,0,33,"HOOK",0,java.util.List.of("FACT_A"),"PUSH_IN","CUT","fixture"),
+                    new Storyboard.Scene(1,33,70,"EDITORIAL_PHOTO",1,java.util.List.of("FACT_B"),"STATIC","CUT","fixture")));
+            Map<String,Object>longReport=VisualQualityReport.create("ffmpeg",longVideo,d.resolve("long-review"),measured,longBoard,true);
+            if(((java.util.List<?>)longReport.get("capturedFrames")).size()<3)
+                throw new AssertionError("70-second review did not sample opening, scenes and ending");
+            System.out.println("V5 70-SECOND SMOKE PASS: real synthetic MP4 full length, audio sync, caption overlay and frame samples");
+        }
         if("true".equalsIgnoreCase(System.getenv("GITHUB_ACTIONS"))){
             Path artifact=Paths.get("test-results","v5");
             Files.createDirectories(artifact);
             Files.copy(d.resolve("visual_preview/contact_sheet.png"),artifact.resolve("contact_sheet.png"),StandardCopyOption.REPLACE_EXISTING);
             Files.copy(d.resolve("test-sentence.mp4"),artifact.resolve("synthetic_captioned.mp4"),StandardCopyOption.REPLACE_EXISTING);
+            if(Files.isRegularFile(d.resolve("synthetic_70s.mp4")))
+                Files.copy(d.resolve("synthetic_70s.mp4"),artifact.resolve("synthetic_70s.mp4"),StandardCopyOption.REPLACE_EXISTING);
+            if(Files.isRegularFile(d.resolve("long-review/visual_preview/contact_sheet.png")))
+                Files.copy(d.resolve("long-review/visual_preview/contact_sheet.png"),artifact.resolve("long_contact_sheet.png"),StandardCopyOption.REPLACE_EXISTING);
         }
         System.out.println("V5 FFMPEG SMOKE PASS: x264, synthetic narration, motion, captions off/on, contact sheet");
     }

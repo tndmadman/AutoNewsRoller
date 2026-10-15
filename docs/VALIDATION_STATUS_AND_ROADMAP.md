@@ -519,3 +519,13 @@ Pending V5 design work: production testing of the classic design fallback, produ
 vision-model adapter, exact per-beat storyboard timing with separate
 political/source overlays, richer animated bars/timelines, and large
 screen-size collision detection.
+
+
+### CI target-duration coverage
+
+The Linux FFmpeg smoke test additionally creates a full 70-second synthetic
+voice/video sample and checks the measured MP4 duration, audio/video mapping,
+captions, and actual first/last scene frames. Windows CI runs the short
+synthetic FFmpeg smoke with captions enabled and disabled to catch Windows
+filter escaping. Synthetic footage is not evidence of RTX 3090 or ComfyUI
+production quality, but it validates the real media path.
