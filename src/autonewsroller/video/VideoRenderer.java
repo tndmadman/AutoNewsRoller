@@ -88,10 +88,12 @@ public final class VideoRenderer {
                 String z,x,y;
                 // Distinct deterministic movements; graphics never receive camera motion.
                 int total=Math.max(1,frames-1);
-                switch(i%4){
+                switch(i%6){
                     case 1->{z="'1.028-0.026*on/"+total+"'";x="'(iw-iw/zoom)/2'";y="'(ih-ih/zoom)/2'";}
                     case 2->{z="'1.03'";x="'(iw-iw/zoom)*on/"+total+"'";y="'(ih-ih/zoom)/2'";}
                     case 3->{z="'1.03'";x="'(iw-iw/zoom)*(1-on/"+total+")'";y="'(ih-ih/zoom)/2'";}
+                    case 4->{z="'1.03'";x="'(iw-iw/zoom)/2'";y="'(ih-ih/zoom)*on/"+total+"'";}
+                    case 5->{z="'1.03'";x="'(iw-iw/zoom)/2'";y="'(ih-ih/zoom)*(1-on/"+total+")'";}
                     default->{z="'1.002+0.026*on/"+total+"'";x="'(iw-iw/zoom)/2'";y="'(ih-ih/zoom)/2'";}
                 }
                 fc.append(base).append("scale=").append(width).append(":").append(height).append(":force_original_aspect_ratio=increase,")
