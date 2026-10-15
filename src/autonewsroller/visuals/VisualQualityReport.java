@@ -5,7 +5,11 @@ import autonewsroller.util.Json;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.nio.file.*;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import javax.imageio.ImageIO;
 
 /** Actual MP4 snapshots for honest post-render visual inspection and automatic black-frame rejection. */
