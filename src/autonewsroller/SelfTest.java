@@ -879,6 +879,13 @@ public final class SelfTest {
         Path graphic=dir.resolve("statistic.png");cards.render(plan.items().get(1),graphic,540,960);
         ok(Files.isRegularFile(graphic)&&ImageIO.read(graphic.toFile()).getHeight()==960,
                 "V5 statistic card renders a responsive verified-content layout");
+        Path bgGraphic=dir.resolve("stat-base.png"),overlayGraphic=dir.resolve("stat-reveal.png");
+        cards.renderGraphicLayers(graphic,bgGraphic,overlayGraphic,540,960);
+        BufferedImage graphicOverlay=ImageIO.read(overlayGraphic.toFile());
+        ok(graphicOverlay.getColorModel().hasAlpha()&&
+                ImageIO.read(bgGraphic.toFile()).getWidth()==540&&
+                graphicOverlay.getRGB(50,165)!=0,
+                "statistic and context graphics can reveal accurate content over a lightweight base");
         Path background=dir.resolve("normalized.png"),overlay=dir.resolve("overlay.png"),preview=dir.resolve("preview.png");
         cards.renderBackground(plan.items().get(0),image,background,540,960);
         cards.renderOverlay(plan.items().get(0),overlay,540,960);

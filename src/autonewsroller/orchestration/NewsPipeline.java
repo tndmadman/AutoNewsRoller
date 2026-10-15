@@ -242,6 +242,17 @@ public final class NewsPipeline {
             cards.render(item,p,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
             imgs.add(p);renderBackgrounds.add(p);renderOverlays.add(null);renderMotion.add(false);
             imageSources.add(Map.of("type","procedural-card","path",p.toString(),"visualType",item.type()));
+            if(!"classic".equalsIgnoreCase(cfg.get("visualQualityPreset","enhanced"))
+                    &&CardRenderer.supportsGraphicAnimation(item.type())){
+                Path base=visuals.resolve(String.format("%02d_graphic_base.png",item.index()));
+                Path overlay=visuals.resolve(String.format("%02d_graphic_reveal.png",item.index()));
+                cards.renderGraphicLayers(p,base,overlay,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+                renderBackgrounds.set(renderBackgrounds.size()-1,base);
+                renderOverlays.set(renderOverlays.size()-1,overlay);
+                imageSources.set(imageSources.size()-1,Map.of("type","procedural-animated-graphic",
+                        "path",p.toString(),"backgroundPath",base.toString(),
+                        "overlayPath",overlay.toString(),"visualType",item.type()));
+            }
         }
         List<Map<String,Object>>imageReviews=new ArrayList<>();
         List<Long>acceptedHashes=new ArrayList<>();

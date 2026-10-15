@@ -558,3 +558,14 @@ The visual_storyboard.json and visual_quality_report.json files are
 per-job. The contact sheet in visual_preview is sampled from the actual
 rendered MP4, not a simulated preview. Original visual_plan.json and
 visual_prompt_plan.json are still emitted for compatibility.
+
+
+### Animated editorial graphics
+
+Enhanced-mode numerical, fact, quote, source and political cards retain a
+deterministic Java-rendered final frame. A transparent content layer is
+revealed over a simple navy/blue/red plate with an 0.18-second alpha entrance.
+This provides purposeful visual motion without changing any numbers,
+attributes or classifications and avoids large PNG frame sequences.
+The static full-frame preview remains the verified final graphic layout.
+Classic mode keeps its original full-frame still presentation.

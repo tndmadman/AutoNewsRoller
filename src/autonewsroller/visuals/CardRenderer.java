@@ -77,6 +77,42 @@ public class CardRenderer {
         g.dispose();ImageIO.write(img,"png",out.toFile());return out;
     }
 
+    /** Public template classifier, used to animate only non-photographic information cards. */
+    public static boolean supportsGraphicAnimation(String type){
+        return type!=null&&(isGraphic(type)||"POLITICAL_CONTEXT".equalsIgnoreCase(type)
+                ||"SOURCE_CARD".equalsIgnoreCase(type));
+    }
+
+    /**
+     * Separate a deterministic editorial background from its accurate final graphic.
+     * FFmpeg can reveal the difference layer in 0.18 seconds without any per-frame PNG
+     * encoding or changing the source-backed text/data values.
+     */
+    public void renderGraphicLayers(Path fullFrame,Path baseOut,Path overlayOut,int width,int height)throws Exception{
+        BufferedImage finalImage=ImageIO.read(fullFrame.toFile());
+        if(finalImage==null||finalImage.getWidth()!=width||finalImage.getHeight()!=height)
+            throw new IllegalArgumentException("Invalid graphic source for animation");
+        Files.createDirectories(baseOut.getParent());
+        Files.createDirectories(overlayOut.getParent());
+        BufferedImage background=new BufferedImage(width,height,BufferedImage.TYPE_INT_RGB);
+        Graphics2D g=background.createGraphics();
+        g.setColor(BroadcastTheme.NAVY);
+        g.fillRect(0,0,width,height);
+        g.setColor(BroadcastTheme.BLUE);
+        g.fillRect(0,0,width,Math.max(2,(int)Math.round(height*.004)));
+        g.setColor(BroadcastTheme.RED);
+        g.fillRect(0,0,Math.max(25,width/5),Math.max(2,(int)Math.round(height*.003)));
+        g.dispose();
+        BufferedImage overlay=new BufferedImage(width,height,BufferedImage.TYPE_INT_ARGB);
+        for(int y=0;y<height;y++)for(int x=0;x<width;x++){
+            int finalRgb=finalImage.getRGB(x,y)&0x00ffffff;
+            int backgroundRgb=background.getRGB(x,y)&0x00ffffff;
+            if(finalRgb!=backgroundRgb)overlay.setRGB(x,y,0xff000000|finalRgb);
+        }
+        ImageIO.write(background,"png",baseOut.toFile());
+        ImageIO.write(overlay,"png",overlayOut.toFile());
+    }
+
     private static boolean isGraphic(String type){
         return java.util.Set.of("STATISTIC","FACT_HIGHLIGHT","TIMELINE","QUOTE","DOCUMENT","CONTEXT").contains(type.toUpperCase(Locale.ROOT));
     }
