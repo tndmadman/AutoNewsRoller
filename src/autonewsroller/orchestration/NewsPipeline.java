@@ -173,6 +173,17 @@ public final class NewsPipeline {
             Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
             VisualPlan plan=new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
             Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
+        Path timingSidecar=nr.wav().resolveSibling(nr.wav().getFileName().toString().replaceFirst("\\.wav$",".timing.tsv"));
+        SpeechTiming.Alignment alignment=SpeechTiming.align(script.narration(),script.segments(),
+                cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null,narrationSeconds);
+        Storyboard storyboard=new VisualDirector().direct(plan,script,alignment,narrationSeconds);
+        Json.write(slotDir.resolve("visual_storyboard.json"),storyboard.toMap());
+
+            SpeechTiming.Alignment dryTiming=SpeechTiming.align(script.narration(),script.segments(),null,Math.max(1,script.estimatedDuration()));
+            Storyboard dryBoard=new VisualDirector().direct(plan,script,dryTiming,Math.max(1,script.estimatedDuration()));
+            Json.write(slotDir.resolve("visual_storyboard.json"),dryBoard.toMap());
+            Json.write(slotDir.resolve("visual_quality_report.json"),Map.of("status","not-rendered-dry-run","storyboardValid",true));
+
             Map<String,Object>audit=new LinkedHashMap<>();
             audit.put("status","approved-dry-run");
             audit.put("sourceCount",fp.sourceCount());
@@ -230,6 +241,9 @@ public final class NewsPipeline {
             imgs.add(p);renderBackgrounds.add(p);renderOverlays.add(null);renderMotion.add(false);
             imageSources.add(Map.of("type","procedural-card","path",p.toString(),"visualType",item.type()));
         }
+        List<Map<String,Object>>imageReviews=new ArrayList<>();
+        List<Long>acceptedHashes=new ArrayList<>();
+        ImageQualityInspector inspector=new ImageQualityInspector();
         String usedCheckpoint="";
         int comfyGenerated=0;
         if(requireComfy&&!useComfy)throw new IllegalStateException("ComfyUI is required for this job but useComfy=false");
@@ -252,7 +266,8 @@ public final class NewsPipeline {
                 List<Integer>eligible=new ArrayList<>();
                 for(int n=0;n<plan.items().size();n++){
                     VisualPlan.Item item=plan.items().get(n);
-                    if(item.type().equals("HEADLINE_CARD")||item.type().equals("SOURCE_CARD")||item.type().equals("POLITICAL_CONTEXT"))continue;
+                    if(item.type().equals("HEADLINE_CARD")||item.type().equals("SOURCE_CARD")||item.type().equals("POLITICAL_CONTEXT")
+                            ||item.type().equals("STATISTIC")||item.type().equals("FACT_HIGHLIGHT")||item.type().equals("QUOTE")||item.type().equals("TIMELINE"))continue;
                     eligible.add(n);
                 }
 
@@ -260,51 +275,80 @@ public final class NewsPipeline {
                     throw new IllegalStateException("visual plan contained no replaceable story visuals");
                 }
 
+                int maxRetries=Math.max(0,Math.min(4,cfg.getInt("visualImageReviewRetries",2)));
+                int requestedWidth=cfg.getInt("imageWidth",768),requestedHeight=cfg.getInt("imageHeight",1344);
                 for(int replace:eligible){
                     if(comfyGenerated>=limit)break;
                     VisualPlan.Item chosen=plan.items().get(replace);
                     String basePrompt=chosen.prompt()==null||chosen.prompt().isBlank()
-                            ? (chosen.title()+". "+chosen.body())
-                            : chosen.prompt();
+                            ?chosen.title()+". "+chosen.body():chosen.prompt();
                     String visualSuffix="HOOK".equalsIgnoreCase(chosen.type())
                             ?", thumbnail-safe opening frame for a vertical news video, realistic wire-service news photography, strongest concrete focal subject visible immediately on a phone screen, main subject in the upper-middle of the frame, lower quarter visually clean for a broadcast lower-third, believable real-world colors and skin tones, neutral white balance, moderate documentary contrast, restrained saturation, newsroom realism"
                             :", realistic wire-service editorial documentary photograph for a vertical broadcast news package, clear central subject, natural scene depth, portrait composition, believable real-world colors and skin tones, neutral white balance, moderate documentary contrast, restrained saturation, lower quarter reasonably uncluttered for a news lower-third";
-                    String prompt=(basePrompt+visualSuffix).replaceAll("\\s+"," ").trim();
                     String negativePrompt=sceneNegativePrompt(chosen);
-                    assertNoExcludedConceptInPositive(chosen,prompt);
-                    Path generated=visuals.resolve(String.format("%02d_comfy_generated_%02d.png",replace,comfyGenerated+1));
-                    String generating="COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" checkpoint="+usedCheckpoint;
-                    System.out.println(generating);events.emit(worker,slot,PipelineStage.VISUALS,generating);
-                    try{
-                        comfy.generate(prompt,negativePrompt,usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",24),Double.parseDouble(cfg.get("imageCfg","5.0")));
-                    }catch(Exception imageError){
-                        if(!ComfyImageGenerator.looksLikeCudaOom(imageError))throw imageError;
-                        String recovery="COMFYUI OOM RECOVERY: freeing VRAM once and retrying current image";
-                        System.err.println(recovery);events.emit(worker,slot,PipelineStage.VISUALS,recovery);logs.worker(worker,"slot="+slot+" "+recovery);
-                        comfy.recoverFromOom();
-                        comfy.generate(prompt,negativePrompt,usedCheckpoint,generated,cfg.getInt("imageWidth",768),cfg.getInt("imageHeight",1344),cfg.getInt("imageSteps",24),Double.parseDouble(cfg.get("imageCfg","5.0")));
+                    for(int attempt=0;attempt<=maxRetries;attempt++){
+                        String correction=attempt==0?"":", centered subject, uncluttered factual editorial composition, no unsupported secondary subjects";
+                        String prompt=(basePrompt+visualSuffix+correction).replaceAll("\\s+"," ").trim();
+                        assertNoExcludedConceptInPositive(chosen,prompt);
+                        long seed=Integer.toUnsignedLong(Objects.hash(c.id,replace,usedCheckpoint,attempt));
+                        Path generated=visuals.resolve(String.format("%02d_comfy_attempt_%02d.png",replace,attempt+1));
+                        String generating="COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" attempt="+(attempt+1)+" checkpoint="+usedCheckpoint;
+                        events.emit(worker,slot,PipelineStage.VISUALS,generating);
+                        try{
+                            comfy.generate(prompt,negativePrompt,usedCheckpoint,generated,requestedWidth,requestedHeight,
+                                    cfg.getInt("imageSteps",24),cfg.getDouble("imageCfg",5.0),seed);
+                        }catch(Exception imageError){
+                            if(!ComfyImageGenerator.looksLikeCudaOom(imageError))throw imageError;
+                            events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI OOM RECOVERY: retrying after VRAM release");
+                            comfy.recoverFromOom();
+                            comfy.generate(prompt,negativePrompt,usedCheckpoint,generated,requestedWidth,requestedHeight,
+                                    cfg.getInt("imageSteps",24),cfg.getDouble("imageCfg",5.0),seed);
+                        }
+                        ImageQualityInspector.Result inspection=inspector.inspect(generated,requestedWidth,requestedHeight,
+                                cfg.getBool("visualPostGenerationChecks",true)?acceptedHashes:List.of());
+                        Map<String,Object>review=new LinkedHashMap<>(inspection.toMap());
+                        review.put("sceneIndex",replace);review.put("attempt",attempt+1);review.put("seed",seed);
+                        review.put("factIds",chosen.data().getOrDefault("factIds",List.of()));
+                        imageReviews.add(review);
+                        if(!inspection.accepted()){
+                            events.emit(worker,slot,PipelineStage.VISUALS,"IMAGE REJECTED scene="+replace+" reason="+inspection.reason());
+                            Files.deleteIfExists(generated);
+                            continue;
+                        }
+                        acceptedHashes.add(inspection.perceptualHash());
+                        Path overlay=visuals.resolve(String.format("%02d_overlay_%02d.png",replace,attempt+1));
+                        cards.renderOverlay(chosen,overlay,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+                        Path composed=visuals.resolve(String.format("%02d_post_%02d.png",replace,attempt+1));
+                        cards.renderWithImage(chosen,generated,composed,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+                        Path background=visuals.resolve(String.format("%02d_cropped_%02d.png",replace,attempt+1));
+                        cards.renderBackground(chosen,generated,background,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+                        imgs.set(replace,composed);
+                        renderBackgrounds.set(replace,background);
+                        renderOverlays.set(replace,overlay);
+                        renderMotion.set(replace,true);
+                        Map<String,Object>imageSource=new LinkedHashMap<>();
+                        imageSource.put("type","comfyui-generated-ai-illustration");
+                        imageSource.put("path",composed.toString());imageSource.put("generatedPath",generated.toString());
+                        imageSource.put("backgroundPath",background.toString());imageSource.put("overlayPath",overlay.toString());
+                        imageSource.put("motion",storyboard.scenes().get(replace).motion());
+                        imageSource.put("checkpoint",usedCheckpoint);imageSource.put("prompt",prompt);imageSource.put("negativePrompt",negativePrompt);
+                        imageSource.put("seed",seed);imageSource.put("steps",cfg.getInt("imageSteps",24));imageSource.put("cfg",cfg.getDouble("imageCfg",5.0));
+                        imageSource.put("sampler","dpmpp_2m_sde");imageSource.put("scheduler","karras");
+                        imageSource.put("resolution",requestedWidth+"x"+requestedHeight);
+                        imageSource.put("inspection",inspection.toMap());imageSource.put("retryCount",attempt);
+                        imageSource.put("aiIllustrationDisclosure",true);
+                        imageSource.put("visualType",chosen.type());imageSource.put("segmentIndex",chosen.data().getOrDefault("segmentIndex",chosen.index()));
+                        imageSource.put("visualStrategy",chosen.data().getOrDefault("visualStrategy",chosen.type()));
+                        imageSource.put("factIds",chosen.data().getOrDefault("factIds",List.of()));
+                        imageSource.put("anchorEntities",chosen.data().getOrDefault("anchorEntities",List.of()));
+                        imageSource.put("groundingScore",chosen.data().getOrDefault("groundingScore",0));
+                        imageSources.set(replace,imageSource);
+                        comfyGenerated++;
+                        String comfyUsed="COMFYUI USED checkpoint="+usedCheckpoint+" image="+generated.getFileName()+" count="+comfyGenerated;
+                        events.emit(worker,slot,PipelineStage.VISUALS,comfyUsed);
+                        logs.worker(worker,"slot="+slot+" "+comfyUsed);
+                        break;
                     }
-                    Path overlay=visuals.resolve(String.format("%02d_overlay_%02d.png",replace,comfyGenerated+1));
-                    cards.renderOverlay(chosen,overlay,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
-                    Path composed=visuals.resolve(String.format("%02d_post_%02d.png",replace,comfyGenerated+1));
-                    cards.renderWithImage(chosen,generated,composed,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
-                    imgs.set(replace,composed);
-                    renderBackgrounds.set(replace,generated);
-                    renderOverlays.set(replace,overlay);
-                    renderMotion.set(replace,true);
-                    Map<String,Object>imageSource=new LinkedHashMap<>();
-                    imageSource.put("type","comfyui-generated");imageSource.put("path",composed.toString());imageSource.put("generatedPath",generated.toString());imageSource.put("overlayPath",overlay.toString());imageSource.put("motion","slow-push-2.8pct");
-                    imageSource.put("checkpoint",usedCheckpoint);imageSource.put("prompt",prompt);imageSource.put("negativePrompt",negativePrompt);imageSource.put("visualType",chosen.type());
-                    imageSource.put("segmentIndex",chosen.data().getOrDefault("segmentIndex",chosen.index()));
-                    imageSource.put("visualStrategy",chosen.data().getOrDefault("visualStrategy",chosen.type()));
-                    imageSource.put("factIds",chosen.data().getOrDefault("factIds",List.of()));
-                    imageSource.put("anchorEntities",chosen.data().getOrDefault("anchorEntities",List.of()));
-                    imageSource.put("groundingScore",chosen.data().getOrDefault("groundingScore",0));
-                    imageSources.set(replace,imageSource);
-                    comfyGenerated++;
-                    String comfyUsed="COMFYUI USED checkpoint="+usedCheckpoint+" image="+generated.getFileName()+" count="+comfyGenerated;
-                    System.out.println(comfyUsed);events.emit(worker,slot,PipelineStage.VISUALS,comfyUsed);
-                    logs.worker(worker,"slot="+slot+" "+comfyUsed);
                 }
 
                 if(comfyGenerated==0)throw new IllegalStateException("ComfyUI produced zero images");
@@ -320,10 +364,14 @@ public final class NewsPipeline {
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI DISABLED for this job");
         }
 
-        Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v4-motion");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));List<Double>sceneWeights=plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration());
-        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);audit.put("hook",script.hook());audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());audit.put("visualPackage",BroadcastTheme.PACKAGE_ID);audit.put("thumbnailStrategy","hook-frame-zero");putVisualPromptAudit(audit,visualPrompts);putPoliticalAudit(audit,political,plan);Json.write(slotDir.resolve("audit.json"),audit);
+        Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v5-editorial");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));List<Double>sceneWeights=storyboard.durations();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration(),cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null);
+        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();Map<String,Object>visualQuality=VisualQualityReport.create(cfg.get("ffmpegCommand","ffmpeg"),render,slotDir,finalSeconds,storyboard,cfg.getBool("visualGenerateContactSheet",true));
+        visualQuality.put("imageInspections",imageReviews);
+        visualQuality.put("acceptedComfyImages",comfyGenerated);
+        Json.write(slotDir.resolve("visual_quality_report.json"),visualQuality);
+        audit.put("visualQuality",visualQuality);audit.put("narrationTiming",alignment.toMap());if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);audit.put("hook",script.hook());audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());audit.put("visualPackage",BroadcastTheme.PACKAGE_ID);audit.put("thumbnailStrategy","hook-frame-zero");putVisualPromptAudit(audit,visualPrompts);putPoliticalAudit(audit,political,plan);Json.write(slotDir.resolve("audit.json"),audit);
         Path finalDir=slotDir.getParent().resolve("final_videos");Path finalVideo=FileNames.unique(finalDir,c.topic,".mp4");Files.createDirectories(finalDir);Files.copy(render,finalVideo,StandardCopyOption.REPLACE_EXISTING);
-        Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("motionPackage","restrained-photo-push");prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
+        Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("motionPackage","editorial-motion-v5");prov.put("narrationTiming",alignment.toMap());prov.put("visualStoryboard",storyboard.toMap());prov.put("visualQuality",visualQuality);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
         history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
     }
 

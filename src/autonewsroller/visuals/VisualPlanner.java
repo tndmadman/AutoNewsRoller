@@ -84,7 +84,7 @@ public final class VisualPlanner {
         if(index%3==0)return "FACT_HIGHLIGHT";
         if(grounded!=null&&(grounded.strategy().equalsIgnoreCase("DIRECT_EVENT")||grounded.strategy().equalsIgnoreCase("LOCATION")
                 ||grounded.strategy().equalsIgnoreCase("PERSON")))return "EDITORIAL_PHOTO";
-        return index%2==0?"EDITORIAL_PHOTO":"FACT_HIGHLIGHT";
+        return "EDITORIAL_PHOTO";
     }
 
 }

@@ -65,14 +65,15 @@ public final class CardRenderer {
     }
 
     /** The identical base crop is used by Java previews and FFmpeg motion overlays. */
-    public Path renderBackground(Path sourcePath,Path out,int width,int height)throws Exception{
+    public Path renderBackground(VisualPlan.Item item,Path sourcePath,Path out,int width,int height)throws Exception{
         Files.createDirectories(out.getParent());
         BufferedImage src=ImageIO.read(sourcePath.toFile());
         if(src==null)throw new IllegalArgumentException("Invalid image: "+sourcePath);
         BufferedImage img=new BufferedImage(width,height,BufferedImage.TYPE_INT_RGB);
         Graphics2D g=prepare(img);g.scale(width/1080.0,height/1920.0);
         drawCover(g,src,0,BroadcastTheme.HEADER_HEIGHT,1080,
-                1920-BroadcastTheme.HEADER_HEIGHT-BroadcastTheme.TICKER_HEIGHT,.42);
+                1920-BroadcastTheme.HEADER_HEIGHT-BroadcastTheme.TICKER_HEIGHT,
+                "HOOK".equalsIgnoreCase(item.type())?.38:.47);
         g.dispose();ImageIO.write(img,"png",out.toFile());return out;
     }
 
