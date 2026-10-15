@@ -83,6 +83,14 @@ public final class VisualQualityReport {
             report.put("contactSheet",sheetPath.toString());
             report.put("frameWidth",expectedW);report.put("frameHeight",expectedH);
         }else warnings.add("No post-render visual frames captured: contact-sheet generation disabled");
+        if(framesEnabled){
+            Map<String,Object>layout=BroadcastLayout.review(board,
+                    ((Number)captures.get(0).get("width")).intValue(),
+                    ((Number)captures.get(0).get("height")).intValue(),true);
+            report.put("captionSafeLayout",layout);
+            if("rejected".equals(layout.get("status")))
+                throw new IllegalStateException("Caption and lower-third safe areas collide");
+        }
         report.put("capturedFrames",captures);
         report.put("warnings",warnings);
         report.put("status",framesEnabled?"passed":"not-sampled");

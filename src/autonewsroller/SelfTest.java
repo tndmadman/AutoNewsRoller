@@ -833,6 +833,9 @@ public final class SelfTest {
 
         Storyboard storyboard=new VisualDirector().direct(plan,script,exact,5.0);
         storyboard.validate();
+        ok("passed".equals(BroadcastLayout.review(storyboard,1080,1920,true).get("status"))&&
+                "passed".equals(BroadcastLayout.review(storyboard,540,960,true).get("status")),
+                "shared caption safety geometry prevents overlap with fixed lower-thirds");
         ok(storyboard.scenes().size()==2&&storyboard.scenes().get(0).start()==0.0&&
                         Math.abs(storyboard.scenes().get(1).end()-5.0)<.001,
                 "typed storyboard covers actual narration duration with no gap");

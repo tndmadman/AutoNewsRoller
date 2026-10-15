@@ -16,9 +16,9 @@ public final class CaptionWriter {
         SpeechTiming.Alignment timing=SpeechTiming.align(narration,List.of(),sidecar,duration);
         List<SpeechTiming.Word> words=timing.words();
         if(words.isEmpty())return null;
-        int font=Math.max(18,(int)Math.round(44.0*width/1080));
-        int marginH=Math.max(20,(int)Math.round(width*.072));
-        int marginV=Math.max(80,(int)Math.round(height*.268));
+        int font=autonewsroller.visuals.BroadcastLayout.captionFont(width);
+        int marginH=autonewsroller.visuals.BroadcastLayout.captionHorizontalMargin(width);
+        int marginV=autonewsroller.visuals.BroadcastLayout.captionVerticalMargin(height);
         StringBuilder ass=new StringBuilder();
         ass.append("[Script Info]\n")
            .append("ScriptType: v4.00+\n")
