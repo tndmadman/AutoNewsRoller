@@ -37,6 +37,7 @@ public final class CaptionWriter {
         int maxLineChars=Math.max(20,(int)Math.floor(width/(Math.max(18,font)*.57)));
         int maxBlockChars=2*maxLineChars-2;
         for(int i=0;i<words.size();){
+            int startIndex=i;
             int endIndex=i+1;
             if(!single){
                 int count=displayWords.size()==words.size()?displayWords.get(i).length():words.get(i).text().length();
@@ -51,7 +52,7 @@ public final class CaptionWriter {
             i=endIndex;
             if(end<=start||end>duration+.1)continue;
             List<String>unit=new ArrayList<>();
-            for(int n=i;n<endIndex;n++)unit.add(escape(displayWords.size()==words.size()?displayWords.get(n):words.get(n).text()));
+            for(int n=startIndex;n<endIndex;n++)unit.add(escape(displayWords.size()==words.size()?displayWords.get(n):words.get(n).text()));
             String visual=String.join(" ",unit);
             if(!single&&unit.size()>1){
                 int mid=1,best=Integer.MAX_VALUE;
