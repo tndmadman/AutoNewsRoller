@@ -100,22 +100,57 @@ public class CardRenderer {
             case "TIMELINE"->"WHAT HAPPENED";case "FACT_HIGHLIGHT"->"THE KEY DEVELOPMENT";
             default->"THE STORY";},95,343);
         String main=type.equals("STATISTIC")?firstNumber(item.body()):"";
-        if(!main.isBlank()){
-            g.setColor(TEXT);g.setFont(new Font("SansSerif",Font.BOLD,150));
-            g.drawString(main,94,595);
-            g.setColor(RED);g.fillRect(95,640,170,7);
+        if(type.equals("TIMELINE")){
+            renderTimeline(g,item,w,h);
+        }else if(type.equals("QUOTE")){
+            g.setColor(RED_LIGHT);g.setFont(new Font("Serif",Font.BOLD,162));g.drawString("“",85,490);
+            String quote=quoted(item.body());
+            g.setColor(TEXT);
+            Font quoteFont=fitHeadlineFont(g,quote,w-190,8,57,31);
+            drawWrapped(g,quote,quoteFont,96,560,w-192,quoteFont.getSize()+19,8);
+        }else{
+            if(!main.isBlank()){
+                g.setColor(TEXT);
+                int size=150;
+                while(size>45){
+                    Font large=new Font("SansSerif",Font.BOLD,size);
+                    if(g.getFontMetrics(large).stringWidth(main)<=w-190)break;
+                    size-=5;
+                }
+                g.setFont(new Font("SansSerif",Font.BOLD,size));
+                g.drawString(main,94,590);
+                g.setColor(RED);g.fillRect(95,645,170,7);
+            }
+            int start=main.isBlank()?500:765;
+            String text=item.body();
+            if(text==null||text.isBlank())text=item.title();
+            g.setColor(TEXT);
+            int maxLines=main.isBlank()?9:6;
+            Font font=fitHeadlineFont(g,text,w-190,maxLines,46,26);
+            drawWrapped(g,text,font,95,start,w-190,font.getSize()+20,maxLines);
         }
-        int start=main.isBlank()?500:760;
-        String text=type.equals("QUOTE")?quoted(item.body()):item.body();
-        if(text==null||text.isBlank())text=item.title();
-        g.setColor(TEXT);
-        int maxLines=main.isBlank()?9:6;
-        Font font=fitHeadlineFont(g,text,w-190,maxLines,46,26);
-        drawWrapped(g,text,font,95,start,w-190,font.getSize()+20,maxLines);
         g.setColor(MUTED);g.setFont(new Font("SansSerif",Font.BOLD,21));
         g.drawString("BASED ON VERIFIED REPORTING",95,1510);
         paintTicker(g,w,h,"AWARE NEWS",storyLabel(type),false);
     }
+    private static void renderTimeline(Graphics2D g,VisualPlan.Item item,int w,int h){
+        String narration=item.body()==null?"":item.body();
+        java.util.List<String>events=autonewsroller.util.Text.sentences(narration);
+        if(events.isEmpty())events=java.util.List.of(item.title());
+        int count=Math.max(1,Math.min(3,events.size()));
+        int x=110,start=540,step=230;
+        g.setColor(RULE);g.fillRect(x+17,start-28,5,step*(count-1)+65);
+        for(int i=0;i<count;i++){
+            int y=start+i*step;
+            g.setColor(i==0?RED:BLUE_LIGHT);
+            g.fillOval(x,y-18,40,40);
+            g.setColor(TEXT);
+            String event=events.get(i);
+            Font f=fitHeadlineFont(g,event,w-260,3,39,27);
+            drawWrapped(g,event,f,x+75,y+10,w-260,f.getSize()+9,3);
+        }
+    }
+
     private static String firstNumber(String text){
         java.util.regex.Matcher m=java.util.regex.Pattern.compile("\\b\\d[\\d,.]*%?").matcher(text==null?"":text);
         return m.find()?m.group():"";
