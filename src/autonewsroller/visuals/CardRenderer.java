@@ -509,14 +509,28 @@ public final class CardRenderer {
 
     private static int drawWrapped(Graphics2D g,String text,Font font,int x,int y,int maxWidth,int step,int maxLines){
         g.setFont(font);FontMetrics fm=g.getFontMetrics();
-        String[] words=(text==null?"":text.trim()).split("\\s+");
+        java.util.List<String>words=new ArrayList<>();
+        for(String raw:(text==null?"":text.trim()).split("\\s+")){
+            if(raw.isBlank())continue;
+            String remainder=raw;
+            while(!remainder.isEmpty()){
+                int count=remainder.length();
+                while(count>1&&fm.stringWidth(remainder.substring(0,count))>maxWidth)count--;
+                words.add(remainder.substring(0,count));
+                remainder=remainder.substring(count);
+            }
+        }
         StringBuilder line=new StringBuilder();int yy=y,lines=0;
-        for(String word:words){
-            if(word.isBlank())continue;
-            String test=line.length()==0?word:line+" "+word;
-            if(fm.stringWidth(test)>maxWidth&&line.length()>0){
-                g.drawString(line.toString(),x,yy);yy+=step;lines++;
-                if(lines>=maxLines)return yy;
+        for(int pos=0;pos<words.size();pos++){
+            String word=words.get(pos);
+            String next=line.length()==0?word:line+" "+word;
+            if(fm.stringWidth(next)>maxWidth&&line.length()>0){
+                if(lines+1>=maxLines){
+                    drawWithEllipsis(g,line.toString(),x,yy,maxWidth);
+                    return yy+step;
+                }
+                g.drawString(line.toString(),x,yy);
+                yy+=step;lines++;
                 line.setLength(0);line.append(word);
             }else{
                 if(line.length()>0)line.append(' ');
@@ -525,6 +539,13 @@ public final class CardRenderer {
         }
         if(line.length()>0&&lines<maxLines){g.drawString(line.toString(),x,yy);yy+=step;}
         return yy;
+    }
+
+    private static void drawWithEllipsis(Graphics2D g,String input,int x,int y,int maxWidth){
+        FontMetrics fm=g.getFontMetrics();
+        String s=input;
+        while(!s.isEmpty()&&fm.stringWidth(s+"…")>maxWidth)s=s.substring(0,s.length()-1);
+        g.drawString(s+"…",x,y);
     }
 
     private static void drawCover(Graphics2D g,BufferedImage src,int x,int y,int w,int h,double verticalBias){

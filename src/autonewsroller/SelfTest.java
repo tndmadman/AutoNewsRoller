@@ -813,6 +813,10 @@ public final class SelfTest {
         VisualPlan plan=new VisualPlan("v5-story",List.of(
                 new VisualPlan.Item(0,"HOOK",script.headline(),segments.get(0).narration(),2,"",Map.of("segmentIndex",0,"factIds",List.of("FACT_A"))),
                 new VisualPlan.Item(1,"STATISTIC",script.headline(),segments.get(1).narration(),2,"",Map.of("segmentIndex",1,"factIds",List.of("FACT_B")))));
+        VisualPlan ungrounded=new VisualPlanner().plan(script,
+                new FactPackage("v5-story",script.headline(),narration,List.of(),List.of(),List.of(),1,1,.8,false));
+        ok(ungrounded.items().stream().filter(item->!item.type().equals("SOURCE_CARD")).allMatch(item->item.data().containsKey("segmentIndex")),
+                "narration timing still retains segment references without optional grounded prompting");
         Storyboard storyboard=new VisualDirector().direct(plan,script,exact,5.0);
         storyboard.validate();
         ok(storyboard.scenes().size()==2&&storyboard.scenes().get(0).start()==0.0&&

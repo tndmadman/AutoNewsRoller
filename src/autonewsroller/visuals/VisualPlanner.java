@@ -26,6 +26,8 @@ public final class VisualPlanner {
             String type;
             String prompt;
             Map<String,Object>data=new LinkedHashMap<>();
+            data.put("segmentIndex",seg.index()); // kept even without Ollama grounding
+
             if(grounded!=null){
                 type=grounded.strategy();
                 prompt=grounded.prompt();
