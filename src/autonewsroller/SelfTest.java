@@ -42,6 +42,7 @@ public final class SelfTest {
         testScriptValidation(a);
         testProductionVideoContract(root,a);
         testVisualV5();
+        testComfyMock();
         testWorthyHourFilterContract(root);
         testFeedCardIdentityContract(root);
         testTtsFallback();
@@ -886,6 +887,69 @@ public final class SelfTest {
         CaptionWriter.write(hostile,"This contains {\\rInjected} formatting.",3,"sentence",null,540,960);
         ok(!Files.readString(hostile).contains("{\\rInjected}"),
                 "caption generation escapes script-authored ASS overrides");
+    }
+
+    private void testComfyMock()throws Exception{
+        Path root=Files.createTempDirectory("autonews-comfy-mock-");
+        BufferedImage fixture=new BufferedImage(512,896,BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g=fixture.createGraphics();
+        for(int y=0;y<896;y++){g.setColor(new java.awt.Color(y%255,(y/2)%255,80));
+            g.drawLine(0,y,511,y);}
+        g.dispose();
+        java.io.ByteArrayOutputStream buf=new java.io.ByteArrayOutputStream();
+        ImageIO.write(fixture,"png",buf);
+        byte[]imageBytes=buf.toByteArray();
+        AtomicInteger submitted=new AtomicInteger(),freed=new AtomicInteger(),released=new AtomicInteger();
+        java.util.concurrent.atomic.AtomicLong capturedSeed=new java.util.concurrent.atomic.AtomicLong(-1);
+        HttpServer mock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        mock.createContext("/system_stats",exchange->{
+            byte[]response="{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,response.length);
+            try(var out=exchange.getResponseBody()){out.write(response);}
+        });
+        mock.createContext("/release-gpu",exchange->{
+            released.incrementAndGet();
+            exchange.sendResponseHeaders(200,-1);exchange.close();
+        });
+        mock.createContext("/object_info/CheckpointLoaderSimple",exchange->{
+            byte[]response="{\"input\":{\"required\":{\"ckpt_name\":[[\"fixture.safetensors\"]]}}}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,response.length);
+            try(var out=exchange.getResponseBody()){out.write(response);}
+        });
+        mock.createContext("/prompt",exchange->{
+            Map<String,Object>request=Json.object(Json.parse(new String(exchange.getRequestBody().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8)));
+            Map<String,Object>ksampler=Json.object(Json.object(request.get("prompt")).get("5"));
+            capturedSeed.set(((Number)Json.object(ksampler.get("inputs")).get("seed")).longValue());
+            submitted.incrementAndGet();
+            byte[]response="{\"prompt_id\":\"fixture-id\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,response.length);
+            try(var out=exchange.getResponseBody()){out.write(response);}
+        });
+        mock.createContext("/history/fixture-id",exchange->{
+            byte[]response="{\"fixture-id\":{\"outputs\":{\"7\":{\"images\":[{\"filename\":\"mock.png\",\"subfolder\":\"\",\"type\":\"output\"}]}}}}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,response.length);
+            try(var out=exchange.getResponseBody()){out.write(response);}
+        });
+        mock.createContext("/view",exchange->{
+            exchange.getResponseHeaders().add("Content-Type","image/png");
+            exchange.sendResponseHeaders(200,imageBytes.length);
+            try(var out=exchange.getResponseBody()){out.write(imageBytes);}
+        });
+        mock.createContext("/free",exchange->{freed.incrementAndGet();exchange.sendResponseHeaders(200,-1);exchange.close();});
+        mock.start();
+        try{
+            String url="http://127.0.0.1:"+mock.getAddress().getPort();
+            ComfyImageGenerator generator=new ComfyImageGenerator(root,url,url);
+            ok(generator.reachable()&&generator.checkpoints().contains("fixture.safetensors"),
+                    "ComfyUI mocked endpoint can discover a configured checkpoint");
+            Path generated=root.resolve("visuals/fixture.png");
+            generator.generate("verified editorial subject","exclude unsupported drama",
+                    "fixture.safetensors",generated,512,896,20,5.0,876543210L);
+            ok(Files.size(generated)>1024&&ImageIO.read(generated.toFile())!=null,
+                    "ComfyUI mock generation saves a decodable output image");
+            ok(capturedSeed.get()==876543210L&&submitted.get()==1&&released.get()==1&&freed.get()==0,
+                    "ComfyUI preserves caller seed, releases Qwen and does not unload warm checkpoints on success");
+        }finally{mock.stop(0);}
     }
 
     private void testWorthyHourFilterContract(Path root)throws Exception{
