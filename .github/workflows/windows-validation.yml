@@ -46,6 +46,8 @@ jobs:
       - name: V5 FFmpeg render and actual MP4 contact sheet
         shell: bash
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
           ffmpeg -version | head -n 1
           java -cp build/classes autonewsroller.video.VisualSmoke
       - name: Headless command center smoke test
