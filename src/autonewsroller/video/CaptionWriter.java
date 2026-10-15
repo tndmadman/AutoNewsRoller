@@ -29,6 +29,10 @@ public final class CaptionWriter {
            .append("Style: News,Arial,").append(font).append(",&H00FFFFFF,&H00B27943,&H00140C06,&HC80A0D12,-1,0,0,0,100,100,0,0,3,3,0,2,")
            .append(marginH).append(',').append(marginH).append(',').append(marginV).append(",1\n\n")
            .append("[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n");
+        List<String>displayWords=new ArrayList<>();
+        java.util.regex.Matcher lexical=java.util.regex.Pattern.compile(
+                "[\\p{L}\\p{N}]+(?:['’\\-][\\p{L}\\p{N}]+)*[.!?,;:]*").matcher(narration==null?"":narration);
+        while(lexical.find())displayWords.add(lexical.group());
         boolean single="word".equalsIgnoreCase(mode);
         int group=single?1:7;
         for(int i=0;i<words.size();i+=group){
@@ -36,7 +40,7 @@ public final class CaptionWriter {
             double start=words.get(i).start(),end=words.get(endIndex-1).end();
             if(end<=start||end>duration+.1)continue;
             List<String>unit=new ArrayList<>();
-            for(int n=i;n<endIndex;n++)unit.add(escape(words.get(n).text()));
+            for(int n=i;n<endIndex;n++)unit.add(escape(displayWords.size()==words.size()?displayWords.get(n):words.get(n).text()));
             String visual=String.join(" ",unit);
             if(!single&&unit.size()>6){
                 int mid=Math.max(3,unit.size()/2);

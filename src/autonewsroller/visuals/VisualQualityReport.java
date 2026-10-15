@@ -51,7 +51,7 @@ public final class VisualQualityReport {
             g.dispose();ImageIO.write(sheet,"png",previews.resolve("contact_sheet.png").toFile());
             report.put("contactSheet",previews.resolve("contact_sheet.png").toString());
         }
-        report.put("capturedFrames",captures);report.put("status","passed");
+        report.put("capturedFrames",captures);report.put("status",framesEnabled?"passed":"not-sampled");
         Json.write(jobDir.resolve("visual_quality_report.json"),report);
         return report;
     }

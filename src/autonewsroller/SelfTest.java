@@ -821,7 +821,7 @@ public final class SelfTest {
         Path ass=dir.resolve("caption.ass");
         CaptionWriter.write(ass,narration,5.0,"sentence",sidecar,540,960);
         String captions=Files.readString(ass);
-        ok(captions.contains("PlayResX: 540")&&captions.contains("PlayResY: 960")&&
+        ok(captions.contains("projects.")&&captions.contains("PlayResX: 540")&&captions.contains("PlayResY: 960")&&
                         !captions.contains("Dialogue: 0,0:00:05.00,0:00:05.00"),
                 "captions use requested output geometry and skip zero-length events");
         BufferedImage flat=new BufferedImage(640,1136,BufferedImage.TYPE_INT_RGB);

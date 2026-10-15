@@ -50,6 +50,12 @@ jobs:
           sudo apt-get install -y ffmpeg
           ffmpeg -version | head -n 1
           java -cp build/classes autonewsroller.video.VisualSmoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v5-visual-smoke
+          path: test-results/v5/
+          if-no-files-found: ignore
       - name: Headless command center smoke test
         shell: bash
         run: |

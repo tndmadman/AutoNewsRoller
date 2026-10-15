@@ -326,7 +326,7 @@ public final class NewsPipeline {
                         imgs.set(replace,composed);
                         renderBackgrounds.set(replace,background);
                         renderOverlays.set(replace,overlay);
-                        renderMotion.set(replace,true);
+                        renderMotion.set(replace,!"off".equalsIgnoreCase(cfg.get("visualMotionIntensity","moderate")));
                         Map<String,Object>imageSource=new LinkedHashMap<>();
                         imageSource.put("type","comfyui-generated-ai-illustration");
                         imageSource.put("path",composed.toString());imageSource.put("generatedPath",generated.toString());
@@ -365,7 +365,7 @@ public final class NewsPipeline {
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI DISABLED for this job");
         }
 
-        Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v5-editorial");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));List<Double>sceneWeights=storyboard.durations();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration(),cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null);
+        Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v5-editorial");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));List<Double>sceneWeights=cfg.getBool("visualNarrationSyncEnabled",true)?storyboard.durations():plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration(),cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null);
         Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();Map<String,Object>visualQuality=VisualQualityReport.create(cfg.get("ffmpegCommand","ffmpeg"),render,slotDir,finalSeconds,storyboard,cfg.getBool("visualGenerateContactSheet",true));
         visualQuality.put("imageInspections",imageReviews);
         visualQuality.put("acceptedComfyImages",comfyGenerated);

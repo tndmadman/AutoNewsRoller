@@ -623,11 +623,10 @@ Blank visual-specific model/URL settings intentionally reuse the normal Ollama s
 - visualQualityPreset=enhanced : a reserved design-preset setting;
   currently only enhanced scene templates are wired. A classic preset
   is not yet implemented.
-- visualMotionIntensity=moderate : reserved intensity setting;
-  deterministic low-amplitude motion currently applies to selected
-  Comfy scenes.
-- visualNarrationSyncEnabled=true : reserved compatibility flag;
-  V5 storyboard timing currently applies to every production job.
+- visualMotionIntensity=moderate : the value off disables Comfy scene camera motion;
+  otherwise deterministic low-amplitude motion applies.
+- visualNarrationSyncEnabled=true : set false to retain legacy scene-duration weights;
+  true uses the speech-aligned storyboard durations.
 - visualUseExactTtsTiming=true : uses valid Kokoro timing TSV for
   captions and scene weights; otherwise estimates using WAV duration.
 - visualPostGenerationChecks=true : enables perceptual-duplicate

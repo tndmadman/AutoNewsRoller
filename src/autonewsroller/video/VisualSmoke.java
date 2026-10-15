@@ -53,6 +53,12 @@ public final class VisualSmoke {
                 if(!report.containsKey("contactSheet"))throw new AssertionError("No actual MP4 contact sheet");
             }
         }
+        if("true".equalsIgnoreCase(System.getenv("GITHUB_ACTIONS"))){
+            Path artifact=Paths.get("test-results","v5");
+            Files.createDirectories(artifact);
+            Files.copy(d.resolve("visual_preview/contact_sheet.png"),artifact.resolve("contact_sheet.png"),StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(d.resolve("test-sentence.mp4"),artifact.resolve("synthetic_captioned.mp4"),StandardCopyOption.REPLACE_EXISTING);
+        }
         System.out.println("V5 FFMPEG SMOKE PASS: x264, synthetic narration, motion, captions off/on, contact sheet");
     }
 }
