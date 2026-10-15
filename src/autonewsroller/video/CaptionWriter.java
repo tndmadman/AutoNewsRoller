@@ -34,21 +34,40 @@ public final class CaptionWriter {
                 "[\\p{L}\\p{N}]+(?:['’\\-][\\p{L}\\p{N}]+)*[.!?,;:]*").matcher(narration==null?"":narration);
         while(lexical.find())displayWords.add(lexical.group());
         boolean single="word".equalsIgnoreCase(mode);
-        int group=single?1:7;
-        for(int i=0;i<words.size();i+=group){
-            int endIndex=Math.min(i+group,words.size());
+        int maxLineChars=Math.max(20,(int)Math.floor(width/(Math.max(18,font)*.57)));
+        int maxBlockChars=2*maxLineChars-2;
+        for(int i=0;i<words.size();){
+            int endIndex=i+1;
+            if(!single){
+                int count=displayWords.size()==words.size()?displayWords.get(i).length():words.get(i).text().length();
+                while(endIndex<words.size()&&endIndex-i<8){
+                    String candidate=displayWords.size()==words.size()?displayWords.get(endIndex):words.get(endIndex).text();
+                    if(count+candidate.length()+1>maxBlockChars)break;
+                    count+=candidate.length()+1;
+                    endIndex++;
+                }
+            }
             double start=words.get(i).start(),end=words.get(endIndex-1).end();
             if(end<=start||end>duration+.1)continue;
             List<String>unit=new ArrayList<>();
             for(int n=i;n<endIndex;n++)unit.add(escape(displayWords.size()==words.size()?displayWords.get(n):words.get(n).text()));
             String visual=String.join(" ",unit);
-            if(!single&&unit.size()>6){
-                int mid=Math.max(3,unit.size()/2);
-                visual=String.join(" ",unit.subList(0,mid))+"\\N"+String.join(" ",unit.subList(mid,unit.size()));
+            if(!single&&unit.size()>1){
+                int mid=1,best=Integer.MAX_VALUE;
+                for(int cut=1;cut<unit.size();cut++){
+                    int left=String.join(" ",unit.subList(0,cut)).length();
+                    int right=String.join(" ",unit.subList(cut,unit.size())).length();
+                    int penalty=Math.abs(left-right)+Math.max(0,left-maxLineChars)*20+
+                            Math.max(0,right-maxLineChars)*20;
+                    if(penalty<best){best=penalty;mid=cut;}
+                }
+                visual=String.join(" ",unit.subList(0,mid))+"\\N"+
+                        String.join(" ",unit.subList(mid,unit.size()));
             }
             if(single&&timing.exact())visual="{\\c&H00B27943&}"+visual+"{\\c&H00FFFFFF&}";
             ass.append("Dialogue: 0,").append(ts(start)).append(',').append(ts(Math.min(duration,end)))
                .append(",News,,0,0,0,,").append(visual).append('\n');
+            i=endIndex;
         }
         Files.createDirectories(out.toAbsolutePath().getParent());
         Files.writeString(out,ass.toString(),StandardCharsets.UTF_8);return out;

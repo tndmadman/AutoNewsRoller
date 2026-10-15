@@ -874,6 +874,14 @@ public final class SelfTest {
         BufferedImage normalized=ImageIO.read(background.toFile()),full=ImageIO.read(preview.toFile());
         ok(normalized.getHeight()==full.getHeight()&&normalized.getWidth()==full.getWidth(),
                 "static previews and FFmpeg backgrounds share the same output crop geometry");
+        Path longAss=dir.resolve("long.ass");
+        CaptionWriter.write(longAss,
+            "Archæological-investigation. Consequences for extradition documentation remain unusually long but remain understandable without hiding the end of the sentence.",
+            8.0,"sentence",null,540,960);
+        String longOutput=Files.readString(longAss);
+        ok(longOutput.contains("Dialogue:")&&longOutput.contains("\\N")&&
+                longOutput.contains("sentence."),
+                "caption writer groups long proper nouns into bounded two-line dialogue events");
         Path hostile=dir.resolve("hostile.ass");
         CaptionWriter.write(hostile,"This contains {\\rInjected} formatting.",3,"sentence",null,540,960);
         ok(!Files.readString(hostile).contains("{\\rInjected}"),
