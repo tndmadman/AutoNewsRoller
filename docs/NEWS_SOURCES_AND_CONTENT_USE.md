@@ -12,11 +12,15 @@ Publisher terms, API terms, feed terms, copyright status, robots policies, and p
 
 The default source list is `config/sources.json`.
 
-The current pack contains **88 enabled RSS feeds** across 21 publisher/source groups, including BBC News, The Guardian, CBS News, Fox News, ABC News, NPR, The New York Times, Global News, NASA, ScienceDaily, Ars Technica, TechCrunch, The Verge, WIRED, Engadget, Phys.org, Space.com, Tom's Hardware, ESPN, CNBC, and MarketWatch.
+The default pack contains **167 enabled RSS/Atom feeds** across 94 publisher/source groups. The October 2026 expansion adds 79 feeds and 73 new publisher groups, spanning international and US reporting, politics, markets, technology, security, science, gaming, sports, and Idaho local news.
 
 Many publishers contribute several section feeds. Those feeds intentionally share the same publisher `name`, so one publisher appearing in several sections cannot satisfy the two-independent-publisher verification rule by itself.
 
-The current system is still RSS/Atom discovery, not a general web search engine. It does not use Google News, Bing News, Reddit, X, AP, Reuters, or a commercial news-search API by default.
+The current system is still RSS/Atom discovery, not a general web search engine. It does not use Google News, Bing News, Reddit, X, AP, Reuters, or a commercial news-search API by default. Reuters and AP do not provide reliably maintained public first-party RSS feeds, so this source pack does not add stale RSS endpoints or relabel Google News search feeds as first-party feeds.
+
+Expansion sources are direct publisher feed endpoints listed in public RSS directories (notably Feeder's October 2026 directory), supplemented by publisher RSS pages and Idaho feed listings. These are configuration candidates, not a guarantee that every host allows unattended Java polling at the current moment. Run live feed-health checks on the controller after deployment; disable feeds returning consistent HTTP 403/429 or malformed XML.
+
+Feed scans are sequential in `NewsPipeline.discoverDetailed`, so scan duration grows with the configured count; conditional HTTP caching helps subsequent polls, but there is no global per-host limiter. Do not reduce the refresh interval just because more feeds were added. Unrated newly added outlets intentionally remain `unknown` in the political mix until a sourced rating is added to `config/source_bias.json`.
 
 ## How it pulls news
 
@@ -79,7 +83,7 @@ For a legitimate feed aggregator, being identifiable and rate-conscious is prefe
 
 By default, it **does not**.
 
-`articleEnrichmentEnabled=false` keeps the expanded source scan RSS-only. This matters because 88 feeds can expose hundreds of recent entries per cycle, and automatically crawling every linked article would create unnecessary traffic.
+Setting `articleEnrichmentEnabled=false` keeps the expanded source scan RSS-only. The current `defaults.txt` instead sets `articleEnrichmentEnabled=true`, which permits linked-page enrichment for qualifying short descriptions when the caller requests enrichment. With 167 feeds, leave enrichment disabled unless article-page requests are actually needed and rate-limited.
 
 Linked article extraction remains available as an optional feature. If it is explicitly enabled, AutoNewsRoller only attempts enrichment for short feed descriptions.
 
