@@ -791,6 +791,717 @@
       "enabled": true,
       "trustTier": 2,
       "authoritativePrimary": false
+    },
+    {
+      "name": "Al Jazeera",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.aljazeera.com/xml/rss/all.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Washington Post",
+      "type": "rss",
+      "category": "world",
+      "url": "https://feeds.washingtonpost.com/rss/world",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Wall Street Journal",
+      "type": "rss",
+      "category": "world",
+      "url": "https://feeds.content.dowjones.io/public/rss/RSSWorldNews",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Economist",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.economist.com/the-world-this-week/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Sky News",
+      "type": "rss",
+      "category": "world",
+      "url": "https://feeds.skynews.com/feeds/rss/world.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Deutsche Welle",
+      "type": "rss",
+      "category": "world",
+      "url": "https://rss.dw.com/rdf/rss-en-all",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "France 24",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.france24.com/en/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "South China Morning Post",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.scmp.com/rss/91/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Times of India",
+      "type": "rss",
+      "category": "world",
+      "url": "https://timesofindia.indiatimes.com/rssfeedstopstories.cms",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ABC News Australia",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.abc.net.au/news/feed/45910/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBC News",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.cbc.ca/webfeed/rss/rss-topstories",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Euronews",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.euronews.com/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Le Monde English",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.lemonde.fr/en/rss/une.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Der Spiegel",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.spiegel.de/international/index.rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Independent",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.independent.co.uk/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "RTÉ News",
+      "type": "rss",
+      "category": "world",
+      "url": "https://www.rte.ie/feeds/rss/?index=/news/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "NBC News",
+      "type": "rss",
+      "category": "general",
+      "url": "https://feeds.nbcnews.com/nbcnews/public/news",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "MS NOW",
+      "type": "rss",
+      "category": "general",
+      "url": "https://www.ms.now/feed",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "PBS NewsHour",
+      "type": "rss",
+      "category": "general",
+      "url": "https://www.pbs.org/newshour/feeds/rss/headlines",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Los Angeles Times",
+      "type": "rss",
+      "category": "us",
+      "url": "https://www.latimes.com/index.rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Axios",
+      "type": "rss",
+      "category": "general",
+      "url": "https://api.axios.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "TIME",
+      "type": "rss",
+      "category": "general",
+      "url": "https://time.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Yahoo News",
+      "type": "rss",
+      "category": "general",
+      "url": "https://news.yahoo.com/rss/topstories",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "ProPublica",
+      "type": "rss",
+      "category": "us",
+      "url": "https://www.propublica.org/feeds/propublica/main",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Atlantic",
+      "type": "rss",
+      "category": "general",
+      "url": "https://www.theatlantic.com/feed/all/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New Yorker",
+      "type": "rss",
+      "category": "general",
+      "url": "https://www.newyorker.com/feed/everything",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Vox",
+      "type": "rss",
+      "category": "general",
+      "url": "https://www.vox.com/rss/index.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "New York Post",
+      "type": "rss",
+      "category": "us",
+      "url": "https://nypost.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Semafor",
+      "type": "rss",
+      "category": "general",
+      "url": "https://www.semafor.com/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Politico",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://www.politico.com/rss/politicopicks.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Hill",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://thehill.com/news/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Washington Post",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://feeds.washingtonpost.com/rss/politics",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The New York Times",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "PBS NewsHour",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://www.pbs.org/newshour/feeds/rss/politics",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Nation",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://www.thenation.com/feed/?post_type=article",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "National Review",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://www.nationalreview.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Daily Signal",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://www.dailysignal.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Washington Examiner",
+      "type": "rss",
+      "category": "politics",
+      "url": "https://www.washingtonexaminer.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Wall Street Journal",
+      "type": "rss",
+      "category": "markets",
+      "url": "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Financial Times",
+      "type": "rss",
+      "category": "business",
+      "url": "https://www.ft.com/rss/home/international",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Economist",
+      "type": "rss",
+      "category": "business",
+      "url": "https://www.economist.com/finance-and-economics/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Fortune",
+      "type": "rss",
+      "category": "business",
+      "url": "https://fortune.com/feed/fortune-feeds/?id=3230629",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Business Insider",
+      "type": "rss",
+      "category": "business",
+      "url": "https://feeds.businessinsider.com/custom/all",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Harvard Business Review",
+      "type": "rss",
+      "category": "business",
+      "url": "http://feeds.hbr.org/harvardbusiness",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Fast Company",
+      "type": "rss",
+      "category": "business",
+      "url": "https://www.fastcompany.com/latest/rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "TechRadar",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.techradar.com/feeds.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Gizmodo",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://gizmodo.com/feed",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Mashable",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://mashable.com/feeds/rss/all",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CNET",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.cnet.com/rss/news/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "MIT Technology Review",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.technologyreview.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "BleepingComputer",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.bleepingcomputer.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "The Register",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://www.theregister.com/headlines.atom",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Krebs on Security",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://krebsonsecurity.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "9to5Mac",
+      "type": "rss",
+      "category": "technology",
+      "url": "https://9to5mac.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Scientific American",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.scientificamerican.com/platform/syndication/rss/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Nature",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.nature.com/nature.rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Science",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.science.org/rss/news_current.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "New Scientist",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.newscientist.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Quanta Magazine",
+      "type": "rss",
+      "category": "science",
+      "url": "https://www.quantamagazine.org/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "SpaceNews",
+      "type": "rss",
+      "category": "science",
+      "url": "https://spacenews.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Carbon Brief",
+      "type": "rss",
+      "category": "environment",
+      "url": "https://www.carbonbrief.org/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "BBC News",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://feeds.bbci.co.uk/sport/rss.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Sky Sports",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://www.skysports.com/rss/12040",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "CBS Sports",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://www.cbssports.com/rss/headlines/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Yahoo Sports",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://sports.yahoo.com/rss/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Sports Illustrated",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://www.si.com/feed",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Formula 1",
+      "type": "rss",
+      "category": "sports",
+      "url": "https://www.formula1.com/en/latest/all.xml",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "IGN",
+      "type": "rss",
+      "category": "gaming",
+      "url": "https://www.ign.com/rss/articles/feed",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "GameSpot",
+      "type": "rss",
+      "category": "gaming",
+      "url": "https://www.gamespot.com/feeds/mashup/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Kotaku",
+      "type": "rss",
+      "category": "gaming",
+      "url": "https://kotaku.com/feed",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "PC Gamer",
+      "type": "rss",
+      "category": "gaming",
+      "url": "https://www.pcgamer.com/rss/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Rock Paper Shotgun",
+      "type": "rss",
+      "category": "gaming",
+      "url": "https://www.rockpapershotgun.com/feed",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Eurogamer",
+      "type": "rss",
+      "category": "gaming",
+      "url": "https://www.eurogamer.net/feed",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Nintendo Life",
+      "type": "rss",
+      "category": "gaming",
+      "url": "https://www.nintendolife.com/feeds/latest",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Xbox Wire",
+      "type": "rss",
+      "category": "gaming",
+      "url": "https://news.xbox.com/en-us/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "PlayStation Blog",
+      "type": "rss",
+      "category": "gaming",
+      "url": "https://blog.playstation.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Idaho News 6",
+      "type": "rss",
+      "category": "local",
+      "url": "https://www.kivitv.com/news.rss",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "East Idaho News",
+      "type": "rss",
+      "category": "local",
+      "url": "https://www.eastidahonews.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
+    },
+    {
+      "name": "Idaho Capital Sun",
+      "type": "rss",
+      "category": "local",
+      "url": "https://idahocapitalsun.com/feed/",
+      "enabled": true,
+      "trustTier": 2,
+      "authoritativePrimary": false
     }
   ]
 }
