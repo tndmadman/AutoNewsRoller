@@ -205,3 +205,17 @@ If Kokoro fails, inspect the worker log and `.venv-kokoro`. Qwen should then be 
 If ComfyUI fails, AutoNewsRoller should continue using procedural cards. A missing or mismatched checkpoint is reported before prompt submission.
 
 If `auto` encoding uses CPU, run `ffmpeg -encoders | findstr nvenc` and check the batch log. AutoNewsRoller also performs a real encode probe, so merely listing `h264_nvenc` is not considered proof that the encoder actually works.
+
+### V5 visual direction (review branch)
+
+The V5 production path writes visual_storyboard.json from the final narration duration,
+uses varied AWARE NEWS editorial templates, applies smaller lower-thirds, inspects
+generated ComfyUI images, and records rejected attempts and deterministic seeds.
+Photorealistic generated images carry a visible AI ILLUSTRATION label and
+image provenance; they must not be misrepresented as actual event photography.
+
+When valid, Kokoro token timings are used for captions and segment timing. Qwen3
+and incomplete timing sidecars fall back to approximate audio-duration timing.
+Post-render visual_quality_report.json contains measured properties and
+visual_preview/contact_sheet.png contains decoded final-MP4 frames. Real
+RTX 3090 and ComfyUI quality still require production-machine verification.

@@ -20,6 +20,18 @@ jobs:
       - name: Self test
         shell: cmd
         run: batch_create_news_videos_windows.bat --self-test
+      - name: FFmpeg for Windows motion/caption validation
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+            "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - name: Windows FFmpeg smoke render
+        shell: cmd
+        run: |
+          ffmpeg -version
+          java -cp build/classes autonewsroller.video.VisualSmoke
 
   linux-headless:
     runs-on: ubuntu-latest
@@ -43,6 +55,19 @@ jobs:
           bash build_linux.sh
           java -cp build/classes autonewsroller.Main --self-test
           java -cp build/classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264
+      - name: V5 FFmpeg render and actual MP4 contact sheet
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -n 1
+          V5_LONG_SMOKE=true java -cp build/classes autonewsroller.video.VisualSmoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v5-visual-smoke
+          path: test-results/v5/
+          if-no-files-found: ignore
       - name: Headless command center smoke test
         shell: bash
         run: |

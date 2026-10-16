@@ -8,7 +8,7 @@ import java.nio.file.*;
 import java.util.*;
 import javax.imageio.ImageIO;
 
-public final class CardRenderer {
+public class CardRenderer {
     private static final Color BG=BroadcastTheme.BACKGROUND;
     private static final Color NAVY=BroadcastTheme.NAVY;
     private static final Color NAVY_2=BroadcastTheme.NAVY_2;
@@ -25,10 +25,12 @@ public final class CardRenderer {
         Files.createDirectories(out.getParent());
         BufferedImage canvas=new BufferedImage(w,h,BufferedImage.TYPE_INT_RGB);
         Graphics2D g=prepare(canvas);
-        if("HOOK".equalsIgnoreCase(item.type()))renderHookPlaceholder(g,item,w,h);
-        else if("SOURCE_CARD".equalsIgnoreCase(item.type()))renderSourceCard(g,item,w,h);
-        else if("POLITICAL_CONTEXT".equalsIgnoreCase(item.type()))renderPoliticalContext(g,item,w,h);
-        else renderStoryPlaceholder(g,item,w,h);
+        g.scale(w/1080.0,h/1920.0);
+        if("HOOK".equalsIgnoreCase(item.type()))renderHookPlaceholder(g,item,1080,1920);
+        else if("SOURCE_CARD".equalsIgnoreCase(item.type()))renderSourceCard(g,item,1080,1920);
+        else if("POLITICAL_CONTEXT".equalsIgnoreCase(item.type()))renderPoliticalContext(g,item,1080,1920);
+        else if(isGraphic(item.type()))renderGraphicScene(g,item,1080,1920);
+        else renderStoryPlaceholder(g,item,1080,1920);
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
         return out;
@@ -40,8 +42,10 @@ public final class CardRenderer {
         if(source==null)throw new IllegalArgumentException("Unsupported image: "+imagePath);
         BufferedImage canvas=new BufferedImage(w,h,BufferedImage.TYPE_INT_RGB);
         Graphics2D g=prepare(canvas);
-        if("HOOK".equalsIgnoreCase(item.type()))renderHookPackage(g,item,source,w,h);
-        else renderStoryPackage(g,item,source,w,h);
+        g.scale(w/1080.0,h/1920.0);
+        if("HOOK".equalsIgnoreCase(item.type()))renderHookPackage(g,item,source,1080,1920);
+        else renderStoryPackage(g,item,source,1080,1920);
+        paintAiDisclosure(g,1080,1920);
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
         return out;
@@ -51,11 +55,145 @@ public final class CardRenderer {
         Files.createDirectories(out.getParent());
         BufferedImage canvas=new BufferedImage(w,h,BufferedImage.TYPE_INT_ARGB);
         Graphics2D g=prepareTransparent(canvas);
-        if("HOOK".equalsIgnoreCase(item.type()))paintHookOverlay(g,item,w,h);
-        else paintStoryOverlay(g,item,w,h);
+        g.scale(w/1080.0,h/1920.0);
+        if("HOOK".equalsIgnoreCase(item.type()))paintHookOverlay(g,item,1080,1920);
+        else paintStoryOverlay(g,item,1080,1920);
+        paintAiDisclosure(g,1080,1920);
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
         return out;
+    }
+
+    /** The identical base crop is used by Java previews and FFmpeg motion overlays. */
+    public Path renderBackground(VisualPlan.Item item,Path sourcePath,Path out,int width,int height)throws Exception{
+        Files.createDirectories(out.getParent());
+        BufferedImage src=ImageIO.read(sourcePath.toFile());
+        if(src==null)throw new IllegalArgumentException("Invalid image: "+sourcePath);
+        BufferedImage img=new BufferedImage(width,height,BufferedImage.TYPE_INT_RGB);
+        Graphics2D g=prepare(img);g.scale(width/1080.0,height/1920.0);
+        drawCover(g,src,0,BroadcastTheme.HEADER_HEIGHT,1080,
+                1920-BroadcastTheme.HEADER_HEIGHT-BroadcastTheme.TICKER_HEIGHT,
+                "HOOK".equalsIgnoreCase(item.type())?.38:.47);
+        g.dispose();ImageIO.write(img,"png",out.toFile());return out;
+    }
+
+    /** Public template classifier, used to animate only non-photographic information cards. */
+    public static boolean supportsGraphicAnimation(String type){
+        return type!=null&&(isGraphic(type)||"POLITICAL_CONTEXT".equalsIgnoreCase(type)
+                ||"SOURCE_CARD".equalsIgnoreCase(type));
+    }
+
+    /**
+     * Separate a deterministic editorial background from its accurate final graphic.
+     * FFmpeg can reveal the difference layer in 0.18 seconds without any per-frame PNG
+     * encoding or changing the source-backed text/data values.
+     */
+    public void renderGraphicLayers(Path fullFrame,Path baseOut,Path overlayOut,int width,int height)throws Exception{
+        BufferedImage finalImage=ImageIO.read(fullFrame.toFile());
+        if(finalImage==null||finalImage.getWidth()!=width||finalImage.getHeight()!=height)
+            throw new IllegalArgumentException("Invalid graphic source for animation");
+        Files.createDirectories(baseOut.getParent());
+        Files.createDirectories(overlayOut.getParent());
+        BufferedImage background=new BufferedImage(width,height,BufferedImage.TYPE_INT_RGB);
+        Graphics2D g=background.createGraphics();
+        g.setColor(BroadcastTheme.NAVY);
+        g.fillRect(0,0,width,height);
+        g.setColor(BroadcastTheme.BLUE);
+        g.fillRect(0,0,width,Math.max(2,(int)Math.round(height*.004)));
+        g.setColor(BroadcastTheme.RED);
+        g.fillRect(0,0,Math.max(25,width/5),Math.max(2,(int)Math.round(height*.003)));
+        g.dispose();
+        BufferedImage overlay=new BufferedImage(width,height,BufferedImage.TYPE_INT_ARGB);
+        for(int y=0;y<height;y++)for(int x=0;x<width;x++){
+            int finalRgb=finalImage.getRGB(x,y)&0x00ffffff;
+            int backgroundRgb=background.getRGB(x,y)&0x00ffffff;
+            if(finalRgb!=backgroundRgb)overlay.setRGB(x,y,0xff000000|finalRgb);
+        }
+        ImageIO.write(background,"png",baseOut.toFile());
+        ImageIO.write(overlay,"png",overlayOut.toFile());
+    }
+
+    private static boolean isGraphic(String type){
+        return java.util.Set.of("STATISTIC","FACT_HIGHLIGHT","TIMELINE","QUOTE","DOCUMENT","CONTEXT").contains(type.toUpperCase(Locale.ROOT));
+    }
+    private static void paintAiDisclosure(Graphics2D g,int w,int h){
+        g.setColor(new Color(6,10,16,220));g.fillRoundRect(w-295,140,255,47,7,7);
+        g.setColor(TEXT);g.setFont(new Font("SansSerif",Font.BOLD,21));
+        g.drawString("AI ILLUSTRATION",w-276,171);
+    }
+
+    /** Source-grounded typography, never a fake event photograph or generic grid. */
+    private static void renderGraphicScene(Graphics2D g,VisualPlan.Item item,int w,int h){
+        g.setColor(NAVY);g.fillRect(0,0,w,h);
+        g.setColor(NAVY_2);g.fillRect(42,248,w-84,1335);
+        g.setColor(RULE);g.drawRect(42,248,w-84,1335);
+        g.setColor(BLUE);g.fillRect(42,248,12,1335);
+        g.setColor(RED);g.fillRect(54,248,200,8);
+        String type=item.type().toUpperCase(Locale.ROOT);
+        paintTopBar(g,w,storyLabel(type),false);
+        g.setColor(BLUE_LIGHT);g.setFont(new Font("SansSerif",Font.BOLD,26));
+        g.drawString(switch(type){case "STATISTIC"->"BY THE NUMBERS";case "QUOTE"->"ON THE RECORD";
+            case "TIMELINE"->"WHAT HAPPENED";case "FACT_HIGHLIGHT"->"THE KEY DEVELOPMENT";
+            default->"THE STORY";},95,343);
+        String main=type.equals("STATISTIC")?firstNumber(item.body()):"";
+        if(type.equals("TIMELINE")){
+            renderTimeline(g,item,w,h);
+        }else if(type.equals("QUOTE")){
+            g.setColor(RED_LIGHT);g.setFont(new Font("Serif",Font.BOLD,162));g.drawString("“",85,490);
+            String quote=quoted(item.body());
+            g.setColor(TEXT);
+            Font quoteFont=fitHeadlineFont(g,quote,w-190,8,57,31);
+            drawWrapped(g,quote,quoteFont,96,560,w-192,quoteFont.getSize()+19,8);
+        }else{
+            if(!main.isBlank()){
+                g.setColor(TEXT);
+                int size=150;
+                while(size>45){
+                    Font large=new Font("SansSerif",Font.BOLD,size);
+                    if(g.getFontMetrics(large).stringWidth(main)<=w-190)break;
+                    size-=5;
+                }
+                g.setFont(new Font("SansSerif",Font.BOLD,size));
+                g.drawString(main,94,590);
+                g.setColor(RED);g.fillRect(95,645,170,7);
+            }
+            int start=main.isBlank()?500:765;
+            String text=item.body();
+            if(text==null||text.isBlank())text=item.title();
+            g.setColor(TEXT);
+            int maxLines=main.isBlank()?9:6;
+            Font font=fitHeadlineFont(g,text,w-190,maxLines,46,26);
+            drawWrapped(g,text,font,95,start,w-190,font.getSize()+20,maxLines);
+        }
+        g.setColor(MUTED);g.setFont(new Font("SansSerif",Font.BOLD,21));
+        g.drawString("BASED ON VERIFIED REPORTING",95,1510);
+        paintTicker(g,w,h,"AWARE NEWS",storyLabel(type),false);
+    }
+    private static void renderTimeline(Graphics2D g,VisualPlan.Item item,int w,int h){
+        String narration=item.body()==null?"":item.body();
+        java.util.List<String>events=autonewsroller.util.Text.sentences(narration);
+        if(events.isEmpty())events=java.util.List.of(item.title());
+        int count=Math.max(1,Math.min(3,events.size()));
+        int x=110,start=540,step=230;
+        g.setColor(RULE);g.fillRect(x+17,start-28,5,step*(count-1)+65);
+        for(int i=0;i<count;i++){
+            int y=start+i*step;
+            g.setColor(i==0?RED:BLUE_LIGHT);
+            g.fillOval(x,y-18,40,40);
+            g.setColor(TEXT);
+            String event=events.get(i);
+            Font f=fitHeadlineFont(g,event,w-260,3,39,27);
+            drawWrapped(g,event,f,x+75,y+10,w-260,f.getSize()+9,3);
+        }
+    }
+
+    private static String firstNumber(String text){
+        java.util.regex.Matcher m=java.util.regex.Pattern.compile("\\b\\d[\\d,.]*%?").matcher(text==null?"":text);
+        return m.find()?m.group():"";
+    }
+    private static String quoted(String text){
+        java.util.regex.Matcher m=java.util.regex.Pattern.compile("[“\\\"]([^”\\\"]+)[”\\\"]").matcher(text==null?"":text);
+        return m.find()?"“"+m.group(1)+"”":text;
     }
 
     private static void renderHookPackage(Graphics2D g,VisualPlan.Item item,BufferedImage source,int w,int h){
@@ -68,7 +206,7 @@ public final class CardRenderer {
     private static void paintHookOverlay(Graphics2D g,VisualPlan.Item item,int w,int h){
         paintTopBar(g,w,"TOP STORY",true);
         int tickerY=h-BroadcastTheme.TICKER_HEIGHT;
-        int panelH=430;
+        int panelH=235;
         int panelY=tickerY-panelH;
 
         for(int n=0;n<7;n++){
@@ -80,18 +218,16 @@ public final class CardRenderer {
         g.fillRect(0,panelY,w,panelH);
         g.setColor(RED);g.fillRect(0,panelY,w,8);
 
-        g.setColor(RED);g.fillRoundRect(48,panelY+34,188,44,8,8);
+        g.setColor(RED);g.fillRoundRect(48,panelY+16,188,36,8,8);
         g.setColor(Color.WHITE);g.setFont(new Font("SansSerif",Font.BOLD,20));
-        g.drawString("TOP STORY",70,panelY+64);
+        g.drawString("TOP STORY",70,panelY+41);
 
-        String headline=coverHeadline(item.title(),8);
+        String headline=coverHeadline(item.title(),11);
         g.setColor(Color.WHITE);
-        Font headlineFont=fitHeadlineFont(g,headline,w-96,3,70,50);
-        drawWrapped(g,headline,headlineFont,48,panelY+145,w-96,headlineFont.getSize()+7,3);
+        Font headlineFont=fitHeadlineFont(g,headline,w-96,3,55,35);
+        drawWrapped(g,headline,headlineFont,48,panelY+107,w-96,headlineFont.getSize()+4,3);
 
-        String deck=compactDeck(item.body(),14);
-        g.setColor(new Color(226,231,237));
-        drawWrapped(g,deck,new Font("SansSerif",Font.BOLD,27),48,panelY+337,w-96,36,2);
+        // No second oversized narration block: reserve space above for captions.
         paintTicker(g,w,h,"AWARE NEWS","VERIFIED REPORTING",true);
     }
 
@@ -105,7 +241,7 @@ public final class CardRenderer {
     private static void paintStoryOverlay(Graphics2D g,VisualPlan.Item item,int w,int h){
         paintTopBar(g,w,storyLabel(item.type()),false);
         int tickerY=h-BroadcastTheme.TICKER_HEIGHT;
-        int panelH=300;
+        int panelH=148;
         int panelY=tickerY-panelH;
 
         for(int n=0;n<5;n++){
@@ -119,31 +255,26 @@ public final class CardRenderer {
         g.setColor(RED);g.fillRect(12,panelY,176,7);
 
         String slug=storyLabel(item.type());
-        g.setColor(BLUE_LIGHT);g.setFont(new Font("SansSerif",Font.BOLD,21));
-        g.drawString(slug,50,panelY+50);
-
-        String headline=coverHeadline(item.title(),10);
+        g.setColor(BLUE_LIGHT);g.setFont(new Font("SansSerif",Font.BOLD,20));
+        g.drawString(slug,50,panelY+36);
+        String deck=compactDeck(item.body(),16);
         g.setColor(TEXT);
-        Font headlineFont=fitHeadlineFont(g,headline,w-100,2,45,37);
-        drawWrapped(g,headline,headlineFont,50,panelY+112,w-100,headlineFont.getSize()+7,2);
-
-        String deck=compactDeck(item.body(),13);
-        g.setColor(MUTED);
-        drawWrapped(g,deck,new Font("SansSerif",Font.PLAIN,24),50,panelY+225,w-100,31,2);
+        Font font=fitHeadlineFont(g,deck,w-100,2,32,22);
+        drawWrapped(g,deck,font,50,panelY+82,w-100,font.getSize()+7,2);
         paintTicker(g,w,h,"AWARE NEWS","STORY UPDATE",false);
     }
 
     private static void renderHookPlaceholder(Graphics2D g,VisualPlan.Item item,int w,int h){
         int imageY=BroadcastTheme.HEADER_HEIGHT;
         int imageH=h-BroadcastTheme.HEADER_HEIGHT-BroadcastTheme.TICKER_HEIGHT;
-        paintPlaceholderGrid(g,0,imageY,w,imageH);
+        paintEditorialBackground(g,item,0,imageY,w,imageH);
         paintHookOverlay(g,item,w,h);
     }
 
     private static void renderStoryPlaceholder(Graphics2D g,VisualPlan.Item item,int w,int h){
         int imageY=BroadcastTheme.HEADER_HEIGHT;
         int imageH=h-BroadcastTheme.HEADER_HEIGHT-BroadcastTheme.TICKER_HEIGHT;
-        paintPlaceholderGrid(g,0,imageY,w,imageH);
+        paintEditorialBackground(g,item,0,imageY,w,imageH);
         paintStoryOverlay(g,item,w,h);
     }
 
@@ -376,6 +507,18 @@ public final class CardRenderer {
         g.setClip(oldClip);
     }
 
+    private static void paintEditorialBackground(Graphics2D g,VisualPlan.Item item,int x,int y,int w,int h){
+        g.setColor(NAVY_2);g.fillRect(x,y,w,h);
+        g.setColor(BLUE);g.fillRect(60,y+200,11,Math.max(280,h-510));
+        g.setColor(new Color(46,60,78));g.fillRect(91,y+202,w-185,3);
+        g.setColor(TEXT);
+        String statement=item.body()==null||item.body().isBlank()?item.title():item.body();
+        Font f=fitHeadlineFont(g,statement,w-200,8,50,26);
+        drawWrapped(g,statement,f,105,y+355,w-210,f.getSize()+19,8);
+        g.setColor(MUTED);g.setFont(new Font("SansSerif",Font.BOLD,22));
+        g.drawString("DOCUMENTED NEWS CONTEXT",105,y+215);
+    }
+
     private static void paintPlaceholderGrid(Graphics2D g,int x,int y,int w,int h){
         g.setColor(NAVY_2);
         g.fillRect(x,y,w,h);
@@ -437,14 +580,28 @@ public final class CardRenderer {
 
     private static int drawWrapped(Graphics2D g,String text,Font font,int x,int y,int maxWidth,int step,int maxLines){
         g.setFont(font);FontMetrics fm=g.getFontMetrics();
-        String[] words=(text==null?"":text.trim()).split("\\s+");
+        java.util.List<String>words=new ArrayList<>();
+        for(String raw:(text==null?"":text.trim()).split("\\s+")){
+            if(raw.isBlank())continue;
+            String remainder=raw;
+            while(!remainder.isEmpty()){
+                int count=remainder.length();
+                while(count>1&&fm.stringWidth(remainder.substring(0,count))>maxWidth)count--;
+                words.add(remainder.substring(0,count));
+                remainder=remainder.substring(count);
+            }
+        }
         StringBuilder line=new StringBuilder();int yy=y,lines=0;
-        for(String word:words){
-            if(word.isBlank())continue;
-            String test=line.length()==0?word:line+" "+word;
-            if(fm.stringWidth(test)>maxWidth&&line.length()>0){
-                g.drawString(line.toString(),x,yy);yy+=step;lines++;
-                if(lines>=maxLines)return yy;
+        for(int pos=0;pos<words.size();pos++){
+            String word=words.get(pos);
+            String next=line.length()==0?word:line+" "+word;
+            if(fm.stringWidth(next)>maxWidth&&line.length()>0){
+                if(lines+1>=maxLines){
+                    drawWithEllipsis(g,line.toString(),x,yy,maxWidth);
+                    return yy+step;
+                }
+                g.drawString(line.toString(),x,yy);
+                yy+=step;lines++;
                 line.setLength(0);line.append(word);
             }else{
                 if(line.length()>0)line.append(' ');
@@ -453,6 +610,13 @@ public final class CardRenderer {
         }
         if(line.length()>0&&lines<maxLines){g.drawString(line.toString(),x,yy);yy+=step;}
         return yy;
+    }
+
+    private static void drawWithEllipsis(Graphics2D g,String input,int x,int y,int maxWidth){
+        FontMetrics fm=g.getFontMetrics();
+        String s=input;
+        while(!s.isEmpty()&&fm.stringWidth(s+"…")>maxWidth)s=s.substring(0,s.length()-1);
+        g.drawString(s+"…",x,y);
     }
 
     private static void drawCover(Graphics2D g,BufferedImage src,int x,int y,int w,int h,double verticalBias){

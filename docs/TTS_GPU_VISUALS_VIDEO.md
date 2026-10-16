@@ -77,12 +77,10 @@ Kokoro helper defaults:
 - default language code: a
 - default speed: 1.0
 
-The preferred/default Java voice pool is:
+The configured Java voice pool is:
 
 - af_sarah (American female)
 - am_michael (American male)
-
-Story IDs deterministically select between these two voices. Other supported Kokoro voices (including af_heart, af_bella, and bf_emma) can still be selected by explicitly configuring `kokoroVoices` in `defaults.txt`.
 
 `af_nicole` is intentionally blacklisted. AutoNewsRoller removes both `af_nicole` and `af-nicole` from configured Kokoro voice pools at runtime, and the Python Kokoro helper refuses direct use of that voice. If an old/custom configuration contains only blacklisted entries, the runtime falls back to the safe pool above.
 
@@ -529,3 +527,45 @@ Each generated-image scene must cite verified FACT IDs and pass deterministic va
 
 The standard Comfy photography suffix remains responsible for wire-service realism and natural color. Breaking-news red/blue styling remains in `CardRenderer`; it is not baked into generated photographs. The negative prompt also rejects common conceptual/surreal/holographic/cyberpunk AI-news imagery.
 
+## V5 story-directed visuals and timing
+
+VisualPlanner chooses source-grounded photographic treatments alongside
+fact, statistic, quote, and chronology graphics when supported by the
+verified fact package. VisualDirector converts the plan into a typed,
+validated duration timeline. Source and political-context standalone
+scenes still reserve time in the narration; exact sentence-boundary cuts
+are not promised. A real Kokoro sidecar is validated before use. An
+invalid or unavailable timing file falls back to approximate word timing,
+including Qwen3 narration.
+
+The new AWARE NEWS layout emphasizes actual subjects, compact lower-thirds
+and controlled camera pans/pushes. Java and FFmpeg use the same normalized
+source crop. First-frame story information appears immediately. Generated
+photorealistic images are plainly marked AI ILLUSTRATION and logged as
+illustrations, not verified event photography.
+
+ComfyUI generation remains inside the existing GPU lane. A stable
+per-attempt seed, checkpoint, prompts, sampler, scheduler, steps and
+CFG are preserved in provenance. Checks reject corrupt, flat or duplicated
+images and retry a bounded number of times; these automated checks
+CANNOT verify that a photo depicts a genuine event. An optional local Ollama multimodal verifier can be explicitly enabled with
+visualImageReviewModel. Its warnings are advisory and require a high-confidence
+major mismatch to reject an image. Failed or incompatible reviewer calls
+are recorded but cannot silently claim verification. llama3.1:8b is not
+assumed to have image understanding.
+
+The visual_storyboard.json and visual_quality_report.json files are
+per-job. The contact sheet in visual_preview is sampled from the actual
+rendered MP4, not a simulated preview. Original visual_plan.json and
+visual_prompt_plan.json are still emitted for compatibility.
+
+
+### Animated editorial graphics
+
+Enhanced-mode numerical, fact, quote, source and political cards retain a
+deterministic Java-rendered final frame. A transparent content layer is
+revealed over a simple navy/blue/red plate with an 0.18-second alpha entrance.
+This provides purposeful visual motion without changing any numbers,
+attributes or classifications and avoids large PNG frame sequences.
+The static full-frame preview remains the verified final graphic layout.
+Classic mode keeps its original full-frame still presentation.

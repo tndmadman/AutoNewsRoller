@@ -20,11 +20,16 @@ public final class VideoRenderer {
         List<Path>overlays=new ArrayList<>();
         List<Boolean>motion=new ArrayList<>();
         for(int i=0;i<images.size();i++){overlays.add(null);motion.add(false);}
-        return render(images,overlays,motion,sceneWeights,audio,output,requestedEncoder,captionMode,narration);
+        return render(images,overlays,motion,sceneWeights,audio,output,requestedEncoder,captionMode,narration,null);
     }
 
     public RenderResult render(List<Path>backgrounds,List<Path>overlays,List<Boolean>motion,List<Double>sceneWeights,
                                Path audio,Path output,String requestedEncoder,String captionMode,String narration)throws Exception{
+        return render(backgrounds,overlays,motion,sceneWeights,audio,output,requestedEncoder,captionMode,narration,null);
+    }
+
+    public RenderResult render(List<Path>backgrounds,List<Path>overlays,List<Boolean>motion,List<Double>sceneWeights,
+                               Path audio,Path output,String requestedEncoder,String captionMode,String narration,Path timingFile)throws Exception{
         if(backgrounds.isEmpty())throw new IllegalArgumentException("No visuals");
         if(!overlays.isEmpty()&&overlays.size()!=backgrounds.size())throw new IllegalArgumentException("Overlay count must match visuals");
         if(!motion.isEmpty()&&motion.size()!=backgrounds.size())throw new IllegalArgumentException("Motion flag count must match visuals");
@@ -32,7 +37,7 @@ public final class VideoRenderer {
 
         double duration=probeDuration(audio);
         List<Double>sceneDurations=normalizedSceneDurations(backgrounds.size(),sceneWeights,duration);
-        Path ass=CaptionWriter.write(output.resolveSibling(output.getFileName()+".ass"),narration,duration,captionMode);
+        Path ass=CaptionWriter.write(output.resolveSibling(output.getFileName()+".ass"),narration,duration,captionMode,timingFile,width,height);
         String resolved=new VideoEncoderProbe(ffmpeg).resolve(requestedEncoder);
         List<String>cmd=motionCommand(backgrounds,overlays,motion,sceneDurations,audio,output,resolved,ass);
 
@@ -80,11 +85,21 @@ public final class VideoRenderer {
             int frames=Math.max(1,(int)Math.ceil(d*fps));
             String base="["+backgroundInputs.get(i)+":v]";
             if(motion!=null&&i<motion.size()&&Boolean.TRUE.equals(motion.get(i))){
-                fc.append(base)
-                  .append("scale=").append(width).append(":").append(height).append(":force_original_aspect_ratio=increase,")
-                  .append("crop=").append(width).append(":").append(height).append(",")
-                  .append("zoompan=z='min(zoom+0.00028,1.028)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=")
-                  .append(width).append("x").append(height).append(":fps=").append(fps)
+                String z,x,y;
+                // Distinct deterministic movements; graphics never receive camera motion.
+                int total=Math.max(1,frames-1);
+                switch(i%6){
+                    case 1->{z="'1.028-0.026*on/"+total+"'";x="'(iw-iw/zoom)/2'";y="'(ih-ih/zoom)/2'";}
+                    case 2->{z="'1.03'";x="'(iw-iw/zoom)*on/"+total+"'";y="'(ih-ih/zoom)/2'";}
+                    case 3->{z="'1.03'";x="'(iw-iw/zoom)*(1-on/"+total+")'";y="'(ih-ih/zoom)/2'";}
+                    case 4->{z="'1.03'";x="'(iw-iw/zoom)/2'";y="'(ih-ih/zoom)*on/"+total+"'";}
+                    case 5->{z="'1.03'";x="'(iw-iw/zoom)/2'";y="'(ih-ih/zoom)*(1-on/"+total+")'";}
+                    default->{z="'1.002+0.026*on/"+total+"'";x="'(iw-iw/zoom)/2'";y="'(ih-ih/zoom)/2'";}
+                }
+                fc.append(base).append("scale=").append(width).append(":").append(height).append(":force_original_aspect_ratio=increase,")
+                  .append("crop=").append(width).append(":").append(height)
+                  .append(",zoompan=z=").append(z).append(":x=").append(x).append(":y=").append(y)
+                  .append(":d=1:s=").append(width).append("x").append(height).append(":fps=").append(fps)
                   .append(",trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[bg").append(i).append("];");
             }else{
                 fc.append(base)
@@ -97,7 +112,9 @@ public final class VideoRenderer {
             int overlayInput=overlayInputs.get(i);
             if(overlayInput>=0){
                 fc.append("[").append(overlayInput).append(":v]scale=").append(width).append(":").append(height)
-                  .append(",format=rgba,trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[ov").append(i).append("];")
+                  .append(",format=rgba,");
+                if(i>0)fc.append("fade=t=in:st=0:d=0.18:alpha=1,");
+                fc.append("trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[ov").append(i).append("];")
                   .append("[bg").append(i).append("][ov").append(i).append("]overlay=0:0:format=auto,")
                   .append("trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[s").append(i).append("];");
             }else{

@@ -26,6 +26,8 @@ public final class VisualPlanner {
             String type;
             String prompt;
             Map<String,Object>data=new LinkedHashMap<>();
+            data.put("segmentIndex",seg.index()); // kept even without Ollama grounding
+
             if(grounded!=null){
                 type=grounded.strategy();
                 prompt=grounded.prompt();
@@ -43,6 +45,7 @@ public final class VisualPlanner {
                 if(prompt.isBlank())prompt="Realistic editorial news photograph grounded only in verified reporting about: "+seg.narration();
             }
             if(idx==0)type="HOOK";
+            else type=editorialType(seg,fp,grounded,idx);
             String body=seg.narration()==null?"":seg.narration();
             out.add(new VisualPlan.Item(idx,type,script.headline(),body,Math.max(idx==0?3.0:4.0,seg.durationTarget()),prompt,data));
             idx++;
@@ -51,13 +54,21 @@ public final class VisualPlanner {
         if(political!=null&&political.shouldRender(minimumRelevance,showUncertain)){
             int insertAt=Math.min(3,out.size());
             Map<String,Object>renderData=new LinkedHashMap<>(political.toMap());
+            // Use a small slice of an existing narrated beat, not additional video time.
+            renderData.put("segmentIndex",Math.min(2,Math.max(0,segments.size()-1)));
+            renderData.put("supplemental",true);
+            renderData.put("supplementFraction",0.27);
             renderData.put("showConfidence",showConfidence);
             renderData.put("showSourceMix",showSourceMix);
             out.add(insertAt,new VisualPlan.Item(-1,"POLITICAL_CONTEXT","Political context",political.storySummary(),Math.max(3.5,Math.min(8.0,politicalSceneSeconds)),"",renderData));
         }
 
         String src=fp.sources().stream().map(x->String.valueOf(x.get("publisher"))).distinct().limit(5).reduce((a,b)->a+" • "+b).orElse("");
-        out.add(new VisualPlan.Item(-1,"SOURCE_CARD","Sources",src,2.5,""));
+        Map<String,Object>sourceData=new LinkedHashMap<>();
+        sourceData.put("segmentIndex",segments.isEmpty()?0:segments.get(Math.min(7,segments.size()-1)).index());
+        sourceData.put("supplemental",true);
+        sourceData.put("supplementFraction",0.18);
+        out.add(new VisualPlan.Item(-1,"SOURCE_CARD","Sources",src,2.5,"",sourceData));
 
         List<VisualPlan.Item> reindexed=new ArrayList<>();
         for(int i=0;i<out.size();i++){
@@ -66,4 +77,24 @@ public final class VisualPlanner {
         }
         return new VisualPlan(script.storyId(),List.copyOf(reindexed));
     }
+    /** Choose graphics only for details explicitly present in the verified fact package. */
+    private static String editorialType(NewsScript.Segment seg,FactPackage facts,VisualPromptPlan grounded,int index){
+        String narration=seg.narration()==null?"":seg.narration();
+        String verified=facts.facts().stream().map(FactClaim::statement).reduce("",(a,b)->a+" "+b);
+        String lowered=narration.toLowerCase(Locale.ROOT);
+        if(grounded!=null&&!grounded.factIds().isEmpty()){
+            java.util.regex.Matcher numbers=java.util.regex.Pattern.compile("\\b\\d+(?:[.,]\\d+)?%\\b|\\b\\d{2,}(?:[.,]\\d+)?\\b").matcher(narration);
+            while(numbers.find())if(verified.contains(numbers.group()))return "STATISTIC";
+            java.util.regex.Matcher quoted=java.util.regex.Pattern.compile("[“\\\"]([^”\\\"]{12,120})[”\\\"]").matcher(narration);
+            if(quoted.find()&&verified.contains(quoted.group(1)))return "QUOTE";
+            if(lowered.matches(".*\\b(january|february|march|april|may|june|july|august|september|october|november|december|yesterday|today|tomorrow)\\b.*")
+                    &&verified.toLowerCase(Locale.ROOT).matches(".*\\b(20\\d{2}|january|february|march|april|may|june|july|august|september|october|november|december)\\b.*"))
+                return "TIMELINE";
+        }
+        if(index%3==0)return "FACT_HIGHLIGHT";
+        if(grounded!=null&&(grounded.strategy().equalsIgnoreCase("DIRECT_EVENT")||grounded.strategy().equalsIgnoreCase("LOCATION")
+                ||grounded.strategy().equalsIgnoreCase("PERSON")))return "EDITORIAL_PHOTO";
+        return "EDITORIAL_PHOTO";
+    }
+
 }

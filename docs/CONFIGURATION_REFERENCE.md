@@ -24,7 +24,7 @@ Current defaults:
     ollamaKeepAlive=30m
     ttsPrimary=kokoro
     ttsFallback=qwen3
-    kokoroVoices=af_sarah,am_michael
+    kokoroVoices=af_heart,af_bella,af_nicole,bf_emma
     qwenVoices=Ryan,Aiden,Ono_Anna,Sohee
     qwenUrl=http://127.0.0.1:8765
     comfyUrl=http://127.0.0.1:8188
@@ -140,12 +140,14 @@ Important: the live NewsPipeline code currently explicitly attempts Kokoro first
 
 ### kokoroVoices
 
-Preferred/default pool:
+Default pool:
 
-- af_sarah (American female)
-- am_michael (American male)
+- af_heart
+- af_bella
+- af_nicole
+- bf_emma
 
-A stable voice is chosen for a video based on the story ID hash. With only these two in the default pool, both are used in preference to older voices. Other Kokoro voices can be added manually to `kokoroVoices`; `af_nicole` (including `af-nicole`) remains blacklisted.
+A stable voice is chosen for a video based on the story ID hash.
 
 ### qwenVoices
 
@@ -616,3 +618,31 @@ These are good cleanup targets because configuration should ideally be authorita
 
 Blank visual-specific model/URL settings intentionally reuse the normal Ollama service and the existing serialized `output/runtime/ollama.lock`.
 
+## V5 optional visual settings
+
+- visualQualityPreset=enhanced : uses the V5 editorial package by default;
+  set classic to retain the legacy V4 news card presentation. A classic job
+  disables image camera movement, uses original scene weights, and preserves
+  the generated-photo AI disclosure in its final provenance.
+- visualMotionIntensity=moderate : the value off disables Comfy scene camera motion;
+  otherwise deterministic low-amplitude motion applies.
+- visualNarrationSyncEnabled=true : set false to retain legacy scene-duration weights;
+  true uses the speech-aligned storyboard durations.
+- visualUseExactTtsTiming=true : uses valid Kokoro timing TSV for
+  captions and scene weights; otherwise estimates using WAV duration.
+- visualPostGenerationChecks=true : enables perceptual-duplicate
+  rejection in addition to mandatory decode, aspect and flatness checks.
+- visualImageReviewRetries=2 : retries rejected generated images
+  from 0 to 4 extra times.
+- visualImageReviewModel= : empty disables multimodal checking; explicitly
+  configure a compatible installed Ollama vision model to enable advisory
+  content review with bounded retries and GPU coordination. No models are
+  automatically installed. Reviewer failure is reported as unevaluated.
+- visualImageReviewOllamaUrl= : optional Ollama /api/generate endpoint override
+  (blank uses localhost default).
+- visualGenerateContactSheet=true : decodes five actual MP4 frames
+  and writes a representative contact sheet.
+- visualDebugFrames=true : reserved for future detailed diagnostics.
+
+Automated image checks are limited to deterministic technical quality;
+they must not be treated as confirmation of depicted facts.

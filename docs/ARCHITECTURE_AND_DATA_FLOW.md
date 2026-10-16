@@ -366,3 +366,19 @@ After narration passes validation, AutoNewsRoller now runs a separate grounded v
 
 The accepted structured result is written to `visual_prompt_plan.json` before ComfyUI. `VisualPlanner` copies strategy, FACT IDs, anchor entities, grounding score, exclusion guidance, repair count, and fallback state into scene metadata. Comfy provenance and `audit.json` preserve the grounding diagnostics.
 
+## V5 visual production dataflow
+
+Final WAV and optional validated Kokoro .timing.tsv
+-> SpeechTiming alignment (or explicitly estimated word durations)
+-> grounded VisualPlan
+-> typed Storyboard through VisualDirector
+-> CardRenderer deterministic graphic scenes and optional ComfyUI imagery
+-> ImageQualityInspector acceptance/retry and provenance
+-> shared-crop background plus fixed captions/disclosure overlays
+-> VideoRenderer (FFmpeg H.264/AAC; NVENC or x264 fallback)
+-> VideoAudit and VisualQualityReport actual-frame checks
+-> final MP4, metadata sidecar, contact sheet and publication history.
+
+No required cloud inference or new paid visual service is introduced.
+Existing jobs, queue APIs, worker messages and ComfyUI GPU locking
+remain in place.

@@ -16,6 +16,11 @@ public final class ComfyImageGenerator {
     public List<String> checkpoints()throws Exception{HttpResponse<String>x=get("/object_info/CheckpointLoaderSimple",8);if(x.statusCode()/100!=2)throw new IllegalStateException("ComfyUI checkpoint query HTTP "+x.statusCode());List<String>out=new ArrayList<>();collectStrings(Json.parse(x.body()),out);return out.stream().filter(s->s.toLowerCase(Locale.ROOT).endsWith(".safetensors")||s.toLowerCase(Locale.ROOT).endsWith(".ckpt")).distinct().toList();}
 
     public Path generate(String prompt,String negative,String checkpoint,Path output,int width,int height,int steps,double cfg)throws Exception{
+        return generate(prompt,negative,checkpoint,output,width,height,steps,cfg,
+                java.util.concurrent.ThreadLocalRandom.current().nextLong(1L<<52));
+    }
+    /** Caller-supplied seed makes retries reproducible and source metadata auditable. */
+    public Path generate(String prompt,String negative,String checkpoint,Path output,int width,int height,int steps,double cfg,long seed)throws Exception{
         Files.createDirectories(output.getParent());
         try(GpuLane ignored=GpuLane.exclusive(root.resolve("output/runtime/gpu_ai_lane.lock"))){
             requestQwenRelease();
@@ -25,7 +30,7 @@ public final class ComfyImageGenerator {
             wf.put("3",node("CLIPTextEncode",Map.of("text",negative,"clip",List.of("1",1))));
             wf.put("4",node("EmptyLatentImage",Map.of("width",width,"height",height,"batch_size",1)));
             Map<String,Object>ksampler=new LinkedHashMap<>();
-            ksampler.put("seed",Math.floorMod(Objects.hash(prompt,System.nanoTime()),Integer.MAX_VALUE));ksampler.put("steps",steps);ksampler.put("cfg",cfg);ksampler.put("sampler_name","dpmpp_2m_sde");ksampler.put("scheduler","karras");ksampler.put("denoise",1.0);ksampler.put("model",List.of("1",0));ksampler.put("positive",List.of("2",0));ksampler.put("negative",List.of("3",0));ksampler.put("latent_image",List.of("4",0));
+            ksampler.put("seed",seed);ksampler.put("steps",steps);ksampler.put("cfg",cfg);ksampler.put("sampler_name","dpmpp_2m_sde");ksampler.put("scheduler","karras");ksampler.put("denoise",1.0);ksampler.put("model",List.of("1",0));ksampler.put("positive",List.of("2",0));ksampler.put("negative",List.of("3",0));ksampler.put("latent_image",List.of("4",0));
             wf.put("5",node("KSampler",ksampler));wf.put("6",node("VAEDecode",Map.of("samples",List.of("5",0),"vae",List.of("1",2))));wf.put("7",node("SaveImage",Map.of("filename_prefix","AutoNewsRoller","images",List.of("6",0))));
             Map<String,Object>request=new LinkedHashMap<>();request.put("prompt",wf);request.put("client_id","autonewsroller-"+UUID.randomUUID());
             HttpResponse<String>submit=postJson("/prompt",Json.stringify(request),20);if(submit.statusCode()/100!=2)throw new IllegalStateException("ComfyUI /prompt HTTP "+submit.statusCode()+": "+compact(submit.body()));

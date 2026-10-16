@@ -41,6 +41,8 @@ public final class SelfTest {
         testMalformed(root);
         testScriptValidation(a);
         testProductionVideoContract(root,a);
+        testVisualV5();
+        testComfyMock();
         testWorthyHourFilterContract(root);
         testFeedCardIdentityContract(root);
         testTtsFallback();
@@ -564,7 +566,7 @@ public final class SelfTest {
         ok(!cfg.csv("kokoroVoices","").stream().anyMatch(v->v.equalsIgnoreCase("af_nicole")||v.equalsIgnoreCase("af-nicole")),
                 "production defaults exclude blacklisted Kokoro voice af_nicole");
         ok(cfg.csv("kokoroVoices","").equals(List.of("af_sarah","am_michael")),
-                "default news narration prefers Sarah and Michael voices only");
+                "default news narration prefers Sarah and Michael");
         List<String>safeKokoro=NewsPipeline.allowedKokoroVoices(List.of("af_heart","af_nicole","af-nicole","bf_emma"));
         ok(safeKokoro.equals(List.of("af_heart","bf_emma")),
                 "runtime Kokoro voice filter blocks af_nicole and af-nicole aliases");
@@ -602,7 +604,7 @@ public final class SelfTest {
                         cardSource.contains("renderHookPackage")&&cardSource.contains("renderStoryPackage")&&
                         cardSource.contains("fitHeadlineFont")&&cardSource.contains("verticalBias"),
                 "AWARE visual package includes thumbnail-first hook treatment, adaptive headline sizing, and protected subject cropping");
-        ok(themeSource.contains("aware-broadcast-v4-motion")&&themeSource.contains("new Color(30,74,132)")&&
+        ok(themeSource.contains("aware-broadcast-v5-editorial")&&themeSource.contains("new Color(30,74,132)")&&
                         themeSource.contains("new Color(185,23,38)")&&!themeSource.toLowerCase(Locale.ROOT).contains("56,232,255"),
                 "broadcast v4 uses breaking-news red and restrained royal blue without neon cyan");
         ok(themeSource.contains("HEADER_HEIGHT=118")&&themeSource.contains("TICKER_HEIGHT=80")&&
@@ -785,6 +787,187 @@ public final class SelfTest {
         int generate=comfySource.indexOf("public Path generate(");
         ok(generate>=0&&recovery>generate&&!comfySource.substring(generate,recovery).contains("/free")&&comfySource.substring(recovery).contains("/free"),
                 "ComfyUI success path keeps models warm and only OOM recovery frees them");
+    }
+
+    private void testVisualV5()throws Exception{
+        Path dir=Files.createTempDirectory("autonews-v5-fixture-");
+        List<NewsScript.Segment>segments=List.of(
+                new NewsScript.Segment(0,"The council approved twelve projects.","hook","HOOK","",2),
+                new NewsScript.Segment(1,"The budget increased by twenty percent.","fact","CONTEXT","",2));
+        String narration=segments.get(0).narration()+" "+segments.get(1).narration();
+        List<String>words=SpeechTiming.tokens(narration);
+        Path sidecar=dir.resolve("narration.timing.tsv");
+        StringBuilder tsv=new StringBuilder("autonewsroller-kokoro-timing-v1\n");
+        for(int i=0;i<words.size();i++){
+            String token=Base64.getUrlEncoder().withoutPadding().encodeToString(words.get(i).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            tsv.append(String.format(Locale.ROOT,"word\t%.3f\t%.3f\t%s\n",i*.35,i*.35+.3,token));
+        }
+        Files.writeString(sidecar,tsv.toString());
+        SpeechTiming.Alignment exact=SpeechTiming.align(narration,segments,sidecar,5.0);
+        ok(exact.exact()&&exact.words().size()==words.size()&&exact.segmentDurations().size()==2,
+                "Kokoro sidecar aligns verified spoken tokens with segment boundaries");
+        Files.writeString(sidecar,"untrusted timing payload\n");
+        SpeechTiming.Alignment fallback=SpeechTiming.align(narration,segments,sidecar,5.0);
+        ok(!fallback.exact()&&fallback.words().size()==words.size(),
+                "invalid or missing timing sidecars fall back without claiming exact word timing");
+        NewsScript script=new NewsScript("v5-story","Council approves projects",narration,segments,5,List.of("Fixture News"));
+        VisualPlan plan=new VisualPlan("v5-story",List.of(
+                new VisualPlan.Item(0,"HOOK",script.headline(),segments.get(0).narration(),2,"",Map.of("segmentIndex",0,"factIds",List.of("FACT_A"))),
+                new VisualPlan.Item(1,"STATISTIC",script.headline(),segments.get(1).narration(),2,"",Map.of("segmentIndex",1,"factIds",List.of("FACT_B")))));
+        VisualPlan ungrounded=new VisualPlanner().plan(script,
+                new FactPackage("v5-story",script.headline(),narration,List.of(),List.of(),List.of(),1,1,.8,false));
+        ok(ungrounded.items().stream().filter(item->!item.type().equals("SOURCE_CARD")).allMatch(item->item.data().containsKey("segmentIndex")),
+                "narration timing still retains segment references without optional grounded prompting");
+
+        VisualPlan anchored=new VisualPlan("anchored",List.of(
+                new VisualPlan.Item(0,"HOOK","Headline","First fact",2,"",Map.of("segmentIndex",0)),
+                new VisualPlan.Item(1,"POLITICAL_CONTEXT","Context","",1,"",Map.of("segmentIndex",0,"supplemental",true,"supplementFraction",.25)),
+                new VisualPlan.Item(2,"EDITORIAL_PHOTO","Detail","Second fact",2,"",Map.of("segmentIndex",1)),
+                new VisualPlan.Item(3,"SOURCE_CARD","Sources","Trusted Wire",1,"",
+                        Map.of("segmentIndex",1,"supplemental",true,"supplementFraction",.18))));
+        Storyboard anchoredTimeline=new VisualDirector().direct(anchored,script,exact,5.0);
+        double firstBoundary=anchoredTimeline.scenes().get(1).end();
+        ok(Math.abs(firstBoundary-exact.segmentDurations().get(0))<.01 &&
+                Math.abs(anchoredTimeline.scenes().get(3).end()-5)<.01,
+                "political and source context are contained within original narration segment windows");
+
+        Storyboard storyboard=new VisualDirector().direct(plan,script,exact,5.0);
+        storyboard.validate();
+        ok(Boolean.FALSE.equals(BroadcastLayout.review(storyboard,1080,1920,false).get("captionEnabled")),
+                "captions-off mode is explicitly reflected in visual layout validation");
+        ok("passed".equals(BroadcastLayout.review(storyboard,1080,1920,true).get("status"))&&
+                "passed".equals(BroadcastLayout.review(storyboard,540,960,true).get("status")),
+                "shared caption safety geometry prevents overlap with fixed lower-thirds");
+        ok(storyboard.scenes().size()==2&&storyboard.scenes().get(0).start()==0.0&&
+                        Math.abs(storyboard.scenes().get(1).end()-5.0)<.001,
+                "typed storyboard covers actual narration duration with no gap");
+        Path ass=dir.resolve("caption.ass");
+        CaptionWriter.write(ass,narration,5.0,"sentence",sidecar,540,960);
+        String captions=Files.readString(ass);
+        ok(captions.contains("projects.")&&captions.contains("PlayResX: 540")&&captions.contains("PlayResY: 960")&&
+                        !captions.contains("Dialogue: 0,0:00:05.00,0:00:05.00"),
+                "captions use requested output geometry and skip zero-length events");
+        BufferedImage flat=new BufferedImage(640,1136,BufferedImage.TYPE_INT_RGB);
+        Path blank=dir.resolve("blank.png");ImageIO.write(flat,"png",blank.toFile());
+        ImageQualityInspector inspector=new ImageQualityInspector();
+        ok(!inspector.inspect(blank,640,1136,List.of()).accepted(),
+                "deterministic visual inspection rejects blank images");
+        BufferedImage stripes=new BufferedImage(640,1136,BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g=stripes.createGraphics();
+        for(int y=0;y<1136;y+=142){g.setColor((y/142)%2==0?java.awt.Color.WHITE:java.awt.Color.BLACK);g.fillRect(0,y,640,142);}
+        g.dispose();
+        Path image=dir.resolve("stripes.png");ImageIO.write(stripes,"png",image.toFile());
+        ImageQualityInspector.Result valid=inspector.inspect(image,640,1136,List.of());
+        ok(valid.accepted()&&!inspector.inspect(image,640,1136,List.of(valid.perceptualHash())).accepted(),
+                "valid images pass basic inspection and perceptually repeated images are rejected");
+        OllamaVisionReviewer.Result unconfiguredVision=
+                new OllamaVisionReviewer(dir,"","").review(image,"Council facility",List.of("council"),List.of("fire"));
+        ok(!unconfiguredVision.evaluated()&&unconfiguredVision.accepted(),
+                "optional vision review is disabled by default and never adds mandatory GPU work");
+        CardRenderer classic=new ClassicCardRenderer();
+        Path classicFrame=dir.resolve("classic.png");
+        classic.render(plan.items().get(0),classicFrame,540,960);
+        ok(ImageIO.read(classicFrame.toFile()).getHeight()==960,
+                "classic broadcast package preserves V4 rendering fallback");
+        Path classicOverlay=dir.resolve("classic_overlay.png");
+        classic.renderOverlay(plan.items().get(0),classicOverlay,540,960);
+        BufferedImage classicWithDisclosure=ImageIO.read(classicOverlay.toFile());
+        ok(classicWithDisclosure.getColorModel().hasAlpha() &&
+                classicWithDisclosure.getRGB(405,78)!=0,
+                "classic fallback retains an on-screen AI illustration disclosure");
+        CardRenderer cards=new CardRenderer();
+        Path graphic=dir.resolve("statistic.png");cards.render(plan.items().get(1),graphic,540,960);
+        ok(Files.isRegularFile(graphic)&&ImageIO.read(graphic.toFile()).getHeight()==960,
+                "V5 statistic card renders a responsive verified-content layout");
+        Path bgGraphic=dir.resolve("stat-base.png"),overlayGraphic=dir.resolve("stat-reveal.png");
+        cards.renderGraphicLayers(graphic,bgGraphic,overlayGraphic,540,960);
+        BufferedImage graphicOverlay=ImageIO.read(overlayGraphic.toFile());
+        ok(graphicOverlay.getColorModel().hasAlpha()&&
+                ImageIO.read(bgGraphic.toFile()).getWidth()==540&&
+                graphicOverlay.getRGB(50,165)!=0,
+                "statistic and context graphics can reveal accurate content over a lightweight base");
+        Path background=dir.resolve("normalized.png"),overlay=dir.resolve("overlay.png"),preview=dir.resolve("preview.png");
+        cards.renderBackground(plan.items().get(0),image,background,540,960);
+        cards.renderOverlay(plan.items().get(0),overlay,540,960);
+        cards.renderWithImage(plan.items().get(0),image,preview,540,960);
+        BufferedImage normalized=ImageIO.read(background.toFile()),full=ImageIO.read(preview.toFile());
+        ok(normalized.getHeight()==full.getHeight()&&normalized.getWidth()==full.getWidth(),
+                "static previews and FFmpeg backgrounds share the same output crop geometry");
+        Path longAss=dir.resolve("long.ass");
+        CaptionWriter.write(longAss,
+            "Archæological-investigation. Consequences for extradition documentation remain unusually long but remain understandable without hiding the end of the sentence.",
+            8.0,"sentence",null,540,960);
+        String longOutput=Files.readString(longAss);
+        ok(longOutput.contains("Dialogue:")&&longOutput.contains("\\N")&&
+                longOutput.contains("sentence."),
+                "caption writer groups long proper nouns into bounded two-line dialogue events");
+        Path hostile=dir.resolve("hostile.ass");
+        CaptionWriter.write(hostile,"This contains {\\rInjected} formatting.",3,"sentence",null,540,960);
+        ok(!Files.readString(hostile).contains("{\\rInjected}"),
+                "caption generation escapes script-authored ASS overrides");
+    }
+
+    private void testComfyMock()throws Exception{
+        Path root=Files.createTempDirectory("autonews-comfy-mock-");
+        BufferedImage fixture=new BufferedImage(512,896,BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g=fixture.createGraphics();
+        for(int y=0;y<896;y++){g.setColor(new java.awt.Color(y%255,(y/2)%255,80));
+            g.drawLine(0,y,511,y);}
+        g.dispose();
+        java.io.ByteArrayOutputStream buf=new java.io.ByteArrayOutputStream();
+        ImageIO.write(fixture,"png",buf);
+        byte[]imageBytes=buf.toByteArray();
+        AtomicInteger submitted=new AtomicInteger(),freed=new AtomicInteger(),released=new AtomicInteger();
+        java.util.concurrent.atomic.AtomicLong capturedSeed=new java.util.concurrent.atomic.AtomicLong(-1);
+        HttpServer mock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        mock.createContext("/system_stats",exchange->{
+            byte[]response="{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,response.length);
+            try(var out=exchange.getResponseBody()){out.write(response);}
+        });
+        mock.createContext("/release-gpu",exchange->{
+            released.incrementAndGet();
+            exchange.sendResponseHeaders(200,-1);exchange.close();
+        });
+        mock.createContext("/object_info/CheckpointLoaderSimple",exchange->{
+            byte[]response="{\"input\":{\"required\":{\"ckpt_name\":[[\"fixture.safetensors\"]]}}}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,response.length);
+            try(var out=exchange.getResponseBody()){out.write(response);}
+        });
+        mock.createContext("/prompt",exchange->{
+            Map<String,Object>request=Json.object(Json.parse(new String(exchange.getRequestBody().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8)));
+            Map<String,Object>ksampler=Json.object(Json.object(request.get("prompt")).get("5"));
+            capturedSeed.set(((Number)Json.object(ksampler.get("inputs")).get("seed")).longValue());
+            submitted.incrementAndGet();
+            byte[]response="{\"prompt_id\":\"fixture-id\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,response.length);
+            try(var out=exchange.getResponseBody()){out.write(response);}
+        });
+        mock.createContext("/history/fixture-id",exchange->{
+            byte[]response="{\"fixture-id\":{\"outputs\":{\"7\":{\"images\":[{\"filename\":\"mock.png\",\"subfolder\":\"\",\"type\":\"output\"}]}}}}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,response.length);
+            try(var out=exchange.getResponseBody()){out.write(response);}
+        });
+        mock.createContext("/view",exchange->{
+            exchange.getResponseHeaders().add("Content-Type","image/png");
+            exchange.sendResponseHeaders(200,imageBytes.length);
+            try(var out=exchange.getResponseBody()){out.write(imageBytes);}
+        });
+        mock.createContext("/free",exchange->{freed.incrementAndGet();exchange.sendResponseHeaders(200,-1);exchange.close();});
+        mock.start();
+        try{
+            String url="http://127.0.0.1:"+mock.getAddress().getPort();
+            ComfyImageGenerator generator=new ComfyImageGenerator(root,url,url);
+            ok(generator.reachable()&&generator.checkpoints().contains("fixture.safetensors"),
+                    "ComfyUI mocked endpoint can discover a configured checkpoint");
+            Path generated=root.resolve("visuals/fixture.png");
+            generator.generate("verified editorial subject","exclude unsupported drama",
+                    "fixture.safetensors",generated,512,896,20,5.0,876543210L);
+            ok(Files.size(generated)>1024&&ImageIO.read(generated.toFile())!=null,
+                    "ComfyUI mock generation saves a decodable output image");
+            ok(capturedSeed.get()==876543210L&&submitted.get()==1&&released.get()==1&&freed.get()==0,
+                    "ComfyUI preserves caller seed, releases Qwen and does not unload warm checkpoints on success");
+        }finally{mock.stop(0);}
     }
 
     private void testWorthyHourFilterContract(Path root)throws Exception{
