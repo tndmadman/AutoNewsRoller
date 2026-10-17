@@ -30,6 +30,17 @@ public final class Main {
                 server.start();server.block();return;
             }
 
+            if(has(args,"--worker-ui")){
+                String controller=o.getOrDefault("--controller-url",cfg.get("commandCenterControllerUrl","http://127.0.0.1:8787"));
+                String workerId=o.getOrDefault("--worker-id",defaultWorkerId());
+                String token=env("AUTONEWS_TOKEN","");
+                WorkerWebConsole console=new WorkerWebConsole(root,cfg,controller,workerId,token);
+                Runtime.getRuntime().addShutdownHook(new Thread(console::close,"worker-web-console-shutdown"));
+                int port=console.start();
+                System.out.println("GPU Worker web console: http://127.0.0.1:"+port);
+                console.block();return;
+            }
+
             if(has(args,"--worker")){
                 String controller=o.getOrDefault("--controller-url",cfg.get("commandCenterControllerUrl","http://127.0.0.1:8787"));
                 String workerId=o.getOrDefault("--worker-id",defaultWorkerId());

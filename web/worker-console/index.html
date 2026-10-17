@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#070a07">
+  <title>AUTONEWSROLLER // GPU WORKER</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="scanlines" aria-hidden="true"></div>
+  <header class="mast">
+    <div class="identity"><span class="insignia">AN<br>GPU</span><div><p class="eyebrow">AUTONEWSROLLER / REMOTE PRODUCTION NODE</p><h1>GPU WORKER <em>OPERATIONS TERMINAL</em></h1><p class="sub">SYSTEM OPERATIONS // LOCAL ACCESS // 1998</p></div></div>
+    <div class="mast-info"><span id="connectionLamp" class="lamp"></span><span id="connectionText">CONTACT PENDING</span><strong id="clock">—</strong></div>
+  </header>
+  <nav class="tabs" aria-label="Worker console sections">
+    <button class="tab active" data-tab="overview" aria-current="page">01 / OVERVIEW</button>
+    <button class="tab" data-tab="hardware">02 / HARDWARE</button>
+    <button class="tab" data-tab="active">03 / ACTIVE JOB</button>
+    <button class="tab" data-tab="history">04 / HISTORY</button>
+    <button class="tab" data-tab="logs">05 / LIVE LOGS</button>
+    <button class="tab" data-tab="diagnostics">06 / DIAGNOSTICS</button>
+    <button class="tab" data-tab="settings">07 / SETTINGS</button>
+  </nav>
+  <div class="notice" role="status" id="notice">Connecting to local worker...</div>
+  <main>
+    <section class="view active" id="tab-overview" aria-label="Overview">
+      <div class="section-title"><span>NODE STATE / CONTROL</span><small id="lastContact">LAST CONTACT —</small></div>
+      <div class="overview-grid">
+        <article class="panel status-panel">
+          <div class="panel-top">WORKER STATE <span>SYS/OPS</span></div>
+          <div class="state-readout" id="lifecycle">MEASURING</div>
+          <div class="keyline"><span>WORKER ID</span><strong id="workerId">—</strong></div>
+          <div class="keyline"><span>CONTROLLER</span><strong id="controllerUrl">—</strong></div>
+          <div class="keyline"><span>LAST HEARTBEAT</span><strong id="heartbeat">—</strong></div>
+          <div class="keyline"><span>WORKER UPTIME</span><strong id="uptime">—</strong></div>
+          <div class="controls" aria-label="Worker controls">
+            <button data-action="start">START</button>
+            <button data-action="pause">PAUSE</button>
+            <button data-action="resume">RESUME</button>
+            <button data-action="drain">DRAIN / STOP</button>
+            <button data-action="restart">SAFE RESTART</button>
+          </div>
+          <p class="smallprint">Pause prevents new claims; Drain finishes the claimed job and controller callback before stopping.</p>
+        </article>
+        <article class="panel">
+          <div class="panel-top">GPU INSTRUMENTATION <span>HW/01</span></div>
+          <div class="instrument"><span>DEVICE</span><strong id="gpuName">MEASURING</strong></div>
+          <div class="meter-label"><span>GPU CORE LOAD</span><b id="gpuLoadLabel">—</b></div><div class="meter"><span id="gpuLoadBar"></span></div>
+          <div class="meter-label"><span>VRAM OCCUPANCY</span><b id="vramLabel">—</b></div><div class="meter"><span id="vramBar"></span></div>
+          <div class="instrument"><span>THERMAL</span><strong id="gpuTemp">—</strong></div>
+          <div class="instrument"><span>SAMPLE STATUS</span><strong id="metricAge">MEASURING</strong></div>
+          <div class="instrument"><span>CPU LOAD</span><strong id="cpuSummary">—</strong></div>
+        </article>
+        <article class="panel">
+          <div class="panel-top">CURRENT PRODUCTION <span>JOB/ACTIVE</span></div>
+          <p class="topic" id="activeTitle">No active job</p>
+          <div class="keyline"><span>JOB ID</span><strong id="activeId">—</strong></div>
+          <div class="keyline"><span>PROCESS</span><strong id="activeType">—</strong></div>
+          <div class="keyline"><span>STAGE</span><strong id="activeStage">—</strong></div>
+          <div class="keyline"><span>ACTIVITY</span><strong id="activeDetail">—</strong></div>
+          <div class="keyline"><span>STARTED</span><strong id="activeStarted">—</strong></div>
+          <div class="instrument caution"><span>LAST ISSUE</span><strong id="lastIssue">NONE REPORTED</strong></div>
+        </article>
+      </div>
+      <div class="footer-line"><span>CONTROLLER COMMAND CENTER</span><a id="controllerLink" target="_blank" rel="noopener noreferrer">OPEN CONTROLLER ↗</a><span>WORKER UI / 127.0.0.1 ONLY</span></div>
+    </section>
+
+    <section class="view" id="tab-hardware" aria-label="Hardware">
+      <div class="section-title">HARDWARE / LIVE SAMPLE <small>NO SIMULATED READINGS</small></div>
+      <div class="two">
+        <article class="panel"><div class="panel-top">HOST <span>CPU / RAM / JVM</span></div>
+          <div class="keyline"><span>HOSTNAME</span><strong id="hostName">—</strong></div>
+          <div class="keyline"><span>OPERATING SYSTEM</span><strong id="os">—</strong></div>
+          <div class="keyline"><span>JAVA</span><strong id="java">—</strong></div>
+          <div class="keyline"><span>LOGICAL PROCESSORS</span><strong id="processors">—</strong></div>
+          <div class="keyline"><span>HOST CPU</span><strong id="cpu">—</strong></div>
+          <div class="keyline"><span>PROCESS CPU</span><strong id="processCpu">—</strong></div>
+          <div class="keyline"><span>HOST RAM</span><strong id="ram">—</strong></div>
+          <div class="keyline"><span>JVM HEAP</span><strong id="jvm">—</strong></div>
+        </article>
+        <article class="panel"><div class="panel-top">NVIDIA TELEMETRY <span>GPU / MEMORY</span></div>
+          <div class="keyline"><span>GPU</span><strong id="gpuDevice">—</strong></div>
+          <div class="keyline"><span>UTILIZATION</span><strong id="gpuUtil">—</strong></div>
+          <div class="keyline"><span>VRAM</span><strong id="gpuMemory">—</strong></div>
+          <div class="keyline"><span>TEMPERATURE</span><strong id="gpuThermal">—</strong></div>
+          <div class="keyline"><span>SAMPLED AT</span><strong id="sampledAt">—</strong></div>
+          <p class="smallprint">A single backend sampler supplies both the browser and lease heartbeats. Missing NVIDIA values are reported as unavailable, not zero.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="view" id="tab-active" aria-label="Active job">
+      <div class="section-title">CURRENT CLAIM / PIPELINE <small>CONTROLLER REMAINS AUTHORITATIVE</small></div>
+      <article class="panel"><div class="panel-top">PRODUCTION TRACK <span>INDETERMINATE UNTIL STAGE EVENTS ARRIVE</span></div>
+        <p class="topic" id="jobTitle">No job running</p>
+        <div class="keyline"><span>JOB ID</span><strong id="jobId">—</strong></div>
+        <div class="keyline"><span>TYPE</span><strong id="jobType">—</strong></div>
+        <div class="keyline"><span>STAGE</span><strong id="jobStage">—</strong></div>
+        <div class="keyline"><span>DETAIL</span><strong id="jobDetail">—</strong></div>
+        <div class="keyline"><span>STARTED</span><strong id="jobStart">—</strong></div>
+        <div class="keyline"><span>ELAPSED</span><strong id="jobElapsed">—</strong></div>
+        <p class="smallprint">Stages are emitted by NewsPipeline or the analysis path. No invented progress percentage or ETA.</p>
+        <h3>OBSERVED STAGE EVENTS / THIS BROWSER SESSION</h3>
+        <ol id="stageEvents" class="timeline"><li>No live events received</li></ol>
+      </article>
+    </section>
+
+    <section class="view" id="tab-history" aria-label="Job history">
+      <div class="section-title">RECENT CLAIMS <small>LAST 100 LOCAL SUMMARIES</small></div>
+      <div class="tablewrap"><table><thead><tr><th>JOB ID</th><th>TOPIC</th><th>TYPE</th><th>START</th><th>FINISH</th><th>RESULT</th><th>LAST STAGE</th><th>ERROR / OUTPUT</th></tr></thead><tbody id="historyRows"><tr><td colspan="8">Reading ledger...</td></tr></tbody></table></div>
+    </section>
+
+    <section class="view" id="tab-logs" aria-label="Live logs">
+      <div class="section-title">WORKER EVENT TERMINAL <small>BOUNDED LOCAL EVENT HISTORY</small></div>
+      <div class="log-actions"><label>SEARCH <input id="logSearch" type="search" placeholder="Filter events..."></label><label>LEVEL <select id="logSeverity"><option value="">ALL</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></label>
+        <button id="pauseLogs">PAUSE DISPLAY</button><button id="toggleScroll">AUTO-SCROLL: ON</button><button id="copyLogs">COPY VISIBLE</button><button id="clearLogs">CLEAR DISPLAY</button></div>
+      <div class="terminal" id="logTerminal" role="log" aria-label="Worker event logs"><div>Waiting for worker events...</div></div>
+      <p class="smallprint">Clear affects this browser only. Source logs and local production files remain unchanged.</p>
+    </section>
+
+    <section class="view" id="tab-diagnostics" aria-label="Diagnostics">
+      <div class="section-title">DEPENDENCY DIAGNOSTICS <small>MANUAL CHECKS / NO MODEL AUTOLOAD</small></div>
+      <article class="panel"><div class="panel-top">LOCAL SERVICES &amp; BINARIES <span id="diagnosticsStatus">NOT CHECKED</span></div>
+        <div class="controls"><button id="runDiagnostics">RUN QUICK CHECKS</button></div>
+        <div class="tablewrap"><table><thead><tr><th>COMPONENT</th><th>RESULT</th><th>OBSERVATION</th></tr></thead><tbody id="diagnosticsRows"><tr><td colspan="3">Checks have not been run.</td></tr></tbody></table></div>
+      </article>
+    </section>
+
+    <section class="view" id="tab-settings" aria-label="Settings">
+      <div class="section-title">LOCAL OPERATOR PREFERENCES <small>ATOMIC SAVE / NO CREDENTIAL DISCLOSURE</small></div>
+      <form id="settingsForm" class="panel form">
+        <div class="panel-top">WORKER CONNECTION <span>RESTART REQUIRED FOR WORKER CHANGES</span></div>
+        <label>CONTROLLER URL <input name="controllerUrl" type="url" required maxlength="255"></label>
+        <label>WORKER ID <input name="workerId" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" maxlength="64"></label>
+        <label>LOCAL HTTP PORT <input name="port" type="number" required min="1024" max="65535"><small>Applies after application relaunch</small></label>
+        <label>LOG HISTORY CAP <input name="logLimit" type="number" min="100" max="2000" required></label>
+        <label>STATE POLL INTERVAL (SECONDS) <input name="refreshSeconds" type="number" min="2" max="60" required></label>
+        <label class="tick"><input name="autoStart" type="checkbox"> Start worker when console launches</label>
+        <label class="tick"><input name="autoOpenBrowser" type="checkbox"> Open browser on launch (Windows desktop)</label>
+        <button type="submit">SAVE LOCAL SETTINGS</button>
+        <p class="smallprint" id="inheritedConfig">—</p>
+        <p class="smallprint" id="credential">—</p>
+      </form>
+    </section>
+  </main>
+  <footer class="bottom"><span>AUTONEWSROLLER // NODE MANAGEMENT</span><span>PRODUCTION CONTROL / LOOPBACK</span><span id="footerStatus">WAITING</span></footer>
+</body>
+</html>

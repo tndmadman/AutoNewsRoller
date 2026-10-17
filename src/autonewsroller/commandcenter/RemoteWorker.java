@@ -4,7 +4,6 @@ import autonewsroller.config.NewsConfig;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.*;
 import autonewsroller.util.Json;
-
 import java.net.*;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
@@ -13,53 +12,110 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
+/** One claim loop and one lease-renewing heartbeat scheduler. Never interrupt an owned render on drain. */
 public final class RemoteWorker {
     private final Path root;
     private final NewsConfig cfg;
     private final String controller,workerId,token;
     private final HttpClient http;
-    private final ScheduledExecutorService heartbeat=Executors.newSingleThreadScheduledExecutor();
+    private final ScheduledExecutorService heartbeat=Executors.newSingleThreadScheduledExecutor(r->new Thread(r,"worker-heartbeat"));
+    private final AtomicBoolean launched=new AtomicBoolean(false);
+    private final Consumer<Map<String,Object>> listener;
+    private final Supplier<Map<String,Object>> metrics;
     private volatile String state="IDLE",currentJob="",currentTopic="",currentClaimId="";
-    private volatile boolean running=true;
+    private volatile String jobType="",stage="",detail="",jobStartedAt="",lastError="";
+    private volatile Instant lastContact,lastHeartbeat,lastErrorAt;
+    private volatile int failures;
+    private volatile boolean running=true,paused=false,draining=false;
 
     public RemoteWorker(Path root,NewsConfig cfg,String controller,String workerId,String token){
-        this.root=root;this.cfg=cfg;this.controller=controller.replaceAll("/+$","");this.workerId=workerId;this.token=token==null?"":token;
+        this(root,cfg,controller,workerId,token,null,null);
+    }
+    public RemoteWorker(Path root,NewsConfig cfg,String controller,String workerId,String token,
+                        Consumer<Map<String,Object>> listener,Supplier<Map<String,Object>> metrics){
+        this.root=root;this.cfg=cfg;this.controller=controller.replaceAll("/+$","");this.workerId=workerId;
+        this.token=token==null?"":token;this.listener=listener==null?e->{}:listener;
+        this.metrics=metrics==null?SystemMetrics::snapshot:metrics;
         this.http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).followRedirects(HttpClient.Redirect.NORMAL).build();
     }
-
     public void runForever(){
+        if(!launched.compareAndSet(false,true))throw new IllegalStateException("RemoteWorker is single-use");
         System.out.println("AutoNewsRoller GPU worker '"+workerId+"' -> "+controller);
+        event("lifecycle",Map.of("state","CONNECTING"));
         heartbeat.scheduleWithFixedDelay(this::heartbeatSafe,0,10,TimeUnit.SECONDS);
-        while(running){
-            try{
-                Map<String,Object>job=claim();
-                if(job==null){Thread.sleep(3000);continue;}
-                runJob(job);
-            }catch(InterruptedException e){Thread.currentThread().interrupt();break;}
-            catch(Exception e){System.err.println("Worker controller error: "+e.getMessage());try{Thread.sleep(5000);}catch(InterruptedException ie){Thread.currentThread().interrupt();break;}}
-        }
-        heartbeat.shutdownNow();
-    }
-
-    public void stop(){running=false;heartbeat.shutdownNow();}
-
-    private Map<String,Object>claim()throws Exception{
-        HttpRequest req=request("/api/jobs/claim?worker="+URLEncoder.encode(workerId,StandardCharsets.UTF_8)).GET().timeout(Duration.ofSeconds(30)).build();
-        HttpResponse<String>r=http.send(req,HttpResponse.BodyHandlers.ofString());
-        if(r.statusCode()==204)return null;
-        if(r.statusCode()!=200)throw new IllegalStateException("claim HTTP "+r.statusCode()+": "+r.body());
-        return Json.object(Json.parse(r.body()));
-    }
-
-    private void runJob(Map<String,Object>job){
-        String jobId=String.valueOf(job.get("jobId"));
-        String jobType=String.valueOf(job.getOrDefault("jobType","VIDEO")).toUpperCase(Locale.ROOT);
-        currentJob=jobId;currentClaimId=String.valueOf(job.getOrDefault("claimId",""));currentTopic=String.valueOf(job.getOrDefault("topic",""));state="POLITICAL_ANALYSIS".equals(jobType)?"ANALYZING_BIAS":"PRODUCING";
-        if("POLITICAL_ANALYSIS".equals(jobType)){runPoliticalAnalysis(job);return;}
         try{
+            while(running){
+                try{
+                    if(draining){running=false;break;}
+                    if(paused){Thread.sleep(250);continue;}
+                    // Claim may already be in flight when Pause or Drain arrives.
+                    // Always complete any returned claim, regardless of the new control state.
+                    Map<String,Object> job=claim();
+                    if(job==null){Thread.sleep(1500);continue;}
+                    runJob(job);
+                }catch(InterruptedException e){Thread.currentThread().interrupt();break;}
+                catch(Exception e){
+                    error("controller",e);
+                    try{Thread.sleep(2500);}catch(InterruptedException ie){Thread.currentThread().interrupt();break;}
+                }
+            }
+        }finally{
+            heartbeat.shutdownNow();
+            try{heartbeat.awaitTermination(3,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}
+            running=false;event("lifecycle",Map.of("state","STOPPED"));
+        }
+    }
+    public void pause(){if(!draining){paused=true;event("lifecycle",Map.of("state","PAUSED"));}}
+    public void resume(){if(!draining){paused=false;event("lifecycle",Map.of("state","RESUMED"));}}
+    public void drain(){draining=true;paused=false;event("lifecycle",Map.of("state","DRAINING"));}
+    public void stop(){drain();}
+    public boolean isPaused(){return paused;}
+    public boolean isDraining(){return draining;}
+    public Map<String,Object> snapshot(){
+        Map<String,Object> m=new LinkedHashMap<>();
+        m.put("workerId",workerId);m.put("controllerUrl",controller);
+        m.put("running",launched.get()&&running);m.put("paused",paused);m.put("draining",draining);
+        m.put("state",state);m.put("currentJob",currentJob);m.put("currentTopic",currentTopic);
+        m.put("claimActive",!currentJob.isBlank());m.put("jobType",jobType);m.put("stage",stage);m.put("detail",detail);
+        m.put("jobStartedAt",jobStartedAt);m.put("connected",lastContact!=null&&Duration.between(lastContact,Instant.now()).getSeconds()<35);
+        m.put("lastContact",lastContact==null?null:lastContact.toString());
+        m.put("lastHeartbeat",lastHeartbeat==null?null:lastHeartbeat.toString());
+        m.put("connectionFailures",failures);m.put("lastError",lastError);
+        m.put("lastErrorAt",lastErrorAt==null?null:lastErrorAt.toString());return m;
+    }
+    private void event(String type,Map<String,Object> fields){
+        Map<String,Object> m=new LinkedHashMap<>(fields);
+        m.put("type",type);m.put("at",Instant.now().toString());
+        try{listener.accept(m);}catch(RuntimeException ignored){}
+    }
+    private void error(String component,Exception e){
+        failures++;lastError=safe(e.getMessage());lastErrorAt=Instant.now();
+        event("error",Map.of("component",component,"message",lastError));
+    }
+    private Map<String,Object> claim()throws Exception{
+        HttpRequest req=request("/api/jobs/claim?worker="+URLEncoder.encode(workerId,StandardCharsets.UTF_8)).GET().timeout(Duration.ofSeconds(30)).build();
+        HttpResponse<String> r=http.send(req,HttpResponse.BodyHandlers.ofString());
+        if(r.statusCode()==204){lastContact=Instant.now();return null;}
+        if(r.statusCode()!=200)throw new IllegalStateException("claim HTTP "+r.statusCode());
+        lastContact=Instant.now();return Json.object(Json.parse(r.body()));
+    }
+    private void runJob(Map<String,Object> job){
+        String jobId=String.valueOf(job.get("jobId"));
+        String type=String.valueOf(job.getOrDefault("jobType","VIDEO")).toUpperCase(Locale.ROOT);
+        currentJob=jobId;currentClaimId=String.valueOf(job.getOrDefault("claimId",""));
+        currentTopic=String.valueOf(job.getOrDefault("topic",""));
+        state="POLITICAL_ANALYSIS".equals(type)?"ANALYZING_BIAS":"PRODUCING";
+        jobType=type;stage="POLITICAL_ANALYSIS".equals(type)?"ANALYSIS":"CLAIMED";
+        detail="Controller job claimed";jobStartedAt=Instant.now().toString();
+        event("job-start",Map.of("jobId",jobId,"jobType",type,"topic",currentTopic,"stage",stage,"workerId",workerId));
+        try{
+            if("POLITICAL_ANALYSIS".equals(type)){runPoliticalAnalysis(job);return;}
             NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
-            Map<String,Object>settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
+            Map<String,Object> settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
             int requestedDuration=settings.get("duration") instanceof Number n?n.intValue():cfg.duration();
             int duration=Math.max(cfg.getInt("commandCenterMinimumTargetSeconds",70),requestedDuration);
             String encoder=String.valueOf(settings.getOrDefault("encoder",cfg.get("videoEncoder","auto")));
@@ -68,16 +124,19 @@ public final class RemoteWorker {
             boolean requireComfy=cfg.getBool("commandCenterRequireComfy",true)||(settings.containsKey("requireComfy")&&bool(settings.get("requireComfy")));
             int comfyImages=settings.get("comfyImages") instanceof Number n?Math.max(1,n.intValue()):cfg.getInt("commandCenterComfyImages",3);
             boolean dryRun=bool(settings.get("dryRun"));
-            System.out.println("Claimed job: "+currentTopic+" | durationTarget="+duration+"s | comfy="+useComfy+" required="+requireComfy+" images="+comfyImages+" | encoder="+encoder);
+            event("progress",Map.of("stage","CLAIMED","detail","durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy));
             String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
             Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+stamp);
             final String claimId=currentClaimId;
-            NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,event->progressSafe(jobId,claimId,event));
+            NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,e->progressSafe(jobId,claimId,e));
             PoliticalVisualData political=job.get("politicalVisualData") instanceof Map<?,?>?PoliticalVisualData.fromMap(Json.object(job.get("politicalVisualData"))):null;
             Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,dryRun);
+            stage="UPLOAD";detail="Local output ready; awaiting controller acknowledgement";
+            event("progress",Map.of("stage",stage,"detail",detail));
             if(!dryRun&&output.toString().toLowerCase(Locale.ROOT).endsWith(".mp4")){
-                Map<String,Object>upload=uploadVideo(jobId,claimId,output);
-                Map<String,Object>complete=new LinkedHashMap<>();
+                Map<String,Object> upload=uploadVideo(jobId,claimId,output);
+                event("progress",Map.of("stage","UPLOAD","detail","Video uploaded; final completion pending"));
+                Map<String,Object> complete=new LinkedHashMap<>();
                 complete.put("workerId",workerId);complete.put("claimId",claimId);complete.put("localPath",output.toString());complete.put("uploaded",upload);
                 complete.put("completedAt",Instant.now().toString());
                 Path sidecar=output.resolveSibling(output.getFileName()+".json");
@@ -86,63 +145,66 @@ public final class RemoteWorker {
             }else{
                 post("/api/jobs/"+enc(jobId)+"/complete",Map.of("workerId",workerId,"claimId",claimId,"dryRun",true,"localPath",output.toString(),"completedAt",Instant.now().toString()));
             }
+            event("job-finish",Map.of("jobId",jobId,"result","COMPLETE","stage","COMPLETE","outputPath",output.toString()));
             System.out.println("Worker completed: "+currentTopic);
         }catch(Exception e){
-            e.printStackTrace();
-            try{post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"claimId",currentClaimId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));}catch(Exception ignored){}
+            error("job",e);e.printStackTrace();
+            boolean acknowledged=false;
+            try{
+                if("POLITICAL_ANALYSIS".equals(type))
+                    post("/api/jobs/"+enc(jobId)+"/bias-fail",Map.of("workerId",workerId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
+                else
+                    post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"claimId",currentClaimId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
+                acknowledged=true;
+            }
+            catch(Exception callback){error("failure-callback",callback);}
+            event("job-finish",Map.of("jobId",jobId,"result",acknowledged?"FAILED":"UNKNOWN","error",safe(e.getMessage()),"stage",stage));
         }finally{
-            state="IDLE";currentJob="";currentTopic="";currentClaimId="";
+            state="IDLE";currentJob="";currentTopic="";currentClaimId="";jobType="";stage="";detail="";jobStartedAt="";
         }
     }
-
-    private void runPoliticalAnalysis(Map<String,Object>job){
-        String jobId=String.valueOf(job.get("jobId"));
-        try{
-            NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
-            System.out.println("Analyzing political framing: "+currentTopic+" | articles="+candidate.cluster().articles.size());
-            PoliticalFramingAnalyzer analyzer=new PoliticalFramingAnalyzer(root,cfg);
-            Map<String,Object>result=analyzer.analyze(candidate.cluster());
-            post("/api/jobs/"+enc(jobId)+"/bias-complete",Map.of("workerId",workerId,"result",result));
-            System.out.println("Political framing complete: "+currentTopic+" -> "+result.get("overallClassification")+" confidence="+result.get("overallConfidence"));
-        }catch(Exception e){
-            e.printStackTrace();
-            try{post("/api/jobs/"+enc(jobId)+"/bias-fail",Map.of("workerId",workerId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));}catch(Exception ignored){}
-        }finally{
-            state="IDLE";currentJob="";currentTopic="";
-        }
+    private void runPoliticalAnalysis(Map<String,Object>job)throws Exception{
+        NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
+        PoliticalFramingAnalyzer analyzer=new PoliticalFramingAnalyzer(root,cfg);
+        Map<String,Object> result=analyzer.analyze(candidate.cluster());
+        post("/api/jobs/"+enc(String.valueOf(job.get("jobId")))+"/bias-complete",
+                Map.of("workerId",workerId,"result",result));
+        event("job-finish",Map.of("jobId",String.valueOf(job.get("jobId")),"result","COMPLETE","stage","POLITICAL_ANALYSIS"));
     }
-
-    private Map<String,Object>uploadVideo(String jobId,String claimId,Path file)throws Exception{
-        HttpRequest.Builder b=request("/api/jobs/"+enc(jobId)+"/video").timeout(Duration.ofMinutes(30)).header("Content-Type","video/mp4").header("X-Filename",file.getFileName().toString()).header("X-Worker-Id",workerId).header("X-Claim-Id",claimId);
-        HttpResponse<String>r=http.send(b.PUT(HttpRequest.BodyPublishers.ofFile(file)).build(),HttpResponse.BodyHandlers.ofString());
-        if(r.statusCode()!=200)throw new IllegalStateException("video upload HTTP "+r.statusCode()+": "+r.body());
-        return Json.object(Json.parse(r.body()));
+    private Map<String,Object> uploadVideo(String jobId,String claimId,Path file)throws Exception{
+        HttpRequest.Builder b=request("/api/jobs/"+enc(jobId)+"/video").timeout(Duration.ofMinutes(30))
+                .header("Content-Type","video/mp4").header("X-Filename",file.getFileName().toString())
+                .header("X-Worker-Id",workerId).header("X-Claim-Id",claimId);
+        HttpResponse<String> r=http.send(b.PUT(HttpRequest.BodyPublishers.ofFile(file)).build(),HttpResponse.BodyHandlers.ofString());
+        if(r.statusCode()!=200)throw new IllegalStateException("video upload HTTP "+r.statusCode());
+        lastContact=Instant.now();return Json.object(Json.parse(r.body()));
     }
-
-    private void progressSafe(String jobId,String claimId,WorkerState event){
-        try{post("/api/jobs/"+enc(jobId)+"/progress",Map.of("stage",event.stage().name(),"detail",event.detail(),"timestamp",event.timestamp().toString(),"workerId",workerId,"claimId",claimId));}catch(Exception ignored){}
+    private void progressSafe(String jobId,String claimId,WorkerState update){
+        stage=update.stage().name();detail=update.detail()==null?"":update.detail();
+        event("progress",Map.of("stage",stage,"detail",detail,"timestamp",update.timestamp().toString()));
+        try{post("/api/jobs/"+enc(jobId)+"/progress",Map.of("stage",stage,"detail",detail,"timestamp",update.timestamp().toString(),"workerId",workerId,"claimId",claimId));}
+        catch(Exception e){error("progress-callback",e);}
     }
-
     private void heartbeatSafe(){
         try{
-            Map<String,Object>m=new LinkedHashMap<>();m.put("id",workerId);m.put("state",state);m.put("currentJob",currentJob);m.put("currentTopic",currentTopic);m.put("claimId",currentClaimId);m.put("metrics",SystemMetrics.snapshot());m.put("timestamp",Instant.now().toString());
-            post("/api/workers/heartbeat",m);
-        }catch(Exception e){System.err.println("Worker heartbeat failed: "+e.getMessage());}
+            Map<String,Object> m=new LinkedHashMap<>();
+            m.put("id",workerId);m.put("state",state);m.put("currentJob",currentJob);m.put("currentTopic",currentTopic);
+            m.put("claimId",currentClaimId);m.put("metrics",metrics.get());m.put("timestamp",Instant.now().toString());
+            post("/api/workers/heartbeat",m);lastHeartbeat=Instant.now();
+        }catch(Exception e){error("heartbeat",e);}
     }
-
-    private Map<String,Object>post(String path,Map<String,Object>body)throws Exception{
-        HttpRequest req=request(path).timeout(Duration.ofSeconds(30)).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(Json.stringify(body),StandardCharsets.UTF_8)).build();
-        HttpResponse<String>r=http.send(req,HttpResponse.BodyHandlers.ofString());
-        if(r.statusCode()<200||r.statusCode()>=300)throw new IllegalStateException(path+" HTTP "+r.statusCode()+": "+r.body());
-        return r.body().isBlank()?Map.of():Json.object(Json.parse(r.body()));
+    private Map<String,Object> post(String path,Map<String,Object> body)throws Exception{
+        HttpRequest req=request(path).timeout(Duration.ofSeconds(30)).header("Content-Type","application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(Json.stringify(body),StandardCharsets.UTF_8)).build();
+        HttpResponse<String> r=http.send(req,HttpResponse.BodyHandlers.ofString());
+        if(r.statusCode()<200||r.statusCode()>=300)throw new IllegalStateException(path+" HTTP "+r.statusCode());
+        lastContact=Instant.now();return r.body().isBlank()?Map.of():Json.object(Json.parse(r.body()));
     }
-
     private HttpRequest.Builder request(String path){
         HttpRequest.Builder b=HttpRequest.newBuilder(URI.create(controller+path)).header("User-Agent","AutoNewsRoller-Worker/1.0");
         if(!token.isBlank())b.header("X-AutoNews-Token",token);
         return b;
     }
-
     private static boolean bool(Object x){return x instanceof Boolean b?b:Boolean.parseBoolean(String.valueOf(x));}
     private static String enc(String x){return URLEncoder.encode(x,StandardCharsets.UTF_8);}
     private static String safeName(String x){return x==null?"job":x.replaceAll("[^A-Za-z0-9._-]+","_");}
