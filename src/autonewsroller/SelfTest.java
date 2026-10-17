@@ -17,6 +17,10 @@ import java.io.*;
 import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.*;
 import java.time.*;
 import java.util.*;
@@ -34,6 +38,7 @@ public final class SelfTest {
         testClusterAndVerify(a);
         testCommandCenterQueue(a);
         testStoryBoardPagination();
+        testStoryBoardApi(root);
         testCommandCenterMediaReporting(root,a);
         testCommandCenterLeaseRecovery(a);
         testPublisherBiasRegistry(root);
@@ -192,6 +197,40 @@ public final class SelfTest {
         ok(v.factPackage().independentSourceCount()>=2,"syndication duplicate does not destroy independent confirmations");
     }
 
+
+
+    private void testStoryBoardApi(Path root)throws Exception{
+        Path dir=Files.createTempDirectory("autonews-board-api-");
+        NewsConfig cfg=NewsConfig.load(root);
+        CommandCenterServer server=new CommandCenterServer(dir,cfg,"127.0.0.1",0,60,false,.75,10,"private-token",false);
+        int port=server.start();
+        try{
+            HttpClient client=HttpClient.newHttpClient();
+            String base="http://127.0.0.1:"+port;
+            HttpRequest unauthenticated=HttpRequest.newBuilder(URI.create(base+"/api/board/stories")).GET().build();
+            ok(client.send(unauthenticated,HttpResponse.BodyHandlers.ofString()).statusCode()==401,
+                    "board API enforces configured token authentication");
+            HttpRequest board=HttpRequest.newBuilder(URI.create(base+"/api/board/stories?page=999&pageSize=25"))
+                    .header("X-AutoNews-Token","private-token").GET().build();
+            HttpResponse<String> response=client.send(board,HttpResponse.BodyHandlers.ofString());
+            Map<String,Object>payload=Json.object(Json.parse(response.body()));
+            ok(response.statusCode()==200&&((Number)payload.get("page")).intValue()==1
+                    &&((Number)payload.get("totalPages")).intValue()==1
+                    &&((List<?>)payload.get("stories")).isEmpty(),
+                    "authenticated endpoint clamps empty collections");
+            HttpRequest invalid=HttpRequest.newBuilder(URI.create(base+"/api/board/stories?page=999999999999999&pageSize=500"))
+                    .header("X-AutoNews-Token","private-token").GET().build();
+            ok(client.send(invalid,HttpResponse.BodyHandlers.ofString()).statusCode()==400,
+                    "malformed and excessive board query values return HTTP 400");
+            HttpRequest lightweight=HttpRequest.newBuilder(URI.create(base+"/api/state?includeStories=false"))
+                    .header("X-AutoNews-Token","private-token").GET().build();
+            HttpResponse<String> stateResponse=client.send(lightweight,HttpResponse.BodyHandlers.ofString());
+            Map<String,Object>state=Json.object(Json.parse(stateResponse.body()));
+            ok(stateResponse.statusCode()==200&&state.containsKey("counts")
+                    &&((List<?>)state.get("stories")).isEmpty(),
+                    "lightweight state keeps dashboard shape and empty story array");
+        }finally{server.stop();}
+    }
 
     private void testStoryBoardPagination()throws Exception{
         Path dir=Files.createTempDirectory("autonews-board-pagination-");
