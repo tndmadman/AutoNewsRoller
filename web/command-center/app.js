@@ -1,5 +1,10 @@
 const $=s=>document.querySelector(s);
 let state={stories:[],feeds:[],workers:[],videos:[],counts:{}}, token="", activeFilter="ALL", eventSource=null, refreshTimer=null;
+const BOARD_PAGE_SIZES=new Set([10,25,50,100]);
+let boardPageSize=Number(localStorage.getItem("autonewsBoardPageSize")||25);
+if(!BOARD_PAGE_SIZES.has(boardPageSize))boardPageSize=25;
+let boardPage=1, boardData={stories:[],page:1,pageSize:boardPageSize,total:0,totalPages:1,facets:{}};
+let boardGeneration=0, boardInFlight=false, boardSearchTimer=null;
 let refreshInFlight=null, refreshAgain=false, stateEpoch=0, pointerTarget=null;
 const pendingActions=new Map();
 let liveSequence=0;
@@ -86,7 +91,7 @@ async function loadState(){
   const epoch=stateEpoch, liveAtStart=liveSequence;
   refreshInFlight=(async()=>{
     try{
-      const snapshot=await api("/api/state");
+      const snapshot=await api("/api/state?includeStories=false");
       if(epoch!==stateEpoch){refreshAgain=true;return}
       // A worker/feed event may arrive while this GET is in flight.
       // Reapply just those newer entities so the older snapshot cannot undo them.
@@ -211,21 +216,14 @@ function render(){
   }
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
-  syncStoryAgeControl();renderRails();renderWorkers();renderStories();renderFeeds();renderVideos();
+  syncStoryAgeControl();renderWorkers();renderFeeds();renderVideos();
 }
 function renderRails(){
-  const allStories=state.stories||[];
-  const ss=storyAgeLimitHours>0?allStories.filter(withinStoryAge):allStories;
-  $("#railAll").textContent=ss.length;
-  $("#railFound").textContent=ss.filter(x=>x.status==="DISCOVERED").length;
-  $("#railVerified").textContent=ss.filter(isActionableWorthy).length;
-  $("#railQueued").textContent=allStories.filter(x=>x.status==="QUEUED").length;
-  $("#railProducing").textContent=allStories.filter(x=>x.status==="PRODUCING").length;
-  $("#railFailed").textContent=ss.filter(x=>x.status==="FAILED").length;
-  $("#railComplete").textContent=ss.filter(x=>String(x.status).startsWith("COMPLETE")).length;
-  $("#railToPost").textContent=ss.filter(x=>String(x.status)==="COMPLETE"&&!x.uploaded&&!x.scrapped).length;
-  $("#railUploaded").textContent=ss.filter(x=>!!x.uploaded&&!x.scrapped).length;
-  $("#railScrapped").textContent=ss.filter(x=>!!x.scrapped).length;
+  const f=boardData.facets||{};
+  const fields={railAll:"ALL",railFound:"DISCOVERED",railVerified:"WORTHY",railQueued:"QUEUED",
+    railProducing:"PRODUCING",railFailed:"FAILED",railComplete:"COMPLETE",
+    railToPost:"TO_POST",railUploaded:"UPLOADED",railScrapped:"SCRAPPED"};
+  for(const [id,status] of Object.entries(fields))$("#"+id).textContent=f[status]||0;
 }
 function renderWorkers(){
   const root=$("#workers"),ws=state.workers||[];
@@ -246,27 +244,76 @@ function renderWorkers(){
     </div>`}
   }),"No workers connected.");
 }
-function storyMatches(s){
-  const q=$("#search").value.trim().toLowerCase(),filter=currentStoryFilter();
-  const status=String(s.status||"");
-  if(filter!=="ALL"){
-    if(filter==="COMPLETE"){if(!status.startsWith("COMPLETE"))return false;}
-    else if(filter==="TO_POST"){if(status!=="COMPLETE"||!!s.uploaded||!!s.scrapped)return false;}
-    else if(filter==="UPLOADED"){if(!s.uploaded||!!s.scrapped)return false;}
-    else if(filter==="SCRAPPED"){if(!s.scrapped)return false;}
-    else if(filter==="WORTHY"){if(!isActionableWorthy(s))return false;}
-    else if(status!==filter)return false;
+// Board requests are independent of dashboard polls. A later generation invalidates
+// every older response, including those started before a successful mutation.
+function boardQuery(){
+  return new URLSearchParams({page:String(boardPage),pageSize:String(boardPageSize),
+    status:currentStoryFilter(),search:$("#search").value.trim(),ageHours:String(storyAgeLimitHours)}).toString();
+}
+async function loadBoard(force=false){
+  if(boardInFlight&&!force)return;
+  const generation=++boardGeneration;
+  boardInFlight=true;
+  try{
+    const next=await api("/api/board/stories?"+boardQuery());
+    if(generation!==boardGeneration)return;
+    if(!Array.isArray(next.stories))throw new Error("Invalid board response");
+    const changed=JSON.stringify(next)!==JSON.stringify(boardData);
+    boardData=next;
+    boardPage=next.page;
+    if(changed)renderStories();else renderPagination();
+    renderRails();
+  }catch(e){
+    if(generation!==boardGeneration)return;
+    toast(e.message==="AUTH_REQUIRED"?"Board authentication required.":e.message,true);
+  }finally{
+    if(generation===boardGeneration)boardInFlight=false;
   }
-  if(!OPERATIONAL_FILTERS.has(filter)&&!withinStoryAge(s))return false;
-  if(!q)return true;
-  return [s.topic,s.category,s.uploadedPlatform,s.uploadNote,s.scrapReason,s.lastFailure,s.failureType,s.lastAssignedWorker,...(s.publishers||[])].join(" ").toLowerCase().includes(q);
+}
+function selectBoardPage(page){
+  const next=Math.min(Math.max(1,page),boardData.totalPages||1);
+  if(next===boardPage)return;
+  boardPage=next;
+  // Explicit navigation removes prior-page cards, even protected selections.
+  $("#stories").replaceChildren();
+  loadBoard(true);
+}
+function boardFilterChanged(){
+  boardPage=1;boardGeneration++;
+  $("#stories").replaceChildren();
+  loadBoard(true);
+}
+function pageButtons(){
+  const total=Math.max(1,Number(boardData.totalPages)||1),current=boardPage;
+  const pages=new Set([1,total]);
+  for(let n=current-2;n<=current+2;n++)if(n>=1&&n<=total)pages.add(n);
+  const ordered=[...pages].sort((x,y)=>x-y),out=[];
+  for(let n=0;n<ordered.length;n++){
+    const page=ordered[n],active=page===current;
+    if(n&&page>ordered[n-1]+1)out.push('<span class="boardEllipsis" aria-hidden="true">…</span>');
+    out.push('<button type="button" data-board-page="'+page+'" aria-label="Page '+page+'" '+
+      (active?'aria-current="page" ':'')+'class="boardPageButton'+(active?' current':'')+'">'+page+'</button>');
+  }
+  return out.join("");
+}
+function renderPagination(){
+  const total=Number(boardData.total)||0,pages=Math.max(1,Number(boardData.totalPages)||1);
+  const first=total?(boardPage-1)*boardPageSize+1:0,last=Math.min(total,boardPage*boardPageSize);
+  $("#boardResultCount").textContent="Showing "+first.toLocaleString()+"–"+last.toLocaleString()+" of "+total.toLocaleString()+" stories";
+  $("#boardPageSize").value=String(boardPageSize);
+  const controls='<button type="button" data-board-page="'+(boardPage-1)+'" aria-label="Previous page" '+(boardPage<=1?'disabled':'')+'>‹ PREV</button>'+
+    '<div class="boardNumbers" role="group" aria-label="Story board pages">'+pageButtons()+'</div>'+
+    '<button type="button" data-board-page="'+(boardPage+1)+'" aria-label="Next page" '+(boardPage>=pages?'disabled':'')+'>NEXT ›</button>';
+  $("#boardTopPager").innerHTML=controls;
+  $("#boardBottomPager").innerHTML=controls;
 }
 function renderStories(){
-  const root=$("#stories"),ss=(state.stories||[]).filter(storyMatches);
+  const root=$("#stories"),ss=boardData.stories||[];
   const empty=storyAgeLimitHours>0
     ?"No stories in this view were published within the last "+storyAgeLimitHours+" hour(s)."
     :"No stories match this view.";
   reconcileList(root,ss.map(s=>({key:String(s.id),html:storyCard(s)})),empty);
+  renderPagination();
 }
 function failurePanelHtml(s,status){
   if(status!=="FAILED")return "";
@@ -439,18 +486,19 @@ async function submitOperation(id,button,path,body,verb,success){
     const result=await api(path,{method:verb||"POST",headers:{"Content-Type":"application/json"},body:body?JSON.stringify({...body,operationId:requestId()}):undefined,signal:controller.signal});
     stateEpoch++;
     if(result&&result.id){
-      const i=(state.stories||[]).findIndex(s=>s.id===result.id);
-      if(i!==-1)state.stories[i]={...state.stories[i],...result};
-      render();
+      const i=(boardData.stories||[]).findIndex(s=>s.id===result.id);
+      if(i!==-1){boardData.stories[i]={...boardData.stories[i],...result};renderStories();}
     }
     toast(success);
     loadState().catch(()=>toast("Action saved, but dashboard refresh failed. Reconnect to verify.",true));
+    loadBoard(true);
   }catch(e){
     const uncertain=e.name==="AbortError"||e.name==="TypeError";
     toast(uncertain?"Connection interrupted; action may have completed. Refreshing status.":e.message==="AUTH_REQUIRED"?"Authentication required. Enter your API token using KEY.":e.message,true);
     loadState().catch(()=>{});
+    loadBoard(true);
   }finally{
-    clearTimeout(timeout);pendingActions.delete(id);updatePendingControls();render();
+    clearTimeout(timeout);pendingActions.delete(id);updatePendingControls();
   }
 }
 document.addEventListener("click",e=>{
@@ -526,25 +574,40 @@ $("#scanBtn").onclick=async()=>{
   finally{clearTimeout(timeout);btn.disabled=false}
 };
 $("#authBtn").onclick=authPrompt;
-function authPrompt(){const v=prompt("Command Center API token (leave blank for localhost/no-token):",token);if(v===null)return;token=v.trim();localStorage.setItem("autonewsToken",token);connectEvents();loadState()}
-$("#search").addEventListener("input",renderStories);
+function authPrompt(){const v=prompt("Command Center API token (leave blank for localhost/no-token):",token);if(v===null)return;token=v.trim();localStorage.setItem("autonewsToken",token);connectEvents();loadState();loadBoard(true)}
+$("#search").addEventListener("input",()=>{
+  boardGeneration++; // Ignore older queries while debounce is pending.
+  clearTimeout(boardSearchTimer);
+  boardSearchTimer=setTimeout(()=>boardFilterChanged(),250);
+});
 $("#statusFilter").addEventListener("change",()=>{
   activeFilter="ALL";
   document.querySelectorAll(".rail").forEach(x=>x.classList.remove("active"));
-  syncStoryAgeControl();renderRails();renderStories();
+  syncStoryAgeControl();boardFilterChanged();
 });
 $("#storyAgeFilter").value=String(storyAgeLimitHours);
 $("#storyAgeFilter").addEventListener("change",()=>{
   const next=Number($("#storyAgeFilter").value||0);
   storyAgeLimitHours=STORY_AGE_OPTIONS.has(next)?next:0;
   localStorage.setItem("autonewsStoryAgeHours",String(storyAgeLimitHours));
-  syncStoryAgeControl();renderRails();renderStories();
+  syncStoryAgeControl();boardFilterChanged();
+});
+$("#boardPageSize").value=String(boardPageSize);
+$("#boardPageSize").addEventListener("change",()=>{
+  const selected=Number($("#boardPageSize").value);
+  boardPageSize=BOARD_PAGE_SIZES.has(selected)?selected:25;
+  localStorage.setItem("autonewsBoardPageSize",String(boardPageSize));
+  boardFilterChanged();
+});
+document.addEventListener("click",e=>{
+  const button=e.target.closest("button[data-board-page]");
+  if(button&&!button.disabled)selectBoardPage(Number(button.dataset.boardPage));
 });
 document.querySelectorAll(".rail").forEach(b=>b.onclick=()=>{
   activeFilter=b.dataset.filter;
   $("#statusFilter").value="ALL";
   document.querySelectorAll(".rail").forEach(x=>x.classList.toggle("active",x===b));
-  syncStoryAgeControl();renderRails();renderStories();
+  syncStoryAgeControl();boardFilterChanged();
 });
 
 // Worker and feed SSE payloads are full entity updates. Render only their keyed
@@ -610,9 +673,9 @@ function logEvent(e){
   root.insertAdjacentHTML("afterbegin",`<div class="eventLine"><b>${esc(time)} // ${esc(type).toUpperCase()}</b> ${esc(detail)}</div>`);
   while(root.children.length>60)root.lastElementChild.remove();
 }
-function debouncedRefresh(){if(refreshTimer)return;refreshTimer=setTimeout(()=>{refreshTimer=null;loadState().catch(()=>{})},250)}
+function debouncedRefresh(){if(refreshTimer)return;refreshTimer=setTimeout(()=>{refreshTimer=null;loadState().catch(()=>{});loadBoard()},250)}
 setInterval(()=>{$("#clock").textContent=new Date().toLocaleTimeString([],{hour12:false})},500);
-setInterval(()=>loadState().catch(()=>{}),5000);
+setInterval(()=>{loadState().catch(()=>{});loadBoard()},5000);
 
 let sweep=0;
 function drawRadar(){
@@ -627,4 +690,4 @@ function drawRadar(){
 }
 let lastRadarFrame=0;
 function animateRadar(now){requestAnimationFrame(animateRadar);if(document.hidden||now-lastRadarFrame<50)return;lastRadarFrame=now;sweep=(sweep+.03)%(Math.PI*2);drawRadar()}
-connectEvents();loadState().catch(()=>{});requestAnimationFrame(animateRadar);
+connectEvents();loadState().catch(()=>{});loadBoard(true);requestAnimationFrame(animateRadar);
