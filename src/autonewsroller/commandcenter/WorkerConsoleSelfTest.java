@@ -109,6 +109,8 @@ public final class WorkerConsoleSelfTest {
     private static void consoleSecurity(Path root)throws Exception{
         int port=freePort();
         Json.write(root.resolve("output/runtime/worker-ui-settings.json"),Map.of("port",port,"autoStart",false,"autoOpenBrowser",false));
+        Json.write(root.resolve("output/runtime/worker-ui-jobs.json"),
+                List.of(Map.of("jobId","interrupted-test","topic","fixture","result","RUNNING")));
         WorkerWebConsole console=new WorkerWebConsole(root,NewsConfig.load(root),"http://127.0.0.1:8787","unit-node","");
         try{
             console.start();
@@ -125,7 +127,8 @@ public final class WorkerConsoleSelfTest {
                 Map.of("Content-Type","application/json","X-Worker-Request","1")).statusCode()==400,"invalid worker ID rejected");
             require(call(port,"/api/worker/control","POST","{\"action\":\"pause\"}",
                 Map.of("Content-Type","application/json","X-Worker-Request","1")).statusCode()==409,"cannot pause absent worker");
-            require(call(port,"/api/worker/jobs","GET","",Map.of()).statusCode()==200,"job history available");
+            String jobsBody=call(port,"/api/worker/jobs","GET","",Map.of()).body();
+            require(jobsBody.contains("\"result\":\"UNKNOWN\""),"uncleanly terminated job becomes UNKNOWN");
         }finally{console.close();}
     }
     public static void main(String[] args)throws Exception{

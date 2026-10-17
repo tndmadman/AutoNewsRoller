@@ -196,7 +196,12 @@ public final class WorkerWebConsole implements AutoCloseable {
         }else if("job-start".equals(type)){
             Map<String,Object> entry=new LinkedHashMap<>(e);
             entry.put("startedAt",e.get("at"));entry.put("result","RUNNING");entry.remove("claimIdPresent");
-            synchronized(jobs){jobs.addFirst(entry);while(jobs.size()>MAX_JOBS)jobs.removeLast();}
+            synchronized(jobs){
+                jobs.addFirst(entry);while(jobs.size()>MAX_JOBS)jobs.removeLast();
+                // Record the active claim now; if the JVM crashes it becomes UNKNOWN on reload.
+                try{Json.write(historyFile,new ArrayList<>(jobs));}
+                catch(Exception ex){log("WARN","history","Could not persist newly claimed job");}
+            }
             log("INFO","claim",String.valueOf(e.get("jobId"))+" "+e.get("topic"));
         }else if("job-finish".equals(type)){
             synchronized(jobs){
