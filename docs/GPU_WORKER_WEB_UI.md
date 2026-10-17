@@ -82,9 +82,11 @@ waiting for expiration or retry.
 - **Live Logs**: bounded structured lifecycle, stage, controller and worker events
   with filtering and display pause. The *Clear display* action clears only the
   browser's current display, never production/source log files.
-- **Diagnostics**: manual timeout-bounded quick checks for Java, NVIDIA,
-  FFmpeg, FFprobe, configured service endpoints, Python environments, output
-  write access and free disk. An optional component warning does not mean the
+- **Diagnostics**: manual timeout-bounded checks for Java, NVIDIA,
+  FFmpeg, FFprobe, configured service endpoints, Python environments, helpers,
+  output write access and free disk. Optional deep diagnostics probe PyTorch
+  CUDA visibility and configured Ollama model/Comfy checkpoint inventories
+  without loading large models. An optional component warning does not mean the
   entire worker is dead. Opening a page does not start a model.
 - **Settings**: local connection, port, auto-start, browser launch,
   log-retention cap and refresh frequency. Inherited encoder/TTS/ComfyUI
@@ -112,7 +114,7 @@ All endpoints are available on the loopback server only:
 | GET | \`/api/worker/events\` | Bounded SSE stream, reconnectable |
 | POST | \`/api/worker/control\` | start / pause / resume / drain / stop / restart |
 | POST | \`/api/worker/settings\` | Validate and atomically persist settings |
-| POST | \`/api/worker/diagnostics/run\` | Queue explicit quick diagnostics |
+| POST | \`/api/worker/diagnostics/run\` | Queue quick or deep diagnostics (`mode`) |
 
 POST uses JSON and requires \`X-Worker-Request: 1\`. Requests must use a valid
 loopback Host and matching Origin (if supplied). No CORS permissions are granted.

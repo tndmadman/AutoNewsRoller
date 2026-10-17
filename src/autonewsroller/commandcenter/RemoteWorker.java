@@ -7,6 +7,7 @@ import autonewsroller.util.Json;
 import java.net.*;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.channels.*;
 import java.nio.file.*;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
@@ -24,6 +25,8 @@ public final class RemoteWorker {
     private final HttpClient http;
     private final ScheduledExecutorService heartbeat=Executors.newSingleThreadScheduledExecutor(r->new Thread(r,"worker-heartbeat"));
     private final AtomicBoolean launched=new AtomicBoolean(false);
+    private FileChannel identityChannel;
+    private FileLock identityLock;
     private final Consumer<Map<String,Object>> listener;
     private final Supplier<Map<String,Object>> metrics;
     private volatile String state="IDLE",currentJob="",currentTopic="",currentClaimId="";
@@ -45,6 +48,19 @@ public final class RemoteWorker {
     }
     public void runForever(){
         if(!launched.compareAndSet(false,true))throw new IllegalStateException("RemoteWorker is single-use");
+        // An OS-held file lock prevents headless and UI workers in this installation
+        // from using the same worker ID, even if launched from different CMD windows.
+        Path lockPath=root.resolve("output/runtime/worker-lock-"+safeName(workerId)+".lck");
+        try{
+            Files.createDirectories(lockPath.getParent());
+            identityChannel=FileChannel.open(lockPath,StandardOpenOption.CREATE,StandardOpenOption.WRITE);
+            try{identityLock=identityChannel.tryLock();}
+            catch(OverlappingFileLockException conflict){identityLock=null;}
+            if(identityLock==null){
+                identityChannel.close();
+                throw new IllegalStateException("Worker ID already active in this installation: "+workerId);
+            }
+        }catch(IOException e){throw new IllegalStateException("Could not lock worker ID: "+workerId,e);}
         System.out.println("AutoNewsRoller GPU worker '"+workerId+"' -> "+controller);
         event("lifecycle",Map.of("state","CONNECTING"));
         heartbeat.scheduleWithFixedDelay(this::heartbeatSafe,0,10,TimeUnit.SECONDS);
@@ -68,6 +84,10 @@ public final class RemoteWorker {
             heartbeat.shutdownNow();
             try{heartbeat.awaitTermination(3,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}
             running=false;event("lifecycle",Map.of("state","STOPPED"));
+            try{if(identityLock!=null&&identityLock.isValid())identityLock.release();}
+            catch(IOException e){System.err.println("Worker identity lock release failed");}
+            try{if(identityChannel!=null)identityChannel.close();}
+            catch(IOException e){System.err.println("Worker identity channel close failed");}
         }
     }
     public void pause(){if(!draining){paused=true;event("lifecycle",Map.of("state","PAUSED"));}}

@@ -35,7 +35,7 @@ public final class WorkerWebConsole implements AutoCloseable {
     private volatile long metricsAt=0;
     private volatile Map<String,Object> preferences;
     private volatile Path currentProductionDir;
-    private final Map<Path,Long> tailOffsets=new HashMap<>();
+    private final Map<Path,Long> tailOffsets=new ConcurrentHashMap<>();
     private volatile String lifecycle="STOPPED",lastIssue="";
     private volatile boolean restartRequested;
     private volatile RemoteWorker worker;
@@ -212,7 +212,17 @@ public final class WorkerWebConsole implements AutoCloseable {
             log("INFO","job",String.valueOf(e.get("jobId"))+" "+e.get("result"));
         }else if("error".equals(type)){
             lastIssue=detail;log("ERROR",String.valueOf(e.getOrDefault("component","worker")),detail);
-        }else if("progress".equals(type))log("INFO",String.valueOf(e.getOrDefault("stage","pipeline")),detail);
+        }else if("progress".equals(type)){
+            synchronized(jobs){
+                for(Map<String,Object> j:jobs){
+                    if("RUNNING".equals(j.get("result"))){
+                        j.put("lastStage",e.getOrDefault("stage",""));
+                        j.put("lastDetail",detail);break;
+                    }
+                }
+            }
+            log("INFO",String.valueOf(e.getOrDefault("stage","pipeline")),detail);
+        }
         else if("lifecycle".equals(type))log("INFO","lifecycle",String.valueOf(e.get("state")));
         broadcast(e);
     }
@@ -306,9 +316,16 @@ public final class WorkerWebConsole implements AutoCloseable {
                         catch(IllegalArgumentException ex){json(x,400,Map.of("error",ex.getMessage()));}
                     }
                     case "/api/worker/diagnostics/run"->{
+                        String mode=String.valueOf(payload.getOrDefault("mode","quick"));
+                        if(!Set.of("quick","deep").contains(mode)){json(x,400,Map.of("error","Unknown diagnostic mode"));return;}
                         if(!diagnosticRunning.compareAndSet(false,true)){json(x,409,Map.of("error","Diagnostics already running"));return;}
-                        workers.execute(()->{try{diagnose();}finally{diagnosticRunning.set(false);}});
-                        json(x,202,Map.of("accepted",true,"state","RUNNING"));
+                        diagnostics=Map.of("status","RUNNING","mode",mode,"results",List.of());
+                        workers.execute(()->{
+                            try{diagnose(mode.equals("deep"));}
+                            catch(Throwable failure){diagnostics=Map.of("status","ERROR","error",safe(failure.getMessage()),"results",List.of());log("ERROR","diagnostics","Check failed");}
+                            finally{diagnosticRunning.set(false);}
+                        });
+                        json(x,202,Map.of("accepted",true,"state","RUNNING","mode",mode));
                     }
                     default->json(x,404,Map.of("error","No endpoint"));
                 }
@@ -405,7 +422,7 @@ public final class WorkerWebConsole implements AutoCloseable {
         x.sendResponseHeaders(status,body.length);try(OutputStream out=x.getResponseBody()){out.write(body);}
     }
 
-    private void diagnose(){
+    private void diagnose(boolean deep){
         List<Map<String,Object>> checks=new ArrayList<>();
         checks.add(check("Java 21",Runtime.version().feature()>=21?"PASS":"FAIL",System.getProperty("java.version")));
         checks.add(command("NVIDIA / nvidia-smi","nvidia-smi","-L"));
@@ -417,14 +434,77 @@ public final class WorkerWebConsole implements AutoCloseable {
         checks.add(endpoint("Controller",String.valueOf(preferences.get("controllerUrl")),"/api/health"));
         checks.add(check("Kokoro environment",Files.isRegularFile(root.resolve(".venv-kokoro/Scripts/python.exe"))||Files.isRegularFile(root.resolve(".venv-kokoro/bin/python"))?"PASS":"WARN","Local Kokoro Python environment"));
         checks.add(check("Qwen environment",Files.isRegularFile(root.resolve(".venv-qwen3-tts/Scripts/python.exe"))||Files.isRegularFile(root.resolve(".venv-qwen3-tts/bin/python"))?"PASS":"WARN","Local Qwen Python environment"));
+        checks.add(check("Kokoro helper",Files.isRegularFile(root.resolve("tools/kokoro_tts.py"))?"PASS":"FAIL","tools/kokoro_tts.py"));
+        checks.add(check("Qwen helper",Files.isRegularFile(root.resolve("tools/qwen3_tts.py"))?"PASS":"FAIL","tools/qwen3_tts.py"));
+        checks.add(check("Qwen service helper",Files.isRegularFile(root.resolve("tools/qwen3_tts_server.py"))?"PASS":"FAIL","tools/qwen3_tts_server.py"));
+        if(deep){
+            checks.add(cudaVisibility());
+            checks.add(ollamaModel());
+            checks.add(comfyCheckpoint());
+        }
         try{
             Path output=root.resolve("output");Files.createDirectories(output);
             Path f=Files.createTempFile(output,".worker-test-",".tmp");Files.deleteIfExists(f);
             checks.add(check("Output directory","PASS","Writable"));
             checks.add(check("Free disk","PASS",String.valueOf(Files.getFileStore(output).getUsableSpace()/1048576L)+" MB available"));
         }catch(Exception ex){checks.add(check("Output directory","FAIL",safe(ex.getMessage())));}
-        diagnostics=Map.of("status","DONE","checkedAt",Instant.now().toString(),"results",checks);
+        diagnostics=Map.of("status","DONE","mode",deep?"deep":"quick","checkedAt",Instant.now().toString(),"results",checks);
         broadcast(Map.of("type","diagnostics","status","DONE"));log("INFO","diagnostics","Dependency check complete");
+    }
+    private Map<String,Object> cudaVisibility(){
+        Path exe=root.resolve(System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("win")?
+                ".venv-qwen3-tts/Scripts/python.exe":".venv-qwen3-tts/bin/python");
+        if(!Files.isRegularFile(exe))return check("PyTorch CUDA","NOT CHECKED","Qwen Python environment not installed");
+        Process p=null;
+        try{
+            p=new ProcessBuilder(exe.toString(),"-c","import torch; print(torch.cuda.is_available())")
+                    .redirectErrorStream(true).start();
+            if(!p.waitFor(15,TimeUnit.SECONDS)){p.destroyForcibly();return check("PyTorch CUDA","WARN","Visibility probe timed out");}
+            String output=new String(p.getInputStream().readNBytes(512),StandardCharsets.UTF_8).trim();
+            return check("PyTorch CUDA",p.exitValue()==0&&output.endsWith("True")?"PASS":"WARN",
+                    p.exitValue()==0?"torch.cuda.is_available() = "+output:"Python probe failed");
+        }catch(Exception e){return check("PyTorch CUDA","WARN","Visibility check unavailable");}
+        finally{if(p!=null&&p.isAlive())p.destroyForcibly();}
+    }
+    private Map<String,Object> ollamaModel(){
+        String model=cfg.get("ollamaModel","llama3.1:8b");
+        try{
+            String base=cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate");
+            Map<String,Object> response=jsonProbe(base,"/api/tags");
+            for(Object o:Json.array(response.getOrDefault("models",List.of())))
+                if(o instanceof Map<?,?> m&&model.equals(String.valueOf(m.get("name"))))
+                    return check("Ollama model","PASS",model+" present");
+            return check("Ollama model","WARN",model+" not reported in local model list");
+        }catch(Exception e){return check("Ollama model","WARN","Model inventory unavailable");}
+    }
+    private Map<String,Object> comfyCheckpoint(){
+        String checkpoint=cfg.get("imageCheckpoint","");
+        if(checkpoint.isBlank())return check("Comfy checkpoint","NOT CHECKED","No configured checkpoint");
+        try{
+            Map<String,Object> response=jsonProbe(cfg.get("comfyUrl","http://127.0.0.1:8188"),"/object_info/CheckpointLoaderSimple");
+            Map<String,Object> loader=Json.object(response.getOrDefault("CheckpointLoaderSimple",Map.of()));
+            Map<String,Object> input=Json.object(loader.getOrDefault("input",Map.of()));
+            Map<String,Object> required=Json.object(input.getOrDefault("required",Map.of()));
+            List<Object> choices=Json.array(required.getOrDefault("ckpt_name",List.of()));
+            for(Object entry:choices){
+                if(entry instanceof List<?> available&&available.contains(checkpoint))
+                    return check("Comfy checkpoint","PASS",checkpoint+" present");
+            }
+            return check("Comfy checkpoint","WARN",checkpoint+" not found in reported checkpoints");
+        }catch(Exception e){return check("Comfy checkpoint","WARN","Checkpoint inventory unavailable");}
+    }
+    private Map<String,Object> jsonProbe(String base,String path)throws Exception{
+        URI rootUrl=URI.create(base);
+        URI target=URI.create(rootUrl.getScheme()+"://"+rootUrl.getRawAuthority()+path);
+        HttpClient client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+        HttpRequest request=HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(4)).GET().build();
+        HttpResponse<InputStream> response=client.send(request,HttpResponse.BodyHandlers.ofInputStream());
+        if(response.statusCode()!=200)throw new IOException("HTTP "+response.statusCode());
+        try(InputStream in=response.body()){
+            byte[] bytes=in.readNBytes(262145);
+            if(bytes.length>262144)throw new IOException("Inventory response exceeds 256KiB");
+            return Json.object(Json.parse(new String(bytes,StandardCharsets.UTF_8)));
+        }
     }
     private static Map<String,Object> check(String name,String state,String detail){
         return Map.of("name",name,"status",state,"detail",safe(detail));

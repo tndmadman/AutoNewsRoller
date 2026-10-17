@@ -70,6 +70,14 @@ public final class WorkerConsoleSelfTest {
             thread.start();
             await(()->mock.claims.get()>0,"claim loop begins");
             await(()->mock.heartbeats.get()>0,"heartbeats begin");
+            AtomicBoolean duplicateRejected=new AtomicBoolean(false);
+            RemoteWorker duplicate=new RemoteWorker(root,cfg,mock.url(),"test-worker","",null,()->Map.of());
+            Thread duplicateThread=new Thread(()->{
+                try{duplicate.runForever();}catch(IllegalStateException expected){duplicateRejected.set(true);}
+            });
+            duplicateThread.start();duplicateThread.join(2500);
+            if(duplicateThread.isAlive()){duplicate.drain();duplicateThread.join(5000);}
+            require(duplicateRejected.get(),"OS lock rejects simultaneous duplicate worker ID");
             worker.pause();Thread.sleep(2000);
             int pausedClaims=mock.claims.get();
             Thread.sleep(1800);

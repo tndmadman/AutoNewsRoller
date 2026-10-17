@@ -97,6 +97,7 @@ function onWorkerEvent(e){
     if(state.stageEvents.length>80)state.stageEvents.shift();renderStages();
   }
   if(["job-start","job-finish","lifecycle","error","diagnostics"].includes(e.type))refresh();
+  if(e.type==="diagnostics")refreshDiagnostics();
   if(e.type==="log"&&e.entry)ingest([e.entry]);
 }
 function selectTab(name){
@@ -170,7 +171,7 @@ function renderLogs(){
 async function refreshDiagnostics(){
   try{const result=await api("diagnostics"),digest=JSON.stringify(result);
     if(digest===state.lastDiagnostics)return;state.lastDiagnostics=digest;
-    val("diagnosticsStatus",result.status||"NOT CHECKED");
+    val("diagnosticsStatus",(result.status||"NOT CHECKED")+(result.mode?" / "+result.mode.toUpperCase():""));
     const frag=document.createDocumentFragment();
     if(!result.results?.length){const tr=document.createElement("tr");const td=makeCell("Not checked");td.colSpan=3;tr.append(td);frag.append(tr)}
     for(const c of result.results||[]){const tr=document.createElement("tr");
@@ -178,11 +179,14 @@ async function refreshDiagnostics(){
     $("diagnosticsRows").replaceChildren(frag);
   }catch(e){issue("DIAGNOSTICS / "+e.message,true)}
 }
-async function runDiagnostics(){
-  const b=$("runDiagnostics");b.disabled=true;
-  try{await post("diagnostics/run",{});issue("DEPENDENCY CHECKS RUNNING / NO HEAVY MODELS WILL BE LOADED")}
-  catch(e){issue("DIAGNOSTICS / "+e.message,true)}
-  finally{setTimeout(()=>{b.disabled=false;refreshDiagnostics()},5000)}
+async function runDiagnostics(mode="quick"){
+  const buttons=[$("runDiagnostics"),$("runDeepDiagnostics")];
+  buttons.forEach(b=>b.disabled=true);
+  try{await post("diagnostics/run",{mode});
+    issue(mode==="deep"?"DEEP CHECK RUNNING / CUDA & MODEL INVENTORIES (NO MODEL LOAD)":"QUICK CHECKS RUNNING / NO MODELS LOADED");
+    refreshDiagnostics();
+  }catch(e){issue("DIAGNOSTICS / "+e.message,true)}
+  finally{setTimeout(()=>{buttons.forEach(b=>b.disabled=false);refreshDiagnostics()},5000)}
 }
 async function refreshSettings(){
   try{const d=await api("settings");if(state.settings)return;state.settings=d;
@@ -212,7 +216,8 @@ function connectEvents(){
 }
 for(const b of document.querySelectorAll(".tab"))b.addEventListener("click",()=>selectTab(b.dataset.tab));
 for(const b of document.querySelectorAll("[data-action]"))b.addEventListener("click",()=>action(b.dataset.action));
-$("runDiagnostics").addEventListener("click",runDiagnostics);
+$("runDiagnostics").addEventListener("click",()=>runDiagnostics("quick"));
+$("runDeepDiagnostics").addEventListener("click",()=>runDiagnostics("deep"));
 $("settingsForm").addEventListener("submit",saveSettings);
 $("logSearch").addEventListener("input",renderLogs);$("logSeverity").addEventListener("change",renderLogs);
 $("pauseLogs").addEventListener("click",()=>{state.pausedLogs=!state.pausedLogs;val("pauseLogs",state.pausedLogs?"RESUME DISPLAY":"PAUSE DISPLAY");if(!state.pausedLogs)renderLogs()});
