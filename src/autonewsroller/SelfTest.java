@@ -1033,16 +1033,15 @@ public final class SelfTest {
                 "captions-off mode is explicitly reflected in visual layout validation");
         ok("passed".equals(BroadcastLayout.review(storyboard,1080,1920,true).get("status"))&&
                 "passed".equals(BroadcastLayout.review(storyboard,540,960,true).get("status")),
-                "shared caption safety geometry prevents overlap with platform-safe lower-thirds");
-        java.awt.Rectangle safeCaption=BroadcastLayout.captionArea(1080,1920);
-        ok(safeCaption.y>BroadcastLayout.panelBottom(1920)&&
-                        safeCaption.y+safeCaption.height<BroadcastLayout.safeBottom(1920)&&
-                        safeCaption.x+safeCaption.width<=BroadcastLayout.safeRight(1080)&&
-                        BroadcastLayout.headerTop(1920)>=200,
-                "TikTok profile reserves app header, bottom caption/title region and right action rail");
-        ok(BroadcastLayout.lowerThird("HOOK",1080,1920,true).y+
-                        BroadcastLayout.lowerThird("HOOK",1080,1920,true).height<safeCaption.y,
-                "classic enlarged lower-third also clears the spoken subtitles");
+                "shared caption safety geometry prevents overlap with fixed lower-thirds");
+        ok(BroadcastLayout.postTextSafeFooter(1920)==220&&
+                        BroadcastLayout.postTextSafeFooter(960)==110&&
+                        BroadcastLayout.tickerTop(1920)==1620,
+                "TikTok caption clearance reserves exactly 220 scaled pixels at the bottom");
+        ok(BroadcastLayout.captionArea(1080,1920).y+BroadcastLayout.captionArea(1080,1920).height
+                        <BroadcastLayout.lowerThird("HOOK",1080,1920).y &&
+                        "passed".equals(BroadcastLayout.review(storyboard,1080,1920,true,true).get("status")),
+                "narration captions clear the shifted enhanced and classic hook panels");
         ok(storyboard.scenes().size()==2&&storyboard.scenes().get(0).start()==0.0&&
                         Math.abs(storyboard.scenes().get(1).end()-5.0)<.001,
                 "typed storyboard covers actual narration duration with no gap");
@@ -1078,7 +1077,7 @@ public final class SelfTest {
         classic.renderOverlay(plan.items().get(0),classicOverlay,540,960);
         BufferedImage classicWithDisclosure=ImageIO.read(classicOverlay.toFile());
         ok(classicWithDisclosure.getColorModel().hasAlpha() &&
-                classicWithDisclosure.getRGB(405,200)!=0,
+                classicWithDisclosure.getRGB(405,78)!=0,
                 "classic fallback retains an on-screen AI illustration disclosure");
         CardRenderer cards=new CardRenderer();
         Path graphic=dir.resolve("statistic.png");cards.render(plan.items().get(1),graphic,540,960);
@@ -1089,7 +1088,7 @@ public final class SelfTest {
         BufferedImage graphicOverlay=ImageIO.read(overlayGraphic.toFile());
         ok(graphicOverlay.getColorModel().hasAlpha()&&
                 ImageIO.read(bgGraphic.toFile()).getWidth()==540&&
-                graphicOverlay.getRGB(50,195)!=0,
+                graphicOverlay.getRGB(50,165)!=0,
                 "statistic and context graphics can reveal accurate content over a lightweight base");
         Path background=dir.resolve("normalized.png"),overlay=dir.resolve("overlay.png"),preview=dir.resolve("preview.png");
         cards.renderBackground(plan.items().get(0),image,background,540,960);
@@ -1098,6 +1097,14 @@ public final class SelfTest {
         BufferedImage normalized=ImageIO.read(background.toFile()),full=ImageIO.read(preview.toFile());
         ok(normalized.getHeight()==full.getHeight()&&normalized.getWidth()==full.getWidth(),
                 "static previews and FFmpeg backgrounds share the same output crop geometry");
+        int footerRgb=BroadcastTheme.NAVY.getRGB()&0xFFFFFF;
+        BufferedImage renderedOverlay=ImageIO.read(overlay.toFile());
+        ok((full.getRGB(250,930)&0xFFFFFF)==footerRgb &&
+                        (renderedOverlay.getRGB(250,930)&0xFFFFFF)==footerRgb &&
+                        ((renderedOverlay.getRGB(250,930)>>>24)&255)==255,
+                "still preview and transparent motion overlay use the same opaque navy footer");
+        ok((full.getRGB(5,3)&0xFFFFFF)==(BroadcastTheme.BLUE.getRGB()&0xFFFFFF),
+                "original broadcast logo/header remains at top edge");
         Path longAss=dir.resolve("long.ass");
         CaptionWriter.write(longAss,
             "Archæological-investigation. Consequences for extradition documentation remain unusually long but remain understandable without hiding the end of the sentence.",
