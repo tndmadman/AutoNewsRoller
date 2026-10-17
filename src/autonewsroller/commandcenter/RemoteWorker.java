@@ -4,6 +4,7 @@ import autonewsroller.config.NewsConfig;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.*;
 import autonewsroller.util.Json;
+import java.io.IOException;
 import java.net.*;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
