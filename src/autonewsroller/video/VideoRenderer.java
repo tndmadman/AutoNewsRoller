@@ -7,9 +7,14 @@ import java.util.*;
 public final class VideoRenderer {
     private final String ffmpeg,ffprobe;
     private final int width,height,fps;
+    private final boolean classicCaptions;
 
     public VideoRenderer(String ffmpeg,String ffprobe,int width,int height,int fps){
+        this(ffmpeg,ffprobe,width,height,fps,false);
+    }
+    public VideoRenderer(String ffmpeg,String ffprobe,int width,int height,int fps,boolean classicCaptions){
         this.ffmpeg=ffmpeg;this.ffprobe=ffprobe;this.width=width;this.height=height;this.fps=fps;
+        this.classicCaptions=classicCaptions;
     }
 
     public RenderResult render(List<Path>images,Path audio,Path output,String requestedEncoder,String captionMode,String narration)throws Exception{
@@ -37,7 +42,7 @@ public final class VideoRenderer {
 
         double duration=probeDuration(audio);
         List<Double>sceneDurations=normalizedSceneDurations(backgrounds.size(),sceneWeights,duration);
-        Path ass=CaptionWriter.write(output.resolveSibling(output.getFileName()+".ass"),narration,duration,captionMode,timingFile,width,height);
+        Path ass=CaptionWriter.write(output.resolveSibling(output.getFileName()+".ass"),narration,duration,captionMode,timingFile,width,height,classicCaptions);
         String resolved=new VideoEncoderProbe(ffmpeg).resolve(requestedEncoder);
         List<String>cmd=motionCommand(backgrounds,overlays,motion,sceneDurations,audio,output,resolved,ass);
 
