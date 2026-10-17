@@ -205,7 +205,7 @@ public final class SelfTest {
             m.put("score",0.9);  // Deliberate tie to test deterministic paging.
             m.put("status",i%5==0?"QUEUED":i%5==1?"FAILED":i%5==2?"COMPLETE":i%5==3?"SKIPPED":"VERIFIED");
             m.put("worthy",i%5==4);m.put("verified",i%5==4);
-            m.put("latestPublishedAt",now.minusSeconds(i%2==0?3600:96*3600).toString());
+            m.put("latestPublishedAt",now.minusSeconds(i%2==0?1200:96*3600).toString());
             m.put("publishers",List.of("Wire "+i));
             m.put("uploaded",i%5==2&&i%2==0);
             m.put("scrapped",false);
