@@ -219,3 +219,17 @@ and incomplete timing sidecars fall back to approximate audio-duration timing.
 Post-render visual_quality_report.json contains measured properties and
 visual_preview/contact_sheet.png contains decoded final-MP4 frames. Real
 RTX 3090 and ComfyUI quality still require production-machine verification.
+
+
+### GPU Worker web console (Windows 10 / 11)
+
+Launch `run_gpu_worker_ui_windows.bat` to compile and open
+`http://127.0.0.1:8788`. The page lets you safely start, pause, resume,
+drain/stop and restart the local GPU worker, inspect real live hardware/job
+data, review recent job failures and run dependency diagnostics.
+
+The controller Command Center remains at port `8787`. Existing
+`run_gpu_worker_windows.bat` and `run_gpu_worker_linux.sh` remain
+headless-compatible. Do not run both the console-managed worker and a separate
+headless worker under the same worker ID. Read
+[docs/GPU_WORKER_WEB_UI.md](docs/GPU_WORKER_WEB_UI.md) for operational details.

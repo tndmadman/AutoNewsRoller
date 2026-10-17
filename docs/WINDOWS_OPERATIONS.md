@@ -426,3 +426,18 @@ It intentionally does not install and execute the heavyweight AI model stack.
 For unattended use, Windows Task Scheduler or a startup shortcut can launch watch_news_windows.bat.
 
 However, before configuring unattended boot/start behavior, first complete the live-machine stress test and add a clear notification/error path. An endless loop that fails silently is much less useful than a loop that reports approved output and repeated failures.
+
+
+## Windows GPU worker web console
+
+The local GPU worker now has a separate operator interface at
+`http://127.0.0.1:8788`. Run `run_gpu_worker_ui_windows.bat` to compile, start
+the management HTTP server, optionally auto-start the worker and open the browser.
+Pass the controller URL and worker ID as its first two positional arguments.
+
+The legacy `run_gpu_worker_windows.bat` **continues to run headlessly**.
+`command_center_windows.bat` launches the new UI runner instead of a duplicate
+headless worker; it reuses a healthy existing console on port 8788.
+
+For pause/drain/restart controls, settings scope, controller lease behavior,
+troubleshooting and safe remote access, see [GPU Worker Web UI](GPU_WORKER_WEB_UI.md).

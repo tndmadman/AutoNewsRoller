@@ -30,13 +30,27 @@ public final class Main {
                 server.start();server.block();return;
             }
 
+            if(has(args,"--worker-ui")){
+                String controller=o.getOrDefault("--controller-url",cfg.get("commandCenterControllerUrl","http://127.0.0.1:8787"));
+                String workerId=o.getOrDefault("--worker-id",defaultWorkerId());
+                String token=env("AUTONEWS_TOKEN","");
+                WorkerWebConsole console=new WorkerWebConsole(root,cfg,controller,workerId,token);
+                Runtime.getRuntime().addShutdownHook(new Thread(console::close,"worker-web-console-shutdown"));
+                int port=console.start();
+                System.out.println("GPU Worker web console: http://127.0.0.1:"+port);
+                console.block();return;
+            }
+
             if(has(args,"--worker")){
                 String controller=o.getOrDefault("--controller-url",cfg.get("commandCenterControllerUrl","http://127.0.0.1:8787"));
                 String workerId=o.getOrDefault("--worker-id",defaultWorkerId());
                 String token=o.getOrDefault("--token",env("AUTONEWS_TOKEN",""));
                 NewsConfig cleanupCfg=cfg;
-                Runtime.getRuntime().addShutdownHook(new Thread(()->OwnedProcesses.shutdownQwen(root,cleanupCfg.get("qwenUrl","http://127.0.0.1:8765")),"autonewsroller-owned-helper-shutdown"));
-                RemoteWorker worker=new RemoteWorker(root,cfg,controller,workerId,token);
+                java.util.concurrent.atomic.AtomicBoolean ownsWorker=new java.util.concurrent.atomic.AtomicBoolean();
+                RemoteWorker worker=new RemoteWorker(root,cfg,controller,workerId,token,event->{
+                    if("lifecycle".equals(event.get("type"))&&"CONNECTING".equals(event.get("state"))&&ownsWorker.compareAndSet(false,true))
+                        Runtime.getRuntime().addShutdownHook(new Thread(()->OwnedProcesses.shutdownQwen(root,cleanupCfg.get("qwenUrl","http://127.0.0.1:8765")),"autonewsroller-owned-helper-shutdown"));
+                },null);
                 Runtime.getRuntime().addShutdownHook(new Thread(worker::stop,"autonews-worker-shutdown"));
                 worker.runForever();
                 OwnedProcesses.shutdownQwen(root,cfg.get("qwenUrl","http://127.0.0.1:8765"));

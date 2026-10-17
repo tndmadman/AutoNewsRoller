@@ -20,8 +20,8 @@ public final class SystemMetrics {
         try{
             OperatingSystemMXBean base=ManagementFactory.getOperatingSystemMXBean();
             if(base instanceof com.sun.management.OperatingSystemMXBean os){
-                m.put("cpuLoad",round(os.getCpuLoad()*100.0));
-                m.put("processCpuLoad",round(os.getProcessCpuLoad()*100.0));
+                m.put("cpuLoad",os.getCpuLoad()<0?null:round(os.getCpuLoad()*100.0));
+                m.put("processCpuLoad",os.getProcessCpuLoad()<0?null:round(os.getProcessCpuLoad()*100.0));
                 m.put("memoryTotalMb",os.getTotalMemorySize()/1048576L);
                 m.put("memoryFreeMb",os.getFreeMemorySize()/1048576L);
             }
@@ -48,6 +48,9 @@ public final class SystemMetrics {
     }
 
     private static String hostname(){try{return java.net.InetAddress.getLocalHost().getHostName();}catch(Exception e){return "unknown";}}
-    private static double number(String x){try{return Double.parseDouble(x);}catch(Exception e){return 0;}}
+    private static Double number(String x){
+        try{double v=Double.parseDouble(x);return Double.isFinite(v)&&v>=0?v:null;}
+        catch(Exception e){return null;}
+    }
     private static double round(double x){return Math.round(x*10.0)/10.0;}
 }
