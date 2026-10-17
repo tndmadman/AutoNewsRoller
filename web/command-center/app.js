@@ -304,8 +304,14 @@ function renderPagination(){
   const controls='<button type="button" data-board-page="'+(boardPage-1)+'" aria-label="Previous page" '+(boardPage<=1?'disabled':'')+'>‹ PREV</button>'+
     '<div class="boardNumbers" role="group" aria-label="Story board pages">'+pageButtons()+'</div>'+
     '<button type="button" data-board-page="'+(boardPage+1)+'" aria-label="Next page" '+(boardPage>=pages?'disabled':'')+'>NEXT ›</button>';
-  $("#boardTopPager").innerHTML=controls;
-  $("#boardBottomPager").innerHTML=controls;
+  for(const root of [$("#boardTopPager"),$("#boardBottomPager")]){
+    // Never replace the button currently receiving a pointerdown/click.
+    // A stable pager should not rebuild its DOM at each five-second poll.
+    if(root._boardMarkup!==controls&&!interactionProtected(root)){
+      root.innerHTML=controls;
+      root._boardMarkup=controls;
+    }
+  }
 }
 function renderStories(){
   const root=$("#stories"),ss=boardData.stories||[];
