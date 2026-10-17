@@ -517,6 +517,12 @@ async function submitOperation(id,button,path,body,verb,success){
     loadBoard(true);
   }finally{
     clearTimeout(timeout);pendingActions.delete(id);updatePendingControls();
+    // A click may have kept its card protected during the acknowledgement.
+    // Give pointerup protection time to expire, then retry once immediately.
+    if(boardRenderDeferred){
+      const generation=boardGeneration;
+      setTimeout(()=>{if(boardRenderDeferred&&generation===boardGeneration)renderStories()},220);
+    }
   }
 }
 document.addEventListener("click",e=>{
