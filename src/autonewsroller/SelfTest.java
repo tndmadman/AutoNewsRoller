@@ -33,6 +33,7 @@ public final class SelfTest {
         testFeedTransportResilience(root);
         testClusterAndVerify(a);
         testCommandCenterQueue(a);
+        testStoryBoardPagination();
         testCommandCenterMediaReporting(root,a);
         testCommandCenterLeaseRecovery(a);
         testPublisherBiasRegistry(root);
@@ -189,6 +190,68 @@ public final class SelfTest {
         VerificationResult v=new SourceVerifier().verify(n,2);
         ok(v.accepted(),"FactPackage verification");
         ok(v.factPackage().independentSourceCount()>=2,"syndication duplicate does not destroy independent confirmations");
+    }
+
+
+    private void testStoryBoardPagination()throws Exception{
+        Path dir=Files.createTempDirectory("autonews-board-pagination-");
+        Path state=dir.resolve("board.json");
+        Map<String,Object>records=new LinkedHashMap<>();
+        Instant now=Instant.now();
+        for(int i=0;i<3000;i++){
+            String id=String.format(Locale.ROOT,"synthetic-%04d",i);
+            Map<String,Object>m=new LinkedHashMap<>();
+            m.put("id",id);m.put("topic","Synthetic story "+i);
+            m.put("score",0.9);  // Deliberate tie to test deterministic paging.
+            m.put("status",i%5==0?"QUEUED":i%5==1?"FAILED":i%5==2?"COMPLETE":i%5==3?"SKIPPED":"VERIFIED");
+            m.put("worthy",i%5==4);m.put("verified",i%5==4);
+            m.put("latestPublishedAt",now.minusSeconds(i%2==0?3600:96*3600).toString());
+            m.put("publishers",List.of("Wire "+i));
+            m.put("uploaded",i%5==2&&i%2==0);
+            m.put("scrapped",false);
+            m.put("candidate",Map.of("oversized-private-object",List.of("not-on-the-wire")));
+            records.put(id,m);
+        }
+        Json.write(state,Map.of("stories",records,"feeds",Map.of(),"videos",Map.of()));
+        CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        Map<String,Object>tiny=store.snapshot(false);
+        ok(((List<?>)tiny.get("stories")).isEmpty()
+                &&((Number)Json.object(tiny.get("counts")).get("stories")).intValue()==3000,
+                "lightweight snapshot retains global metrics without constructing stories");
+        ok(((List<?>)store.snapshot().get("stories")).size()==3000,
+                "full snapshot remains backward-compatible");
+        Map<String,Object>first=store.boardStories(1,25,"ALL","",0);
+        Map<String,Object>second=store.boardStories(2,25,"ALL","",0);
+        Map<String,Object>last=store.boardStories(120,25,"ALL","",0);
+        ok(((List<?>)first.get("stories")).size()==25&&((Number)first.get("total")).intValue()==3000
+                &&((Number)last.get("page")).intValue()==120
+                &&((List<?>)last.get("stories")).size()==25,
+                "3,000 story board returns just 25 records and resolves last page");
+        List<?>firstRecords=(List<?>)first.get("stories"), secondRecords=(List<?>)second.get("stories");
+        ok("synthetic-0000".equals(Json.object(firstRecords.get(0)).get("id"))
+                &&"synthetic-0025".equals(Json.object(secondRecords.get(0)).get("id"))
+                &&!Json.object(firstRecords.get(0)).containsKey("candidate"),
+                "stable score ties, no duplicates across page boundaries, public-only page");
+        ok(((Number)store.boardStories(Integer.MAX_VALUE,100,"ALL","",0).get("page")).intValue()==30,
+                "extreme requested page clamps without integer overflow");
+        ok(((Number)store.boardStories(1,10,"ALL","Synthetic story 2999",0).get("total")).intValue()==1,
+                "search reaches story 2,999 beyond the first page");
+        ok(((Number)store.boardStories(1,25,"QUEUED","",1).get("total")).intValue()==600
+                &&((Number)store.boardStories(1,25,"FAILED","",1).get("total")).intValue()==300,
+                "age filtering exempts queued operations but limits failed stories");
+        ok(((Number)store.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==300
+                &&((Number)store.boardStories(1,25,"UPLOADED","",0).get("total")).intValue()==300,
+                "story-level upload/to-post filters distinguish video archive metrics");
+        ok(((Number)store.boardStories(1,25,"WORTHY","",0).get("total")).intValue()==600
+                &&((Number)store.boardStories(1,25,"COMPLETE","",0).get("total")).intValue()==600,
+                "worthy and complete special filters match the story board");
+        Map<String,Object>none=store.boardStories(60,25,"ALL","does not exist",0);
+        ok(((Number)none.get("page")).intValue()==1&&((Number)none.get("totalPages")).intValue()==1
+                &&((List<?>)none.get("stories")).isEmpty(),
+                "empty result resolves to the first page");
+        boolean rejected=false;
+        try{store.boardStories(1,999,"ALL","",0);}catch(IllegalArgumentException e){rejected=true;}
+        ok(rejected,"invalid server-side page size rejected");
     }
 
     private void testCommandCenterQueue(List<Article>a)throws Exception{
@@ -777,9 +840,9 @@ public final class SelfTest {
                 "Command Center exposes a persisted auto-video creation toggle");
         ok(commandCenterHtml.contains("id=\"railFailed\"")&&commandCenterJs.contains("OPERATIONAL_FILTERS")&&
                         commandCenterJs.contains("failurePanelHtml")&&commandCenterJs.contains("RETRY VIDEO")&&
-                        commandCenterJs.contains("ss.filter(x=>x.status===\"FAILED\")")&&
+                        commandCenterJs.contains("boardData.facets")&&commandCenterJs.contains("/api/board/stories?")&&
                         !commandCenterJs.contains("QUEUED\",\"PRODUCING\",\"FAILED\",\"HOLD"),
-                "Command Center gives terminal failures a first-class rail, supports age filtering on FAILED, and keeps diagnostics/manual retry controls");
+                "Command Center gives terminal failures a first-class rail, server pagination, and retains manual retry controls");
         String defaultsText=Files.readString(root.resolve("defaults.txt"));
         ok(defaultsText.contains("cyan cast")&&defaultsText.contains("electric blue lighting")&&defaultsText.contains("blue monochrome"),
                 "default negative prompt rejects synthetic cyan and electric-blue image grading");
