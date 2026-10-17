@@ -742,7 +742,7 @@ function applyLiveEvent(event){
     $("#feedsOnline").textContent=state.counts.feedsOk;
     $("#feedsFailed").textContent=state.counts.feedsFailed+" failed";
     $("#feedSummary").textContent=state.feeds.length+" FEEDS";
-    renderFeeds();
+    renderFeeds();renderFeedMatrix();drawRadar();
   }
   return true;
 }
