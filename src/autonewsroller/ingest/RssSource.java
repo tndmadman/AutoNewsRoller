@@ -4,11 +4,16 @@ import autonewsroller.config.SourceConfig;
 import autonewsroller.model.Article;
 import autonewsroller.util.Hashing;
 import org.w3c.dom.*;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXParseException;
 import javax.net.ssl.SSLHandshakeException;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.*;
 import java.net.URI;
 import java.net.http.*;
+import java.nio.ByteBuffer;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.*;
 import java.time.format.*;
@@ -47,7 +52,7 @@ public final class RssSource implements NewsSource {
 
         for(int attempt=1;attempt<=maxAttempts;attempt++){
             try{
-                HttpResponse<byte[]> r=client.send(request(validators,true),HttpResponse.BodyHandlers.ofByteArray());
+                HttpResponse<byte[]> r=client.send(request(validators,true,attempt>1),HttpResponse.BodyHandlers.ofByteArray());
 
                 if(r.statusCode()==304){
                     if(cachedBody!=null&&cachedBody.length>0)
@@ -55,20 +60,29 @@ public final class RssSource implements NewsSource {
 
                     // A validator without a cached representation is incomplete cache state.
                     // Re-fetch once without validators so a 304 can never turn into "zero news".
-                    r=client.send(request(Map.of(),false),HttpResponse.BodyHandlers.ofByteArray());
+                    r=client.send(request(Map.of(),false,attempt>1),HttpResponse.BodyHandlers.ofByteArray());
                 }
 
                 if(r.statusCode()>=200&&r.statusCode()<300){
                     byte[] body=r.body();
                     if(body==null||body.length==0)throw new IOException("Feed returned an empty body for "+cfg.url());
-                    cache.put(cfg.url(),r.headers().firstValue("ETag").orElse(null),r.headers().firstValue("Last-Modified").orElse(null),body);
-                    return parse(new ByteArrayInputStream(body),cfg,Instant.now());
+                    // Do not overwrite the last-good cached feed with invalid XML.
+                    List<Article> parsed=parse(new ByteArrayInputStream(body),cfg,Instant.now());
+                    cache.put(cfg.url(),r.headers().firstValue("ETag").orElse(null),
+                            r.headers().firstValue("Last-Modified").orElse(null),body);
+                    return parsed;
                 }
 
-                if(r.statusCode()!=429&&r.statusCode()<500)
-                    throw new IOException("Feed HTTP "+r.statusCode()+" for "+cfg.url());
-
-                last=new IOException("Feed HTTP "+r.statusCode()+" for "+cfg.url());
+                String detail="Feed HTTP "+r.statusCode()+" for "+cfg.url();
+                if(r.statusCode()>=300&&r.statusCode()<400){
+                    detail+="; effective="+r.uri();
+                    String location=r.headers().firstValue("Location").orElse("");
+                    if(!location.isBlank())detail+="; Location="+location;
+                }
+                last=new IOException(detail);
+                // HTTP 403/404 cannot be fixed by repeating an identical request.
+                if(r.statusCode()==401||r.statusCode()==403||r.statusCode()==404||r.statusCode()==410)
+                    break;
             }catch(IOException e){
                 last=e;
                 if(isTlsTrustFailure(e)){
@@ -96,9 +110,11 @@ public final class RssSource implements NewsSource {
         throw last==null?new IOException("Feed request failed for "+cfg.url()):last;
     }
 
-    private HttpRequest request(Map<String,String> validators,boolean conditional){
+    private HttpRequest request(Map<String,String> validators,boolean conditional,boolean forceHttp1){
         HttpRequest.Builder b=HttpRequest.newBuilder(URI.create(cfg.url()))
                 .timeout(Duration.ofSeconds(timeoutSeconds))
+                // HTTP/2 RST_STREAM from some publisher CDNs: retry with HTTP/1.1.
+                .version(forceHttp1?HttpClient.Version.HTTP_1_1:HttpClient.Version.HTTP_2)
                 .header("User-Agent",userAgent)
                 .header("Accept",ACCEPT);
         if(conditional){
@@ -167,7 +183,21 @@ public final class RssSource implements NewsSource {
             @Override public void error(org.xml.sax.SAXParseException e)throws org.xml.sax.SAXException{throw e;}
             @Override public void fatalError(org.xml.sax.SAXParseException e)throws org.xml.sax.SAXException{throw e;}
         });
-        Document d=builder.parse(input);
+        byte[] xml=input.readAllBytes();
+        Document d;
+        try{
+            d=builder.parse(new ByteArrayInputStream(xml));
+        }catch(SAXParseException malformed){
+            String reason=String.valueOf(malformed.getMessage());
+            if(!reason.contains("Invalid byte")||!reason.contains("UTF-8"))throw malformed;
+            // Some publisher feeds claim UTF-8 yet contain a few legacy bytes.
+            // Replace only malformed UTF-8 bytes; keep XML structure validation strict.
+            String text=StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPLACE)
+                    .onUnmappableCharacter(CodingErrorAction.REPLACE)
+                    .decode(ByteBuffer.wrap(xml)).toString();
+            d=builder.parse(new InputSource(new StringReader(text)));
+        }
         d.getDocumentElement().normalize();
         NodeList entries=d.getElementsByTagName("item");
         boolean atom=false;

@@ -751,7 +751,7 @@
       "name": "Space.com",
       "type": "rss",
       "category": "science",
-      "url": "https://www.space.com/feeds/all",
+      "url": "https://www.space.com/feeds.xml",
       "enabled": true,
       "trustTier": 2,
       "authoritativePrimary": false
@@ -760,7 +760,7 @@
       "name": "Tom's Hardware",
       "type": "rss",
       "category": "technology",
-      "url": "https://www.tomshardware.com/feeds/all",
+      "url": "https://www.tomshardware.com/feeds.xml",
       "enabled": true,
       "trustTier": 2,
       "authoritativePrimary": false
@@ -1057,7 +1057,7 @@
       "name": "Politico",
       "type": "rss",
       "category": "politics",
-      "url": "https://www.politico.com/rss/politicopicks.xml",
+      "url": "https://rss.politico.com/politics-news.xml",
       "enabled": true,
       "trustTier": 2,
       "authoritativePrimary": false
