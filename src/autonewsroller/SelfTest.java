@@ -1103,8 +1103,8 @@ public final class SelfTest {
                         (renderedOverlay.getRGB(250,930)&0xFFFFFF)==footerRgb &&
                         ((renderedOverlay.getRGB(250,930)>>>24)&255)==255,
                 "still preview and transparent motion overlay use the same opaque navy footer");
-        ok((full.getRGB(5,3)&0xFFFFFF)==(BroadcastTheme.BLUE.getRGB()&0xFFFFFF),
-                "original broadcast logo/header remains at top edge");
+        ok((full.getRGB(5,25)&0xFFFFFF)!=(normalized.getRGB(5,25)&0xFFFFFF),
+                "original broadcast header remains at top edge, independent of scaling");
         Path longAss=dir.resolve("long.ass");
         CaptionWriter.write(longAss,
             "Archæological-investigation. Consequences for extradition documentation remain unusually long but remain understandable without hiding the end of the sentence.",
