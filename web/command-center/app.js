@@ -241,7 +241,7 @@ function render(){
   }
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
-  syncStoryAgeControl();renderWorkers();renderFeeds();renderVideos();
+  syncStoryAgeControl();renderWorkers();renderFeeds();renderFeedMatrix();renderVideos();drawRadar();
 }
 function renderRails(){
   const f=boardData.facets||{};
@@ -249,26 +249,80 @@ function renderRails(){
     railProducing:"PRODUCING",railFailed:"FAILED",railComplete:"COMPLETE",
     railToPost:"TO_POST",railUploaded:"UPLOADED",railScrapped:"SCRAPPED"};
   for(const [id,status] of Object.entries(fields))$("#"+id).textContent=f[status]||0;
+  renderStatusDistribution();
+}
+// Render genuine instantaneous utilization, with N/A rather than a false zero.
+function telemetryMeter(label,value){
+  const available=value!==null&&value!==undefined&&Number.isFinite(Number(value));
+  const percent=available?pct(value):0;
+  return '<div class="telemetryMeter'+(available?'':' unavailable')+'">'+
+    '<div class="meterReadout"><span>'+label+'</span><b>'+(available?Math.round(percent)+'%':'N/A')+'</b></div>'+
+    '<div class="meterTrack" role="meter" aria-label="'+label+'" aria-valuemin="0" aria-valuemax="100"'+
+    (available?' aria-valuenow="'+Math.round(percent)+'"':' aria-valuetext="Not available"')+'>'+
+    '<i class="meterFill" style="width:'+percent+'%"></i></div></div>';
 }
 function renderWorkers(){
   const root=$("#workers"),ws=state.workers||[];
   root.className=ws.length?"workerGrid":"workerGrid emptyState";
   reconcileList(root,ws.map(w=>{
-    const m=w.metrics||{},g=m.gpu||{},online=w.online;
-    const memTot=num(m.memoryTotalMb),memFree=num(m.memoryFreeMb),ram=memTot?Math.round((memTot-memFree)/memTot*100):0;
-    const gpuMem=num(g.memoryTotalMb)?Math.round(num(g.memoryUsedMb)/num(g.memoryTotalMb)*100):0;
+    const m=w.metrics||{},g=m.gpu||{},online=!!w.online;
+    const memTot=num(m.memoryTotalMb),memFree=num(m.memoryFreeMb);
+    const ram=online&&memTot>0&&m.memoryFreeMb!=null?(memTot-memFree)/memTot*100:null;
+    const gpuMem=online&&g.available&&num(g.memoryTotalMb)>0&&g.memoryUsedMb!=null?
+      num(g.memoryUsedMb)/num(g.memoryTotalMb)*100:null;
+    const gAvailable=online&&g.available;
+    const gpuInfo=gAvailable?
+      esc(g.name||"GPU")+" / "+(g.memoryUsedMb!=null?Math.round(num(g.memoryUsedMb)):"?")+
+      "/"+(g.memoryTotalMb!=null?Math.round(num(g.memoryTotalMb)):"?")+" MB VRAM / "+
+      (g.temperatureC!=null?Math.round(num(g.temperatureC))+"°C":"TEMP N/A"):
+      "GPU TELEMETRY N/A";
     return {key:String(w.id),html:`<div class="workerCard">
-      <div class="workerHead"><div class="workerName">${esc(w.id)}</div><div class="workerState">${online?"● ONLINE":"○ OFFLINE"} // ${esc(w.state||"UNKNOWN")}</div></div>
+      <div class="workerHead"><div class="workerName">${esc(w.id)}</div><div class="workerState ${online?'':'offline'}">${online?'● LINKED':'○ OFFLINE'} / ${esc(w.state||'UNKNOWN')}</div></div>
       <div class="telemetry">
-        <div><span>CPU</span><b>${Math.round(num(m.cpuLoad))}%</b></div>
-        <div><span>RAM</span><b>${ram}%</b></div>
-        <div><span>GPU</span><b>${g.available?Math.round(num(g.utilization))+"%":"N/A"}</b></div>
-        <div><span>VRAM</span><b>${g.available?gpuMem+"%":"N/A"}</b></div>
+        ${telemetryMeter('CPU',online?m.cpuLoad:null)}
+        ${telemetryMeter('RAM',ram)}
+        ${telemetryMeter('GPU',gAvailable?g.utilization:null)}
+        ${telemetryMeter('VRAM',gpuMem)}
       </div>
-      <div class="workerJob">${g.available?esc(g.name)+" // "+Math.round(num(g.memoryUsedMb))+"/"+Math.round(num(g.memoryTotalMb))+" MB // "+Math.round(num(g.temperatureC))+"°C":"NO NVIDIA TELEMETRY"}<br>${w.currentTopic?"JOB: "+esc(w.currentTopic):"IDLE / WAITING FOR QUEUE"}</div>
+      <div class="workerJob">${gpuInfo}<div>${online?(w.currentTopic?'JOB: '+esc(w.currentTopic):'IDLE / WAITING FOR QUEUE'):'NODE OFFLINE / LAST REPORT NOT CURRENT'}</div></div>
     </div>`}
   }),"No workers connected.");
 }
+// These status facets are current snapshot counts, not history or rate.
+function renderStatusDistribution(){
+  const f=boardData.facets||{},root=$("#statusDistribution");
+  if(!root)return;
+  const keys=['DISCOVERED','VERIFIED','QUEUED','PRODUCING','HOLD','FAILED','COMPLETE','SKIPPED'];
+  const buckets=keys.map(k=>({key:k,n:Math.max(0,Math.round(num(f[k])))}));
+  const known=buckets.reduce((n,b)=>n+b.n,0);
+  const other=Math.max(0,Math.round(num(f.ALL))-known);
+  if(other)buckets.push({key:'OTHER',n:other});
+  const sum=buckets.reduce((n,b)=>n+b.n,0);
+  const html='<div class="distributionHeading"><b>STATUS ALLOCATION / CURRENT SNAPSHOT</b><span>'+
+    sum.toLocaleString()+' CLASSIFIED / NO HISTORICAL RATE</span></div>'+
+    '<div class="distributionTrack" role="img" aria-label="'+esc(buckets.map(b=>b.key+' '+b.n).join(', '))+'">'+
+    buckets.map(b=>b.n?'<i class="distributionSegment '+b.key.toLowerCase()+'" style="width:'+(sum?b.n/sum*100:0)+'%"></i>':'').join('')+
+    '</div><div class="distributionLabels">'+
+    buckets.map(b=>'<span>'+esc(b.key)+' <b>'+b.n.toLocaleString()+'</b></span>').join('')+'</div>';
+  if(root._html!==html){root.innerHTML=html;root._html=html;}
+}
+function renderFeedMatrix(){
+  const root=$("#feedMatrix");if(!root)return;
+  const feeds=state.feeds||[];
+  const status=f=>String(f.status||'UNKNOWN').toUpperCase();
+  const failed=feeds.filter(f=>['FAILED','ERROR'].includes(status(f))).length;
+  const scanning=feeds.filter(f=>status(f)==='SCANNING').length;
+  const online=feeds.filter(f=>status(f)==='OK').length;
+  const cells=feeds.slice().sort((a,b)=>String(a.name||a.url).localeCompare(String(b.name||b.url))).map(f=>{
+    const st=status(f),cls=st==='OK'?'ok':st==='SCANNING'?'scanning':['FAILED','ERROR'].includes(st)?'failed':'unknown';
+    return '<i aria-hidden="true" class="matrixCell '+cls+'" title="'+esc(f.name||f.url)+' / '+esc(st)+'"></i>';
+  }).join('');
+  const html='<div class="matrixHeading"><b>FEED STATUS MATRIX / PRESENT SNAPSHOT</b><span>'+
+    online+' OK / '+failed+' FAILED / '+scanning+' SCANNING / '+Math.max(0,feeds.length-online-failed-scanning)+' OTHER</span></div>'+
+    '<div class="matrixCells" role="img" aria-label="'+feeds.length+' feeds: '+online+' online, '+failed+' failed, '+scanning+' scanning, '+Math.max(0,feeds.length-online-failed-scanning)+' other">'+cells+'</div>';
+  if(root._html!==html){root.innerHTML=html;root._html=html;}
+}
+
 // Board requests are independent of dashboard polls. A later generation invalidates
 // every older response, including those started before a successful mutation.
 function boardQuery(){
