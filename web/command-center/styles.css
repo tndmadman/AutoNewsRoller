@@ -39,3 +39,19 @@ main{padding:18px;max-width:1920px;margin:auto}.panel{position:relative;backgrou
 @keyframes pulse{50%{opacity:.25;box-shadow:0 0 15px var(--cyan)}}
 @media(max-width:1050px){.heroGrid,.split{grid-template-columns:1fr}.radarPanel{height:290px}.topbar{align-items:flex-start;gap:10px;flex-direction:column}.topActions{width:100%;overflow:auto}.metricsGrid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:620px){main{padding:8px}.metricsGrid{grid-template-columns:1fr 1fr}.metric{min-height:110px}.metric strong{font-size:30px}.storyGrid{grid-template-columns:1fr;padding:7px}.controls input{width:180px}.brand h1{font-size:15px}.sub{display:none}.telemetry{grid-template-columns:repeat(2,1fr)}}
+
+/* Story operations pagination */
+.boardPagingHeader{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px;padding:10px 14px;font-size:12px}
+#boardResultCount{margin-right:auto;color:var(--muted,#98a9b6);font-variant-numeric:tabular-nums}
+.boardPagingHeader label{font-weight:700;letter-spacing:.07em}
+#boardPageSize{min-width:63px}
+.boardPager{display:flex;align-items:center;flex-wrap:wrap;gap:5px}
+.boardPager button{cursor:pointer;border:1px solid rgba(100,170,200,.35);color:inherit;background:rgba(25,43,61,.6);border-radius:5px;padding:7px 10px;font:inherit;min-height:34px}
+.boardPager button:hover:not(:disabled){border-color:#38e8ff}
+.boardPager button.current{border-color:#38e8ff;color:#38e8ff;background:rgba(56,232,255,.1);font-weight:700}
+.boardPager button:disabled{opacity:.35;cursor:not-allowed}
+.boardPager button:focus-visible{outline:2px solid #38e8ff;outline-offset:2px}
+.boardNumbers{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+.boardEllipsis{padding:0 4px}
+.boardPagerBottom{justify-content:center;padding:18px 12px}
+@media(max-width:720px){.boardPagingHeader{justify-content:center}.boardPagingHeader #boardResultCount{width:100%;text-align:center;margin-right:0}.boardPager{justify-content:center}.boardPager button{padding:6px 8px}}
