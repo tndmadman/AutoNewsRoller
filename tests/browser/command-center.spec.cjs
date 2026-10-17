@@ -15,7 +15,7 @@ function fixture(appOverride=null){
     counts:{stories:1,worthy:1,verified:1,feedsOk:90,feedsFailed:0,workersOnline:5,queued:0,producing:0,complete:1,videoVersions:1,toPost:1,uploaded:0,scrapped:0},
     autoQueue:false,autoThreshold:.75,scanning:false};
   const clients=new Set(),posts=[];
-  let getDelay=0,postDelay=0,getCount=0,postStatus=200,dropResponse=false;
+  let getDelay=0,boardDelay=0,postDelay=0,getCount=0,boardCount=0,postStatus=200,dropResponse=false;
   const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,"http://127.0.0.1");
     if(url.pathname==="/api/events"){
@@ -24,8 +24,39 @@ function fixture(appOverride=null){
     }
     if(url.pathname==="/api/state"){
       getCount++;
-      const snapshot=JSON.stringify(state), delay=getDelay;
+      const snapshot=JSON.stringify(url.searchParams.get("includeStories")==="false"?{...state,stories:[]}:state), delay=getDelay;
       setTimeout(()=>{if(!res.writableEnded){res.writeHead(200,{"Content-Type":"application/json"});res.end(snapshot)}},delay);return;
+    }
+    if(url.pathname==="/api/board/stories"){
+      boardCount++;
+      const pageSize=Number(url.searchParams.get("pageSize")||25),wanted=Number(url.searchParams.get("page")||1);
+      const status=url.searchParams.get("status")||"ALL",query=(url.searchParams.get("search")||"").toLowerCase();
+      const hours=Number(url.searchParams.get("ageHours")||0);
+      const operational=new Set(["QUEUED","PRODUCING","HOLD"]);
+      const match=(s,filter)=>{
+        const stat=String(s.status||"");
+        if(filter==="ALL")return true;
+        if(filter==="COMPLETE")return stat.startsWith("COMPLETE");
+        if(filter==="TO_POST")return stat==="COMPLETE"&&!s.uploaded&&!s.scrapped;
+        if(filter==="UPLOADED")return !!s.uploaded&&!s.scrapped;
+        if(filter==="SCRAPPED")return !!s.scrapped;
+        if(filter==="WORTHY")return !!s.worthy&&["DISCOVERED","VERIFIED","WORTHY"].includes(stat);
+        return stat===filter;
+      };
+      const recent=s=>!hours||(Date.now()-Date.parse(s.latestPublishedAt))/3600000<=hours;
+      const facets={};
+      for(const key of ["ALL","DISCOVERED","WORTHY","VERIFIED","QUEUED","PRODUCING","HOLD","FAILED","COMPLETE","TO_POST","UPLOADED","SCRAPPED","SKIPPED"])
+        facets[key]=state.stories.filter(s=>match(s,key)&&(recent(s)||operational.has(key))).length;
+      const all=state.stories.filter(s=>match(s,status)&&(recent(s)||operational.has(status))
+        &&[s.topic,s.category,s.uploadedPlatform,s.uploadNote,s.scrapReason,s.lastFailure,
+          s.failureType,s.assignedWorker,s.lastAssignedWorker,...(s.publishers||[])].join(" ").toLowerCase().includes(query))
+        .sort((a,b)=>(b.score||0)-(a.score||0)||String(a.id).localeCompare(String(b.id)));
+      const totalPages=Math.max(1,Math.ceil(all.length/pageSize)),page=Math.min(Math.max(1,wanted),totalPages);
+      const payload=JSON.stringify({stories:all.slice((page-1)*pageSize,page*pageSize),
+        page,pageSize,total:all.length,totalPages,facets});
+      const delay=boardDelay;
+      setTimeout(()=>{if(!res.writableEnded){res.writeHead(200,{"Content-Type":"application/json"});res.end(payload)}},delay);
+      return;
     }
     if(req.method==="POST"){
       let raw="";for await(const chunk of req)raw+=chunk;
@@ -36,24 +67,25 @@ function fixture(appOverride=null){
         setTimeout(()=>{if(!res.writableEnded){res.writeHead(status,{"Content-Type":"application/json"});res.end(response)}},postDelay);
         return;
       }
-      let storyResult={...story};
+      const target=state.stories.find(s=>url.pathname.startsWith("/api/stories/"+encodeURIComponent(s.id)+"/"))||story;
+      let storyResult={...target};
       if(url.pathname.endsWith("/action")){
         const a=body.action;
-        if(a==="MAKE"||a==="WORTH"||a==="REMAKE"){story.status="QUEUED";story.stage="QUEUED";story.progress=15;state.counts.queued=1;}
-        else if(a==="HOLD"){story.status="HOLD";story.stage="HOLD"}
-        else if(a==="SKIP"){story.status="SKIPPED";story.stage="SKIPPED"}
-        else if(a==="AUTO"){story.status="VERIFIED";story.stage="DISCOVERED"}
-        storyResult={...story};
+        if(a==="MAKE"||a==="WORTH"||a==="REMAKE"){target.status="QUEUED";target.stage="QUEUED";target.progress=15;state.counts.queued=1;}
+        else if(a==="HOLD"){target.status="HOLD";target.stage="HOLD"}
+        else if(a==="SKIP"){target.status="SKIPPED";target.stage="SKIPPED"}
+        else if(a==="AUTO"){target.status="VERIFIED";target.stage="DISCOVERED"}
+        storyResult={...target};
       }else if(url.pathname.endsWith("/upload-status")){
         version.uploaded=!!body.uploaded;
-        story.uploaded=version.uploaded;
+        target.uploaded=version.uploaded;
         state.counts.uploaded=+version.uploaded;
-        storyResult={...story};
+        storyResult={...target};
       }else if(url.pathname.endsWith("/scrap-status")){
         version.scrapped=!!body.scrapped;
-        story.scrapped=version.scrapped;
+        target.scrapped=version.scrapped;
         state.counts.scrapped=+version.scrapped;
-        storyResult={...story};
+        storyResult={...target};
       }
       if(dropResponse){dropResponse=false;req.socket.destroy();return}
       const response=JSON.stringify(storyResult);
@@ -70,7 +102,7 @@ function fixture(appOverride=null){
     const data="data: "+JSON.stringify({type,timestamp:new Date().toISOString(),payload})+"\n\n";
     for(const client of clients)if(!client.writableEnded)client.write(data);
   }
-  return {server,state,story,version,posts,event,setGetDelay:v=>{getDelay=v},setPostDelay:v=>{postDelay=v},setPostStatus:v=>{postStatus=v},dropNextPost:()=>{dropResponse=true},get getCount(){return getCount},
+  return {server,state,story,version,posts,event,setGetDelay:v=>{getDelay=v},setBoardDelay:v=>{boardDelay=v},get boardCount(){return boardCount},setPostDelay:v=>{postDelay=v},setPostStatus:v=>{postStatus=v},dropNextPost:()=>{dropResponse=true},get getCount(){return getCount},
     async start(){await new Promise(ok=>server.listen(0,"127.0.0.1",ok));return "http://127.0.0.1:"+server.address().port},
     async stop(){for(const client of clients)client.destroy();await new Promise(ok=>server.close(ok))}};
 }
@@ -252,7 +284,7 @@ test("expanded failure history remains open during live updates",async({page})=>
     await expect(details).toHaveAttribute("open","");
   }finally{await f.stop()}
 });
-test("high-volume dashboard preserves card identity with 120 stories, 90 feeds and five workers",async({page})=>{
+test("high-volume dashboard renders just one page while retaining all 120 stories",async({page})=>{
   const f=fixture();
   f.state.stories=Array.from({length:120},(_,i)=>({...f.story,id:"story-"+i,topic:"High-volume story #"+i}));
   f.state.counts.stories=120;
@@ -260,15 +292,19 @@ test("high-volume dashboard preserves card identity with 120 stories, 90 feeds a
   try{
     await page.goto(url);
     const cards=page.locator(".storyCard");
-    await expect(cards).toHaveCount(120);
+    await expect(cards).toHaveCount(25);
     await page.evaluate(()=>{window.__firstCard=document.querySelector(".storyCard")});
     for(let i=0;i<12;i++){
       f.state.workers[i%5].metrics.cpuLoad=i*5;
       f.event("worker");await page.waitForTimeout(340);
     }
     expect(await page.evaluate(()=>window.__firstCard===document.querySelector(".storyCard")&&window.__firstCard.isConnected)).toBe(true);
-    await expect(cards).toHaveCount(120);
+    await expect(cards).toHaveCount(25);
     await expect(page.locator(".feed")).toHaveCount(90);
+    await expect(page.locator("#boardResultCount")).toContainText("120");
+    await page.locator('#boardBottomPager button[data-board-page="5"]').click();
+    await expect(cards).toHaveCount(20);
+    await expect(page.locator("#boardResultCount")).toContainText("101–120");
   }finally{await f.stop()}
 });
 
@@ -308,5 +344,140 @@ test("a snapshot started before SSE cannot overwrite newer worker status",async(
     await expect(page.locator(".workerCard .workerState").first()).toContainText("PRODUCING");
     await page.waitForTimeout(1200);
     await expect(page.locator(".workerCard .workerState").first()).toContainText("PRODUCING");
+  }finally{await f.stop()}
+});
+
+
+test("3,000 stories: lightweight polling and a maximum of one page in the DOM",async({page})=>{
+  const f=fixture();
+  f.state.stories=Array.from({length:3000},(_,i)=>({...f.story,id:"bulk-"+String(i).padStart(4,"0"),
+    topic:"Bulk "+i,score:1-i/3001}));
+  f.state.counts.stories=3000;
+  const url=await f.start();
+  let fullStatePayload=false,maxBoardItems=0,lightStateBytes=0,firstBoardBytes=0;
+  page.on("response",async response=>{
+    const u=new URL(response.url());
+    if(u.pathname==="/api/state"){
+      if(u.searchParams.get("includeStories")!=="false")fullStatePayload=true;
+      else try{lightStateBytes=(await response.body()).length}catch{}
+    }
+    if(u.pathname==="/api/board/stories"){
+      try{const body=await response.body();firstBoardBytes||=body.length;
+        maxBoardItems=Math.max(maxBoardItems,JSON.parse(body.toString()).stories.length)}catch{}
+    }
+  });
+  try{
+    await page.goto(url);
+    await expect(page.locator(".storyCard")).toHaveCount(25);
+    await expect(page.locator("#boardResultCount")).toContainText("3,000");
+    await page.locator("#boardPageSize").selectOption("100");
+    await expect(page.locator(".storyCard")).toHaveCount(100);
+    await page.locator("#boardBottomPager button[aria-label='Next page']").click();
+    await expect(page.locator("#boardResultCount")).toContainText("101–200");
+    expect(await page.locator(".storyCard").count()).toBeLessThanOrEqual(100);
+    expect(maxBoardItems).toBeLessThanOrEqual(100);
+    expect(fullStatePayload).toBe(false);
+    const legacyStateBytes=Buffer.byteLength(JSON.stringify(f.state));
+    console.log("Pagination fixture payload bytes",JSON.stringify({legacyStateBytes,lightStateBytes,firstBoardBytes,maxBoardItems,visibleCards:await page.locator(".storyCard").count()}));
+    expect(firstBoardBytes).toBeLessThan(legacyStateBytes);
+    expect(lightStateBytes).toBeLessThan(legacyStateBytes);
+  }finally{await f.stop()}
+});
+test("page-2 story operation, search across pages, and clamping",async({page})=>{
+  const f=fixture();
+  f.state.stories=Array.from({length:26},(_,i)=>({...f.story,id:"story-"+String(i).padStart(3,"0"),
+    topic:"Operation item "+i,score:1-i/100}));
+  f.state.counts.stories=26;
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator(".storyCard")).toHaveCount(25);
+    await page.locator("#boardBottomPager button[aria-label='Next page']").click();
+    await expect(page.locator(".storyCard")).toHaveCount(1);
+    await page.locator('.storyCard [data-command="MAKE"]').click();
+    await expect(page.locator(".storyCard .statusTag")).toContainText("QUEUED");
+    expect(f.posts.filter(p=>p.body.action==="MAKE")).toHaveLength(1);
+    await page.locator("#search").fill("Operation item 0");
+    await expect(page.locator("#boardResultCount")).toContainText("Showing 1");
+    await expect(page.locator(".storyCard")).toHaveCount(1);
+    await expect(page.locator(".storyCard")).toContainText("Operation item 0");
+  }finally{await f.stop()}
+});
+test("out-of-order requests never replace later pages or newer searches",async({page})=>{
+  const f=fixture();
+  f.state.stories=Array.from({length:100},(_,i)=>({...f.story,id:"out-"+i,topic:"Page race "+i,score:1-i/100}));
+  f.state.counts.stories=100;
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator(".storyCard")).toHaveCount(25);
+    f.setBoardDelay(800);
+    await page.locator("#boardBottomPager button[aria-label='Next page']").click();
+    f.setBoardDelay(0);
+    await page.locator("#boardTopPager button[aria-label='Page 4']").click();
+    await expect(page.locator("#boardResultCount")).toContainText("76–100");
+    await page.waitForTimeout(1050);
+    await expect(page.locator("#boardResultCount")).toContainText("76–100");
+    f.setBoardDelay(800);
+    await page.locator("#search").fill("Page race 91");
+    await page.waitForTimeout(300);
+    f.setBoardDelay(0);
+    await page.locator("#search").fill("Page race 3");
+    await expect(page.locator(".storyCard").first()).toContainText("Page race 3");
+    await page.waitForTimeout(1100);
+    await expect(page.locator(".storyCard").first()).toContainText("Page race 3");
+  }finally{await f.stop()}
+});
+
+
+test("status-changing action on the last filtered page clamps safely",async({page})=>{
+  const f=fixture();
+  f.state.stories=Array.from({length:26},(_,i)=>({...f.story,id:"clamp-"+i,
+    topic:"Clamp example "+i,score:1-i/100,status:"VERIFIED"}));
+  f.state.counts.stories=26;
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator(".storyCard")).toHaveCount(25);
+    await page.locator("#statusFilter").selectOption("VERIFIED");
+    await expect(page.locator("#boardResultCount")).toContainText("of 26");
+    await page.locator("#boardBottomPager button[aria-label='Next page']").click();
+    await expect(page.locator(".storyCard")).toHaveCount(1);
+    await page.evaluate(()=>{
+      window.__maxBoardAfterAction=0;
+      const root=document.querySelector("#stories");
+      window.__boardCapWatcher=new MutationObserver(()=>{
+        window.__maxBoardAfterAction=Math.max(window.__maxBoardAfterAction,root.querySelectorAll(".storyCard").length);
+      });
+      window.__boardCapWatcher.observe(root,{childList:true,subtree:false});
+    });
+    await page.locator('.storyCard [data-command="MAKE"]').click();
+    await expect(page.locator("#boardResultCount")).toContainText("Showing 1–25 of 25");
+    await expect(page.locator(".storyCard")).toHaveCount(25);
+    const maximum=await page.evaluate(()=>{window.__boardCapWatcher.disconnect();return window.__maxBoardAfterAction});
+    expect(maximum).toBeLessThanOrEqual(25);
+    expect(f.posts.filter(x=>x.body.action==="MAKE")).toHaveLength(1);
+  }finally{await f.stop()}
+});
+test("old queued stories remain visible under age filter, failed stories obey age",async({page})=>{
+  const f=fixture();
+  const now=new Date().toISOString(),old=new Date(Date.now()-4*3600*1000).toISOString();
+  f.state.stories=[
+    {...f.story,id:"old-queue",topic:"Older queue",status:"QUEUED",latestPublishedAt:old},
+    {...f.story,id:"old-failed",topic:"Older failure",status:"FAILED",latestPublishedAt:old},
+    {...f.story,id:"new-failed",topic:"Recent failure",status:"FAILED",latestPublishedAt:now}];
+  f.state.counts.stories=3;
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator(".storyCard")).toHaveCount(3);
+    await page.locator("#storyAgeFilter").selectOption("1");
+    await expect(page.locator(".storyCard")).toHaveCount(1);
+    await page.locator("#statusFilter").selectOption("QUEUED");
+    await expect(page.locator(".storyCard")).toContainText("Older queue");
+    await expect(page.locator("#storyAgeFilter")).toBeDisabled();
+    await page.locator("#statusFilter").selectOption("FAILED");
+    await expect(page.locator(".storyCard")).toContainText("Recent failure");
+    await expect(page.locator("#boardResultCount")).toContainText("of 1");
   }finally{await f.stop()}
 });

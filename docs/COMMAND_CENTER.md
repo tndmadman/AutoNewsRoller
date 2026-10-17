@@ -27,6 +27,72 @@ Its core jobs are:
 11. keep a controller-side video archive;
 12. track which completed videos the user has manually posted, without automating publication.
 
+## Story Operations Board pagination
+
+The Story Operations Board uses **server-side pagination** so thousands of tracked
+stories do not become thousands of DOM cards. The default is 25 stories per page;
+choose 10, 25, 50, or 100 in the **PER PAGE** selector. The chosen size is saved
+in browser localStorage. Use top or bottom page controls to navigate; the
+current page, result range, first/last pages and nearby page numbers are shown.
+
+Status-rail tabs, the status dropdown, publication-age selection and text search
+query the **entire** story pool. Changing any filter or the page size resets the
+page to 1. Search is debounced (250 ms), case-insensitive and trimmed. Page
+selection persists across ordinary five-second polling and live updates; if the
+last page disappears because a status changed, the backend clamps to the final
+available page. Statuses QUEUED, PRODUCING and HOLD ignore publication-age
+limits, including in status counts, so pending work stays accessible.
+
+### Board API
+
+Authenticated read-only endpoint:
+
+    GET /api/board/stories?page=1&pageSize=25&status=ALL&search=&ageHours=0
+
+- page: 1-based, defaults to 1; pages beyond the end resolve to the last page.
+- pageSize: 10, 25 (default), 50 or 100.
+- status: ALL, DISCOVERED, WORTHY, VERIFIED, QUEUED, PRODUCING, HOLD,
+  FAILED, COMPLETE, TO_POST, UPLOADED, SCRAPPED or SKIPPED.
+- search: trimmed case-insensitive search across topic, category, uploaded
+  platform and note, scrap reason, failure details, assigned worker, publishers
+  (maximum 500 characters).
+- ageHours: 0 (any age), 1, 2, 3, 4, 6, 8, 12, 24, 48 or 72.
+
+Example response shape:
+
+    {
+      "stories": [],
+      "page": 1,
+      "pageSize": 25,
+      "total": 1247,
+      "totalPages": 50,
+      "facets": { "ALL": 1247, "DISCOVERED": 510, "WORTHY": 220 }
+    }
+
+The example values are illustrative, not measured production counts.
+The stories field normally contains up to pageSize full public story objects.
+Total is the number of filtered **stories**, not video versions. Facets include
+full-pool status-rail counts with age limits but not text-search limits,
+mirroring the previous rails. TO_POST and UPLOADED count story states; the
+Video Archive and dashboard metrics count stored **video versions** and may differ.
+
+Malformed page/filter parameters return HTTP 400; invalid tokens return HTTP
+401 when authentication is configured. Filtering and sorting operate in memory
+and only the selected page is deep-copied. Scores sort descending with story ID
+as a deterministic tie-breaker. No persistence or worker protocol change.
+
+### Lightweight dashboard state
+
+Existing GET /api/state remains backward-compatible and returns the full
+story collection. The browser now uses:
+
+    GET /api/state?includeStories=false
+
+That opt-in mode keeps counts, feeds, workers, videos, settings and metadata,
+but returns an empty stories array without assembling/sorting the full list.
+The browser fetches board pages independently and discards stale/out-of-order
+responses. Worker and feed SSE events update only their own displays.
+
 ## Architecture
 
 Typical headless deployment:

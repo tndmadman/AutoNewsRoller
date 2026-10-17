@@ -17,6 +17,10 @@ import java.io.*;
 import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.*;
 import java.time.*;
 import java.util.*;
@@ -33,6 +37,8 @@ public final class SelfTest {
         testFeedTransportResilience(root);
         testClusterAndVerify(a);
         testCommandCenterQueue(a);
+        testStoryBoardPagination();
+        testStoryBoardApi(root);
         testCommandCenterMediaReporting(root,a);
         testCommandCenterLeaseRecovery(a);
         testPublisherBiasRegistry(root);
@@ -189,6 +195,147 @@ public final class SelfTest {
         VerificationResult v=new SourceVerifier().verify(n,2);
         ok(v.accepted(),"FactPackage verification");
         ok(v.factPackage().independentSourceCount()>=2,"syndication duplicate does not destroy independent confirmations");
+    }
+
+
+
+    private void testStoryBoardApi(Path root)throws Exception{
+        Path dir=Files.createTempDirectory("autonews-board-api-");
+        NewsConfig cfg=NewsConfig.load(root);
+        CommandCenterServer server=new CommandCenterServer(dir,cfg,"127.0.0.1",0,60,false,.75,10,"private-token",false);
+        int port=server.start();
+        try{
+            HttpClient client=HttpClient.newHttpClient();
+            String base="http://127.0.0.1:"+port;
+            HttpRequest unauthenticated=HttpRequest.newBuilder(URI.create(base+"/api/board/stories")).GET().build();
+            ok(client.send(unauthenticated,HttpResponse.BodyHandlers.ofString()).statusCode()==401,
+                    "board API enforces configured token authentication");
+            HttpRequest board=HttpRequest.newBuilder(URI.create(base+"/api/board/stories?page=999&pageSize=25"))
+                    .header("X-AutoNews-Token","private-token").GET().build();
+            HttpResponse<String> response=client.send(board,HttpResponse.BodyHandlers.ofString());
+            Map<String,Object>payload=Json.object(Json.parse(response.body()));
+            ok(response.statusCode()==200&&((Number)payload.get("page")).intValue()==1
+                    &&((Number)payload.get("totalPages")).intValue()==1
+                    &&((List<?>)payload.get("stories")).isEmpty(),
+                    "authenticated endpoint clamps empty collections");
+            HttpRequest invalid=HttpRequest.newBuilder(URI.create(base+"/api/board/stories?page=999999999999999&pageSize=500"))
+                    .header("X-AutoNews-Token","private-token").GET().build();
+            ok(client.send(invalid,HttpResponse.BodyHandlers.ofString()).statusCode()==400,
+                    "malformed and excessive board query values return HTTP 400");
+            HttpRequest lightweight=HttpRequest.newBuilder(URI.create(base+"/api/state?includeStories=false"))
+                    .header("X-AutoNews-Token","private-token").GET().build();
+            HttpResponse<String> stateResponse=client.send(lightweight,HttpResponse.BodyHandlers.ofString());
+            Map<String,Object>state=Json.object(Json.parse(stateResponse.body()));
+            ok(stateResponse.statusCode()==200&&state.containsKey("counts")
+                    &&((List<?>)state.get("stories")).isEmpty(),
+                    "lightweight state keeps dashboard shape and empty story array");
+        }finally{server.stop();}
+    }
+
+    private void testStoryBoardPagination()throws Exception{
+        Path dir=Files.createTempDirectory("autonews-board-pagination-");
+        Path state=dir.resolve("board.json");
+        Map<String,Object>records=new LinkedHashMap<>();
+        Instant now=Instant.now();
+        for(int i=0;i<3000;i++){
+            String id=String.format(Locale.ROOT,"synthetic-%04d",i);
+            Map<String,Object>m=new LinkedHashMap<>();
+            m.put("id",id);m.put("topic","Synthetic story "+i);
+            m.put("score",0.9);  // Deliberate tie to test deterministic paging.
+            m.put("status",i%5==0?"QUEUED":i%5==1?"FAILED":i%5==2?"COMPLETE":i%5==3?"SKIPPED":"VERIFIED");
+            m.put("worthy",i%5==4);m.put("verified",i%5==4);
+            m.put("latestPublishedAt",now.minusSeconds(i%2==0?1200:96*3600).toString());
+            m.put("publishers",List.of("Wire "+i));
+            m.put("uploaded",i%5==2&&i%2==0);
+            m.put("scrapped",false);
+            m.put("candidate",Map.of("oversized-private-object",List.of("not-on-the-wire")));
+            records.put(id,m);
+        }
+        for(int size:new int[]{0,1,25,26,100,1000}){
+            Map<String,Object>small=new LinkedHashMap<>();
+            for(var e:records.entrySet()){
+                if(small.size()==size)break;
+                small.put(e.getKey(),e.getValue());
+            }
+            Path smallState=dir.resolve("mini-"+size+".json");
+            Json.write(smallState,Map.of("stories",small));
+            CommandCenterStore smallStore=new CommandCenterStore(smallState,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+            Map<String,Object>smallPage=smallStore.boardStories(1,25,"ALL","",0);
+            int expectedPages=Math.max(1,(size+24)/25);
+            ok(((Number)smallPage.get("total")).intValue()==size
+                    &&((Number)smallPage.get("totalPages")).intValue()==expectedPages
+                    &&((List<?>)smallPage.get("stories")).size()==Math.min(25,size),
+                    "pagination boundaries for "+size+" stories");
+        }
+        Json.write(state,Map.of("stories",records,"feeds",Map.of(),"videos",Map.of()));
+        CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        Map<String,Object>tiny=store.snapshot(false);
+        ok(((List<?>)tiny.get("stories")).isEmpty()
+                &&((Number)Json.object(tiny.get("counts")).get("stories")).intValue()==3000,
+                "lightweight snapshot retains global metrics without constructing stories");
+        ok(((List<?>)store.snapshot().get("stories")).size()==3000,
+                "full snapshot remains backward-compatible");
+        Map<String,Object>first=store.boardStories(1,25,"ALL","",0);
+        Map<String,Object>second=store.boardStories(2,25,"ALL","",0);
+        Map<String,Object>last=store.boardStories(120,25,"ALL","",0);
+        ok(((List<?>)first.get("stories")).size()==25&&((Number)first.get("total")).intValue()==3000
+                &&((Number)last.get("page")).intValue()==120
+                &&((List<?>)last.get("stories")).size()==25,
+                "3,000 story board returns just 25 records and resolves last page");
+        List<?>firstRecords=(List<?>)first.get("stories"), secondRecords=(List<?>)second.get("stories");
+        ok("synthetic-0000".equals(Json.object(firstRecords.get(0)).get("id"))
+                &&"synthetic-0025".equals(Json.object(secondRecords.get(0)).get("id"))
+                &&!Json.object(firstRecords.get(0)).containsKey("candidate"),
+                "stable score ties, no duplicates across page boundaries, public-only page");
+        ok(((Number)store.boardStories(Integer.MAX_VALUE,100,"ALL","",0).get("page")).intValue()==30,
+                "extreme requested page clamps without integer overflow");
+        ok(((Number)store.boardStories(1,10,"ALL","Synthetic story 2999",0).get("total")).intValue()==1,
+                "search reaches story 2,999 beyond the first page");
+        Map<String,Object>assigned=new LinkedHashMap<>(Json.object(records.get("synthetic-2999")));
+        assigned.put("assignedWorker","test-active-worker");
+        Path assignedState=dir.resolve("assigned-search.json");
+        Json.write(assignedState,Map.of("stories",Map.of("synthetic-2999",assigned)));
+        CommandCenterStore assignedStore=new CommandCenterStore(assignedState,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        ok(((Number)assignedStore.boardStories(1,25,"ALL","test-active-worker",0).get("total")).intValue()==1,
+                "active assigned worker is globally searchable");
+        ok(((Number)store.boardStories(1,25,"QUEUED","",1).get("total")).intValue()==600
+                &&((Number)store.boardStories(1,25,"FAILED","",1).get("total")).intValue()==300,
+                "age filtering exempts queued operations but limits failed stories");
+        ok(((Number)store.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==300
+                &&((Number)store.boardStories(1,25,"UPLOADED","",0).get("total")).intValue()==300,
+                "story-level upload/to-post filters distinguish video archive metrics");
+        ok(((Number)store.boardStories(1,25,"WORTHY","",0).get("total")).intValue()==600
+                &&((Number)store.boardStories(1,25,"COMPLETE","",0).get("total")).intValue()==600,
+                "worthy and complete special filters match the story board");
+        Map<String,Integer>expected=Map.ofEntries(
+                Map.entry("ALL",3000),Map.entry("DISCOVERED",0),Map.entry("WORTHY",600),
+                Map.entry("VERIFIED",600),Map.entry("QUEUED",600),Map.entry("PRODUCING",0),
+                Map.entry("HOLD",0),Map.entry("FAILED",600),Map.entry("COMPLETE",600),
+                Map.entry("TO_POST",300),Map.entry("UPLOADED",300),Map.entry("SCRAPPED",0),
+                Map.entry("SKIPPED",600));
+        boolean filtersCorrect=true;
+        for(var entry:expected.entrySet()){
+            Map<String,Object>filtered=store.boardStories(1,10,entry.getKey(),"",0);
+            filtersCorrect&=((Number)filtered.get("total")).intValue()==entry.getValue()
+                    &&((Number)Json.object(filtered.get("facets")).get(entry.getKey())).intValue()==entry.getValue();
+        }
+        ok(filtersCorrect,"all supported status filters and full-pool facet totals");
+        Map<String,Object>oldHold=new LinkedHashMap<>(Json.object(records.get("synthetic-0001")));
+        oldHold.put("id","old-hold");oldHold.put("status","HOLD");
+        Path holdState=dir.resolve("hold.json");
+        Json.write(holdState,Map.of("stories",Map.of("old-hold",oldHold)));
+        CommandCenterStore holdStore=new CommandCenterStore(holdState,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        ok(((Number)holdStore.boardStories(1,25,"HOLD","",1).get("total")).intValue()==1
+                &&((Number)holdStore.boardStories(1,25,"ALL","",1).get("total")).intValue()==0,
+                "old HOLD remains accessible under its operational filter but not age-filtered ALL");
+
+        Map<String,Object>none=store.boardStories(60,25,"ALL","does not exist",0);
+        ok(((Number)none.get("page")).intValue()==1&&((Number)none.get("totalPages")).intValue()==1
+                &&((List<?>)none.get("stories")).isEmpty(),
+                "empty result resolves to the first page");
+        boolean rejected=false;
+        try{store.boardStories(1,999,"ALL","",0);}catch(IllegalArgumentException e){rejected=true;}
+        ok(rejected,"invalid server-side page size rejected");
     }
 
     private void testCommandCenterQueue(List<Article>a)throws Exception{
@@ -777,9 +924,9 @@ public final class SelfTest {
                 "Command Center exposes a persisted auto-video creation toggle");
         ok(commandCenterHtml.contains("id=\"railFailed\"")&&commandCenterJs.contains("OPERATIONAL_FILTERS")&&
                         commandCenterJs.contains("failurePanelHtml")&&commandCenterJs.contains("RETRY VIDEO")&&
-                        commandCenterJs.contains("ss.filter(x=>x.status===\"FAILED\")")&&
+                        commandCenterJs.contains("boardData.facets")&&commandCenterJs.contains("/api/board/stories?")&&
                         !commandCenterJs.contains("QUEUED\",\"PRODUCING\",\"FAILED\",\"HOLD"),
-                "Command Center gives terminal failures a first-class rail, supports age filtering on FAILED, and keeps diagnostics/manual retry controls");
+                "Command Center gives terminal failures a first-class rail, server pagination, and retains manual retry controls");
         String defaultsText=Files.readString(root.resolve("defaults.txt"));
         ok(defaultsText.contains("cyan cast")&&defaultsText.contains("electric blue lighting")&&defaultsText.contains("blue monochrome"),
                 "default negative prompt rejects synthetic cyan and electric-blue image grading");

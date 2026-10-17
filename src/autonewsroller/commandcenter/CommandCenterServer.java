@@ -52,6 +52,7 @@ public final class CommandCenterServer {
         server.setExecutor(Executors.newCachedThreadPool());
         server.createContext("/api/health",this::health);
         server.createContext("/api/state",this::state);
+        server.createContext("/api/board/stories",this::boardStories);
         server.createContext("/api/events",this::events);
         server.createContext("/api/scan",this::scanNow);
         server.createContext("/api/settings/auto-video",this::autoVideoSetting);
@@ -100,7 +101,32 @@ public final class CommandCenterServer {
     }
 
     private void state(HttpExchange x)throws IOException{
-        if(!api(x))return;if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}json(x,200,store.snapshot());
+        if(!api(x))return;
+        if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        boolean includeStories=!"false".equalsIgnoreCase(query(x.getRequestURI()).getOrDefault("includeStories","true"));
+        json(x,200,store.snapshot(includeStories));
+    }
+
+    private void boardStories(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        Map<String,String>q=query(x.getRequestURI());
+        try{
+            int page=boardInt(q.getOrDefault("page","1"),1);
+            int pageSize=boardInt(q.getOrDefault("pageSize","25"),25);
+            int ageHours=boardInt(q.getOrDefault("ageHours","0"),0);
+            String status=q.getOrDefault("status","ALL").trim().toUpperCase(Locale.ROOT);
+            String search=q.getOrDefault("search","").trim();
+            if(search.length()>500){json(x,400,Map.of("error","search is too long"));return;}
+            json(x,200,store.boardStories(page,pageSize,status,search,ageHours));
+        }catch(IllegalArgumentException e){
+            json(x,400,Map.of("error","invalid board query parameters"));
+        }
+    }
+
+    private static int boardInt(String raw,int fallback){
+        if(raw==null||raw.isBlank())return fallback;
+        try{return Integer.parseInt(raw);}catch(NumberFormatException e){throw new IllegalArgumentException("Invalid integer",e);}
     }
 
     private void scanNow(HttpExchange x)throws IOException{
