@@ -161,6 +161,14 @@ function reconcileList(root,records,emptyText=""){
     if(!interactionProtected(root))root.replaceChildren();
     else deferred=true;
   }
+  const expectedKeys=new Set(records.map(r=>String(r.key)));
+  // Remove obsolete, unprotected cards before adding replacements, so DOM
+  // never temporarily grows beyond the requested page size.
+  if(root.id==="stories")for(const [key,node] of current){
+    if(!expectedKeys.has(key)&&!interactionProtected(node)){
+      node.remove();current.delete(key);
+    }
+  }
   const wanted=new Set();
   records.forEach((r,i)=>{
     const key=String(r.key);
@@ -170,7 +178,12 @@ function reconcileList(root,records,emptyText=""){
     const next=template.content.firstElementChild;if(!next)return;
     next.dataset.recordKey=key;
     let existing=current.get(key);
-    if(!existing){existing=next;existing.dataset.recordKey=key;root.appendChild(existing)}
+    if(!existing){
+      // A protected obsolete story cannot be removed until pointerup or text
+      // selection ends. Delay its replacement rather than exceed the page cap.
+      if(root.id==="stories"&&root.children.length>=records.length){deferred=true;return;}
+      existing=next;existing.dataset.recordKey=key;root.appendChild(existing);
+    }
     else if(interactionProtected(existing))deferred=true;
     else patchNode(existing,next);
     if(root.children[i]!==existing){
