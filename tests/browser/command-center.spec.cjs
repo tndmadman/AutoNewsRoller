@@ -354,12 +354,16 @@ test("3,000 stories: lightweight polling and a maximum of one page in the DOM",a
     topic:"Bulk "+i,score:1-i/3001}));
   f.state.counts.stories=3000;
   const url=await f.start();
-  let fullStatePayload=false,maxBoardItems=0;
+  let fullStatePayload=false,maxBoardItems=0,lightStateBytes=0,firstBoardBytes=0;
   page.on("response",async response=>{
     const u=new URL(response.url());
-    if(u.pathname==="/api/state"&&u.searchParams.get("includeStories")!=="false")fullStatePayload=true;
+    if(u.pathname==="/api/state"){
+      if(u.searchParams.get("includeStories")!=="false")fullStatePayload=true;
+      else try{lightStateBytes=(await response.body()).length}catch{}
+    }
     if(u.pathname==="/api/board/stories"){
-      try{maxBoardItems=Math.max(maxBoardItems,(await response.json()).stories.length)}catch{}
+      try{const body=await response.body();firstBoardBytes||=body.length;
+        maxBoardItems=Math.max(maxBoardItems,JSON.parse(body.toString()).stories.length)}catch{}
     }
   });
   try{
@@ -373,6 +377,10 @@ test("3,000 stories: lightweight polling and a maximum of one page in the DOM",a
     expect(await page.locator(".storyCard").count()).toBeLessThanOrEqual(100);
     expect(maxBoardItems).toBeLessThanOrEqual(100);
     expect(fullStatePayload).toBe(false);
+    const legacyStateBytes=Buffer.byteLength(JSON.stringify(f.state));
+    console.log("Pagination fixture payload bytes",JSON.stringify({legacyStateBytes,lightStateBytes,firstBoardBytes,maxBoardItems,visibleCards:await page.locator(".storyCard").count()}));
+    expect(firstBoardBytes).toBeLessThan(legacyStateBytes);
+    expect(lightStateBytes).toBeLessThan(legacyStateBytes);
   }finally{await f.stop()}
 });
 test("page-2 story operation, search across pages, and clamping",async({page})=>{
@@ -418,5 +426,48 @@ test("out-of-order requests never replace later pages or newer searches",async({
     await expect(page.locator(".storyCard").first()).toContainText("Page race 3");
     await page.waitForTimeout(1100);
     await expect(page.locator(".storyCard").first()).toContainText("Page race 3");
+  }finally{await f.stop()}
+});
+
+
+test("status-changing action on the last filtered page clamps safely",async({page})=>{
+  const f=fixture();
+  f.state.stories=Array.from({length:26},(_,i)=>({...f.story,id:"clamp-"+i,
+    topic:"Clamp example "+i,score:1-i/100,status:"VERIFIED"}));
+  f.state.counts.stories=26;
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator(".storyCard")).toHaveCount(25);
+    await page.locator("#statusFilter").selectOption("VERIFIED");
+    await expect(page.locator("#boardResultCount")).toContainText("of 26");
+    await page.locator("#boardBottomPager button[aria-label='Next page']").click();
+    await expect(page.locator(".storyCard")).toHaveCount(1);
+    await page.locator('.storyCard [data-command="MAKE"]').click();
+    await expect(page.locator("#boardResultCount")).toContainText("Showing 1–25 of 25");
+    await expect(page.locator(".storyCard")).toHaveCount(25);
+    expect(f.posts.filter(x=>x.body.action==="MAKE")).toHaveLength(1);
+  }finally{await f.stop()}
+});
+test("old queued stories remain visible under age filter, failed stories obey age",async({page})=>{
+  const f=fixture();
+  const now=new Date().toISOString(),old=new Date(Date.now()-4*3600*1000).toISOString();
+  f.state.stories=[
+    {...f.story,id:"old-queue",topic:"Older queue",status:"QUEUED",latestPublishedAt:old},
+    {...f.story,id:"old-failed",topic:"Older failure",status:"FAILED",latestPublishedAt:old},
+    {...f.story,id:"new-failed",topic:"Recent failure",status:"FAILED",latestPublishedAt:now}];
+  f.state.counts.stories=3;
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator(".storyCard")).toHaveCount(3);
+    await page.locator("#storyAgeFilter").selectOption("1");
+    await expect(page.locator(".storyCard")).toHaveCount(1);
+    await page.locator("#statusFilter").selectOption("QUEUED");
+    await expect(page.locator(".storyCard")).toContainText("Older queue");
+    await expect(page.locator("#storyAgeFilter")).toBeDisabled();
+    await page.locator("#statusFilter").selectOption("FAILED");
+    await expect(page.locator(".storyCard")).toContainText("Recent failure");
+    await expect(page.locator("#boardResultCount")).toContainText("of 1");
   }finally{await f.stop()}
 });
