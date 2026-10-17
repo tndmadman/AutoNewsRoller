@@ -251,7 +251,7 @@ public final class SelfTest {
             m.put("candidate",Map.of("oversized-private-object",List.of("not-on-the-wire")));
             records.put(id,m);
         }
-        for(int size:new int[]{0,1,25,26,100}){
+        for(int size:new int[]{0,1,25,26,100,1000}){
             Map<String,Object>small=new LinkedHashMap<>();
             for(var e:records.entrySet()){
                 if(small.size()==size)break;
@@ -300,6 +300,28 @@ public final class SelfTest {
         ok(((Number)store.boardStories(1,25,"WORTHY","",0).get("total")).intValue()==600
                 &&((Number)store.boardStories(1,25,"COMPLETE","",0).get("total")).intValue()==600,
                 "worthy and complete special filters match the story board");
+        Map<String,Integer>expected=Map.ofEntries(
+                Map.entry("ALL",3000),Map.entry("DISCOVERED",0),Map.entry("WORTHY",600),
+                Map.entry("VERIFIED",600),Map.entry("QUEUED",600),Map.entry("PRODUCING",0),
+                Map.entry("HOLD",0),Map.entry("FAILED",600),Map.entry("COMPLETE",600),
+                Map.entry("TO_POST",300),Map.entry("UPLOADED",300),Map.entry("SCRAPPED",0),
+                Map.entry("SKIPPED",600));
+        boolean filtersCorrect=true;
+        for(var entry:expected.entrySet()){
+            Map<String,Object>filtered=store.boardStories(1,10,entry.getKey(),"",0);
+            filtersCorrect&=((Number)filtered.get("total")).intValue()==entry.getValue()
+                    &&((Number)Json.object(filtered.get("facets")).get(entry.getKey())).intValue()==entry.getValue();
+        }
+        ok(filtersCorrect,"all supported status filters and full-pool facet totals");
+        Map<String,Object>oldHold=new LinkedHashMap<>(Json.object(records.get("synthetic-0001")));
+        oldHold.put("id","old-hold");oldHold.put("status","HOLD");
+        Path holdState=dir.resolve("hold.json");
+        Json.write(holdState,Map.of("stories",Map.of("old-hold",oldHold)));
+        CommandCenterStore holdStore=new CommandCenterStore(holdState,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        ok(((Number)holdStore.boardStories(1,25,"HOLD","",1).get("total")).intValue()==1
+                &&((Number)holdStore.boardStories(1,25,"ALL","",1).get("total")).intValue()==0,
+                "old HOLD remains accessible under its operational filter but not age-filtered ALL");
+
         Map<String,Object>none=store.boardStories(60,25,"ALL","does not exist",0);
         ok(((Number)none.get("page")).intValue()==1&&((Number)none.get("totalPages")).intValue()==1
                 &&((List<?>)none.get("stories")).isEmpty(),
