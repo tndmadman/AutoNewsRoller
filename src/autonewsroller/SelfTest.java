@@ -212,6 +212,22 @@ public final class SelfTest {
             m.put("candidate",Map.of("oversized-private-object",List.of("not-on-the-wire")));
             records.put(id,m);
         }
+        for(int size:new int[]{0,1,25,26,100}){
+            Map<String,Object>small=new LinkedHashMap<>();
+            for(var e:records.entrySet()){
+                if(small.size()==size)break;
+                small.put(e.getKey(),e.getValue());
+            }
+            Path smallState=dir.resolve("mini-"+size+".json");
+            Json.write(smallState,Map.of("stories",small));
+            CommandCenterStore smallStore=new CommandCenterStore(smallState,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+            Map<String,Object>smallPage=smallStore.boardStories(1,25,"ALL","",0);
+            int expectedPages=Math.max(1,(size+24)/25);
+            ok(((Number)smallPage.get("total")).intValue()==size
+                    &&((Number)smallPage.get("totalPages")).intValue()==expectedPages
+                    &&((List<?>)smallPage.get("stories")).size()==Math.min(25,size),
+                    "pagination boundaries for "+size+" stories");
+        }
         Json.write(state,Map.of("stories",records,"feeds",Map.of(),"videos",Map.of()));
         CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
         Map<String,Object>tiny=store.snapshot(false);
