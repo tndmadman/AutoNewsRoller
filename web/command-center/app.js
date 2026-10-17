@@ -4,7 +4,7 @@ const BOARD_PAGE_SIZES=new Set([10,25,50,100]);
 let boardPageSize=Number(localStorage.getItem("autonewsBoardPageSize")||25);
 if(!BOARD_PAGE_SIZES.has(boardPageSize))boardPageSize=25;
 let boardPage=1, boardData={stories:[],page:1,pageSize:boardPageSize,total:0,totalPages:1,facets:{}};
-let boardGeneration=0, boardInFlight=false, boardSearchTimer=null;
+let boardGeneration=0, boardInFlight=false, boardSearchTimer=null, boardRenderDeferred=false;
 let refreshInFlight=null, refreshAgain=false, stateEpoch=0, pointerTarget=null;
 const pendingActions=new Map();
 let liveSequence=0;
@@ -147,14 +147,19 @@ function patchNode(oldNode,newNode){
   while(oldNode.childNodes.length>children.length)oldNode.lastChild.remove();
 }
 function reconcileList(root,records,emptyText=""){
+  // Return whether interaction protection deferred part of the requested update.
+  // The next board poll must retry even if the server response is byte-for-byte
+  // identical to the acknowledged, but not yet displayed, page.
+  let deferred=false;
   const current=new Map([...root.children].filter(x=>x.dataset.recordKey!==undefined).map(x=>[x.dataset.recordKey,x]));
   if(!records.length){
-    if([...root.children].some(interactionProtected))return;
+    if([...root.children].some(interactionProtected))return true;
     if(root.textContent!==emptyText||root.children.length)root.textContent=emptyText;
-    return;
+    return false;
   }
   if(root.children.length===0 || (root.children.length===1&&!root.firstElementChild?.dataset.recordKey)){
     if(!interactionProtected(root))root.replaceChildren();
+    else deferred=true;
   }
   const wanted=new Set();
   records.forEach((r,i)=>{
@@ -166,12 +171,19 @@ function reconcileList(root,records,emptyText=""){
     next.dataset.recordKey=key;
     let existing=current.get(key);
     if(!existing){existing=next;existing.dataset.recordKey=key;root.appendChild(existing)}
-    else if(!interactionProtected(existing))patchNode(existing,next);
-    if(root.children[i]!==existing&&!interactionProtected(existing)&&!interactionProtected(root))
-      root.insertBefore(existing,root.children[i]||null);
+    else if(interactionProtected(existing))deferred=true;
+    else patchNode(existing,next);
+    if(root.children[i]!==existing){
+      if(interactionProtected(existing)||interactionProtected(root))deferred=true;
+      else root.insertBefore(existing,root.children[i]||null);
+    }
   });
-  for(const [key,node] of current)if(!wanted.has(key)&&!interactionProtected(node))node.remove();
+  for(const [key,node] of current)if(!wanted.has(key)){
+    if(interactionProtected(node))deferred=true;
+    else node.remove();
+  }
   updatePendingControls();
+  return deferred;
 }
 function updatePendingControls(){
   document.querySelectorAll("[data-command]").forEach(button=>{
@@ -261,7 +273,7 @@ async function loadBoard(force=false){
     const changed=JSON.stringify(next)!==JSON.stringify(boardData);
     boardData=next;
     boardPage=next.page;
-    if(changed)renderStories();else renderPagination();
+    if(changed||boardRenderDeferred)renderStories();else renderPagination();
     renderRails();
   }catch(e){
     if(generation!==boardGeneration)return;
@@ -318,7 +330,7 @@ function renderStories(){
   const empty=storyAgeLimitHours>0
     ?"No stories in this view were published within the last "+storyAgeLimitHours+" hour(s)."
     :"No stories match this view.";
-  reconcileList(root,ss.map(s=>({key:String(s.id),html:storyCard(s)})),empty);
+  boardRenderDeferred=reconcileList(root,ss.map(s=>({key:String(s.id),html:storyCard(s)})),empty);
   renderPagination();
 }
 function failurePanelHtml(s,status){
