@@ -653,7 +653,7 @@ public final class CommandCenterStore {
     private static String boardSearchText(Map<String,Object>m){
         StringBuilder sb=new StringBuilder();
         for(String key:List.of("topic","category","uploadedPlatform","uploadNote","scrapReason",
-                "lastFailure","failureType","lastAssignedWorker")){
+                "lastFailure","failureType","assignedWorker","lastAssignedWorker")){
             Object value=m.get(key);
             if(value!=null)sb.append(value).append(' ');
         }
