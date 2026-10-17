@@ -54,7 +54,7 @@ public final class VisualSmoke {
             if(Math.abs(duration-2.6)>.30)throw new AssertionError("Video duration differs from audio: "+duration);
             if(captions.equals("sentence")){
                 String ass=Files.readString(d.resolve("test-sentence.mp4.ass"));
-                if(!ass.contains(",,0,2,"))throw new AssertionError("ASS must retain bottom-center caption alignment");
+                if(!ass.contains(",0,2,80,245,680,1"))throw new AssertionError("ASS must retain bottom-center caption alignment and TikTok margins");
                 if(!ass.contains(",80,245,680,1"))throw new AssertionError("ASS must reserve TikTok right and bottom UI");
                 Storyboard board=new Storyboard("smoke",2.6,"fixture",java.util.List.of(
                         new Storyboard.Scene(0,0,.85,"HOOK",0,java.util.List.of("FACT_A"),"PUSH_IN","CUT","fixture"),
