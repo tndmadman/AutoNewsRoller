@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>AutoNewsRoller // Command Center</title>
+  <title>ANR / Operations Console</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -13,12 +13,12 @@
     <div class="brand">
       <div class="logoMark">ANR</div>
       <div>
-        <h1>AUTONEWSROLLER <span>// COMMAND CENTER</span></h1>
-        <div class="sub">LIVE NEWS INTELLIGENCE & VIDEO PRODUCTION GRID</div>
+        <h1>AUTONEWSROLLER <span>/ NEWS OPERATIONS SYSTEM</span></h1>
+        <div class="sub">SIGNAL INGEST / EDITORIAL QUEUE / RENDER CONTROL  •  EST. 1998</div>
       </div>
     </div>
     <div class="topActions">
-      <div id="connection" class="pill danger">DISCONNECTED</div>
+      <div id="connection" class="pill danger" role="status" aria-live="polite">DISCONNECTED</div>
       <div id="clock" class="clock">--:--:--</div>
       <button id="autoVideoToggle" class="toggleBtn off" type="button" aria-pressed="false" title="Enable or disable automatic video queueing from new scans"><span class="toggleLamp"></span><span id="autoVideoToggleText">AUTO VIDEO OFF</span></button>
       <button id="scanBtn" class="btn primary">◉ SCAN NOW</button>
@@ -29,9 +29,10 @@
   <main>
     <section class="heroGrid">
       <div class="panel radarPanel">
-        <div class="panelTitle"><span>GLOBAL FEED RADAR</span><small id="scanState">STANDBY</small></div>
-        <canvas id="radarCanvas"></canvas>
+        <div class="panelTitle"><span>SOURCE SIGNAL ARRAY / CH-01</span><small id="scanState">STANDBY</small></div>
+        <canvas id="radarCanvas" role="img" aria-label="Current feed source signals; dots are deterministically positioned by feed identifier, not geographic locations"></canvas>
         <div class="radarLegend"><span><i class="dot ok"></i> ONLINE</span><span><i class="dot bad"></i> FAILED</span><span><i class="dot scan"></i> SCANNING</span></div>
+        <p class="signalCaption">SOURCE POSITIONS ARE HASHED / NOT GEOGRAPHIC</p>
       </div>
 
       <div class="metricsGrid">
@@ -45,13 +46,13 @@
     </section>
 
     <section class="panel workersPanel">
-      <div class="panelTitle"><span>PRODUCTION NODES</span><small>CPU / RAM / GPU / VRAM / JOB TELEMETRY</small></div>
+      <div class="panelTitle"><span>WORKER RACK / CH-02</span><small>CPU / RAM / GPU / VRAM / JOB TELEMETRY</small></div>
       <div id="workers" class="workerGrid emptyState">No workers connected.</div>
     </section>
 
     <section class="panel">
       <div class="panelTitle storyHeader">
-        <span>STORY OPERATIONS BOARD</span>
+        <span>MISSION QUEUE / STORY OPERATIONS / CH-03</span>
         <div class="controls">
           <input id="search" type="search" placeholder="Search stories, publishers, category…">
           <select id="storyAgeFilter" title="Maximum published age for stories shown in the current view">
@@ -96,6 +97,7 @@
         <button class="rail" data-filter="UPLOADED">UPLOADED <b id="railUploaded">0</b></button>
         <button class="rail" data-filter="SCRAPPED">SCRAPPED <b id="railScrapped">0</b></button>
       </div>
+      <div id="statusDistribution" class="statusDistribution" aria-label="Current story status counts"></div>
       <div class="boardPagingHeader">
         <span id="boardResultCount" role="status" aria-live="polite">Loading stories…</span>
         <label for="boardPageSize">PER PAGE</label>
@@ -111,17 +113,18 @@
 
     <section class="split">
       <div class="panel">
-        <div class="panelTitle"><span>RSS FEED HEALTH</span><small id="feedSummary">0 feeds</small></div>
+        <div class="panelTitle"><span>RSS SOURCE LEDGER / CH-04</span><small id="feedSummary">0 feeds</small></div>
+        <div id="feedMatrix" class="feedMatrix" aria-label="Current RSS feed status matrix"></div>
         <div id="feeds" class="feedGrid"></div>
       </div>
       <div class="panel">
-        <div class="panelTitle"><span>VIDEO ARCHIVE</span><small>MANUAL POSTING TRACKER</small></div>
+        <div class="panelTitle"><span>VERSION / POSTING LEDGER / CH-05</span><small>MANUAL POSTING TRACKER</small></div>
         <div id="videos" class="videoList emptyState">No completed videos yet.</div>
       </div>
     </section>
 
     <section class="panel eventPanel">
-      <div class="panelTitle"><span>LIVE EVENT BUS</span><small>SSE STREAM</small></div>
+      <div class="panelTitle"><span>EVENT CONSOLE / CH-06</span><small>SSE STREAM</small></div>
       <div id="eventLog" class="eventLog"></div>
     </section>
   </main>
