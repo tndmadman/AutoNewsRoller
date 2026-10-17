@@ -137,7 +137,7 @@
       <form id="settingsForm" class="panel form">
         <div class="panel-top">WORKER CONNECTION <span>RESTART REQUIRED FOR WORKER CHANGES</span></div>
         <label>CONTROLLER URL <input name="controllerUrl" type="url" required maxlength="255"></label>
-        <label>WORKER ID <input name="workerId" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" maxlength="64"></label>
+        <label>WORKER ID <input name="workerId" required pattern="[A-Za-z0-9](?:[A-Za-z0-9._]|-){0,63}" maxlength="64"></label>
         <label>LOCAL HTTP PORT <input name="port" type="number" required min="1024" max="65535"><small>Applies after application relaunch</small></label>
         <label>LOG HISTORY CAP <input name="logLimit" type="number" min="100" max="2000" required></label>
         <label>STATE POLL INTERVAL (SECONDS) <input name="refreshSeconds" type="number" min="2" max="60" required></label>

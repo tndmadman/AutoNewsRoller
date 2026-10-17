@@ -203,6 +203,10 @@ async function saveSettings(ev){
     port:Number(f.elements.port.value),logLimit:Number(f.elements.logLimit.value),
     refreshSeconds:Number(f.elements.refreshSeconds.value),autoStart:f.elements.autoStart.checked,
     autoOpenBrowser:f.elements.autoOpenBrowser.checked};
+  if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(data.workerId)){
+    issue("SAVE FAILED / WORKER ID MUST USE LETTERS, NUMBERS, DOTS, UNDERSCORES OR HYPHENS",true);
+    return;
+  }
   const b=f.querySelector('[type="submit"]');b.disabled=true;
   try{const result=await post("settings",data);state.settings=result;
     state.pollMs=result.refreshSeconds*1000;issue("PREFERENCES SAVED / CONNECTION CHANGES REQUIRE SAFE RESTART; PORT REQUIRES RELAUNCH")}
