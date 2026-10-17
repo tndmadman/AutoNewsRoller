@@ -17,7 +17,8 @@ public final class CaptionWriter {
         List<SpeechTiming.Word> words=timing.words();
         if(words.isEmpty())return null;
         int font=autonewsroller.visuals.BroadcastLayout.captionFont(width);
-        int marginH=autonewsroller.visuals.BroadcastLayout.captionHorizontalMargin(width);
+        int marginL=autonewsroller.visuals.BroadcastLayout.captionLeftMargin(width);
+        int marginR=autonewsroller.visuals.BroadcastLayout.captionRightMargin(width);
         int marginV=autonewsroller.visuals.BroadcastLayout.captionVerticalMargin(height);
         StringBuilder ass=new StringBuilder();
         ass.append("[Script Info]\n")
@@ -27,14 +28,14 @@ public final class CaptionWriter {
            .append("[V4+ Styles]\n")
            .append("Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n")
            .append("Style: News,Arial,").append(font).append(",&H00FFFFFF,&H00B27943,&H00140C06,&HC80A0D12,-1,0,0,0,100,100,0,0,3,3,0,2,")
-           .append(marginH).append(',').append(marginH).append(',').append(marginV).append(",1\n\n")
+           .append(marginL).append(',').append(marginR).append(',').append(marginV).append(",1\n\n")
            .append("[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n");
         List<String>displayWords=new ArrayList<>();
         java.util.regex.Matcher lexical=java.util.regex.Pattern.compile(
                 "[\\p{L}\\p{N}]+(?:['’\\-][\\p{L}\\p{N}]+)*[.!?,;:]*").matcher(narration==null?"":narration);
         while(lexical.find())displayWords.add(lexical.group());
         boolean single="word".equalsIgnoreCase(mode);
-        int maxLineChars=Math.max(20,(int)Math.floor(width/(Math.max(18,font)*.57)));
+        int maxLineChars=Math.max(14,(int)Math.floor((width-marginL-marginR)/(Math.max(18,font)*.57)));
         int maxBlockChars=2*maxLineChars-2;
         for(int i=0;i<words.size();){
             int startIndex=i;

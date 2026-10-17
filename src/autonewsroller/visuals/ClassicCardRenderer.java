@@ -27,8 +27,8 @@ public final class ClassicCardRenderer extends CardRenderer {
         Graphics2D g=prepare(canvas);
         g.scale(w/1080.0,h/1920.0);
         if("HOOK".equalsIgnoreCase(item.type()))renderHookPlaceholder(g,item,1080,1920);
-        else if("SOURCE_CARD".equalsIgnoreCase(item.type()))renderSourceCard(g,item,1080,1920);
-        else if("POLITICAL_CONTEXT".equalsIgnoreCase(item.type()))renderPoliticalContext(g,item,1080,1920);
+        else if("SOURCE_CARD".equalsIgnoreCase(item.type()))CardRenderer.renderSafeSourceCard(g,item,1080,1920);
+        else if("POLITICAL_CONTEXT".equalsIgnoreCase(item.type()))CardRenderer.renderSafePoliticalContext(g,item,1080,1920);
         else renderStoryPlaceholder(g,item,1080,1920);
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
@@ -65,10 +65,10 @@ public final class ClassicCardRenderer extends CardRenderer {
 
     private static void paintAiDisclosure(Graphics2D g){
         g.setColor(new Color(6,10,16,230));
-        g.fillRoundRect(785,142,255,46,7,7);
+        g.fillRoundRect(785,377,255,46,7,7);
         g.setColor(Color.WHITE);
         g.setFont(new Font("SansSerif",Font.BOLD,21));
-        g.drawString("AI ILLUSTRATION",804,172);
+        g.drawString("AI ILLUSTRATION",804,407);
     }
 
     private static void renderHookPackage(Graphics2D g,VisualPlan.Item item,BufferedImage source,int w,int h){
@@ -80,17 +80,17 @@ public final class ClassicCardRenderer extends CardRenderer {
 
     private static void paintHookOverlay(Graphics2D g,VisualPlan.Item item,int w,int h){
         paintTopBar(g,w,"TOP STORY",true);
-        int tickerY=h-BroadcastTheme.TICKER_HEIGHT;
         int panelH=430;
-        int panelY=tickerY-panelH;
+        int panelY=BroadcastLayout.panelBottom(h)-panelH;
+        int panelWidth=BroadcastLayout.safeRight(w);
 
         for(int n=0;n<7;n++){
             int alpha=20+n*24;
             g.setColor(new Color(4,10,17,Math.min(190,alpha)));
-            g.fillRect(0,panelY-150+n*24,w,28);
+            g.fillRect(0,panelY-150+n*24,panelWidth,28);
         }
         g.setColor(new Color(NAVY.getRed(),NAVY.getGreen(),NAVY.getBlue(),232));
-        g.fillRect(0,panelY,w,panelH);
+        g.fillRect(0,panelY,panelWidth,panelH);
         g.setColor(RED);g.fillRect(0,panelY,w,8);
 
         g.setColor(RED);g.fillRoundRect(48,panelY+34,188,44,8,8);
@@ -99,12 +99,12 @@ public final class ClassicCardRenderer extends CardRenderer {
 
         String headline=coverHeadline(item.title(),8);
         g.setColor(Color.WHITE);
-        Font headlineFont=fitHeadlineFont(g,headline,w-96,3,70,50);
-        drawWrapped(g,headline,headlineFont,48,panelY+145,w-96,headlineFont.getSize()+7,3);
+        Font headlineFont=fitHeadlineFont(g,headline,panelWidth-96,3,70,50);
+        drawWrapped(g,headline,headlineFont,48,panelY+145,panelWidth-96,headlineFont.getSize()+7,3);
 
         String deck=compactDeck(item.body(),14);
         g.setColor(new Color(226,231,237));
-        drawWrapped(g,deck,new Font("SansSerif",Font.BOLD,27),48,panelY+337,w-96,36,2);
+        drawWrapped(g,deck,new Font("SansSerif",Font.BOLD,27),48,panelY+337,panelWidth-96,36,2);
         paintTicker(g,w,h,"AWARE NEWS","VERIFIED REPORTING",true);
     }
 
@@ -117,17 +117,17 @@ public final class ClassicCardRenderer extends CardRenderer {
 
     private static void paintStoryOverlay(Graphics2D g,VisualPlan.Item item,int w,int h){
         paintTopBar(g,w,storyLabel(item.type()),false);
-        int tickerY=h-BroadcastTheme.TICKER_HEIGHT;
         int panelH=300;
-        int panelY=tickerY-panelH;
+        int panelY=BroadcastLayout.panelBottom(h)-panelH;
+        int panelWidth=BroadcastLayout.safeRight(w);
 
         for(int n=0;n<5;n++){
             int alpha=18+n*27;
             g.setColor(new Color(4,10,17,Math.min(160,alpha)));
-            g.fillRect(0,panelY-100+n*22,w,26);
+            g.fillRect(0,panelY-100+n*22,panelWidth,26);
         }
         g.setColor(new Color(NAVY.getRed(),NAVY.getGreen(),NAVY.getBlue(),228));
-        g.fillRect(0,panelY,w,panelH);
+        g.fillRect(0,panelY,panelWidth,panelH);
         g.setColor(BLUE);g.fillRect(0,panelY,12,panelH);
         g.setColor(RED);g.fillRect(12,panelY,176,7);
 
@@ -137,12 +137,12 @@ public final class ClassicCardRenderer extends CardRenderer {
 
         String headline=coverHeadline(item.title(),10);
         g.setColor(TEXT);
-        Font headlineFont=fitHeadlineFont(g,headline,w-100,2,45,37);
-        drawWrapped(g,headline,headlineFont,50,panelY+112,w-100,headlineFont.getSize()+7,2);
+        Font headlineFont=fitHeadlineFont(g,headline,panelWidth-100,2,45,37);
+        drawWrapped(g,headline,headlineFont,50,panelY+112,panelWidth-100,headlineFont.getSize()+7,2);
 
         String deck=compactDeck(item.body(),13);
         g.setColor(MUTED);
-        drawWrapped(g,deck,new Font("SansSerif",Font.PLAIN,24),50,panelY+225,w-100,31,2);
+        drawWrapped(g,deck,new Font("SansSerif",Font.PLAIN,24),50,panelY+225,panelWidth-100,31,2);
         paintTicker(g,w,h,"AWARE NEWS","STORY UPDATE",false);
     }
 
@@ -349,35 +349,26 @@ public final class ClassicCardRenderer extends CardRenderer {
     }
 
     private static void paintTopBar(Graphics2D g,int w,String label,boolean topStory){
+        int y=BroadcastLayout.headerTop(1920);
         g.setColor(new Color(NAVY.getRed(),NAVY.getGreen(),NAVY.getBlue(),244));
-        g.fillRect(0,0,w,BroadcastTheme.HEADER_HEIGHT);
-        g.setColor(BLUE);g.fillRect(0,0,w,7);
-        g.setColor(RED);g.fillRect(0,7,Math.max(150,w/4),4);
-
-        g.setColor(BLUE);g.fillRoundRect(34,25,166,61,8,8);
+        g.fillRect(0,y,w,BroadcastTheme.HEADER_HEIGHT);
+        g.setColor(BLUE);g.fillRect(0,y,w,7);
+        g.setColor(RED);g.fillRect(0,y+7,Math.max(150,w/4),4);
+        g.setColor(BLUE);g.fillRoundRect(34,y+25,166,61,8,8);
         g.setColor(Color.WHITE);g.setFont(new Font("SansSerif",Font.BOLD,30));
-        g.drawString("AWARE",51,66);
+        g.drawString("AWARE",51,y+66);
         g.setColor(TEXT);g.setFont(new Font("SansSerif",Font.BOLD,23));
-        g.drawString("NEWS",219,65);
-
+        g.drawString("NEWS",219,y+65);
         String right=label==null||label.isBlank()?"NEWS UPDATE":label.toUpperCase(Locale.ROOT);
         g.setFont(new Font("SansSerif",Font.BOLD,17));
         FontMetrics fm=g.getFontMetrics();int tagW=Math.max(150,fm.stringWidth(right)+34);
-        g.setColor(topStory?RED:BLUE);g.fillRoundRect(w-34-tagW,29,tagW,50,7,7);
-        g.setColor(Color.WHITE);g.drawString(right,w-34-tagW+17,61);
-        g.setColor(RULE);g.fillRect(34,BroadcastTheme.HEADER_HEIGHT-12,w-68,2);
+        g.setColor(topStory?RED:BLUE);g.fillRoundRect(w-34-tagW,y+29,tagW,50,7,7);
+        g.setColor(Color.WHITE);g.drawString(right,w-34-tagW+17,y+61);
+        g.setColor(RULE);g.fillRect(34,y+BroadcastTheme.HEADER_HEIGHT-12,w-68,2);
     }
 
     private static void paintTicker(Graphics2D g,int w,int h,String brand,String message,boolean urgent){
-        int y=h-BroadcastTheme.TICKER_HEIGHT;
-        g.setColor(TICKER);g.fillRect(0,y,w,BroadcastTheme.TICKER_HEIGHT);
-        g.setColor(BLUE);g.fillRect(0,y,w,5);
-        g.setColor(urgent?RED:BLUE);g.fillRect(0,y+5,205,BroadcastTheme.TICKER_HEIGHT-5);
-        g.setColor(Color.WHITE);g.setFont(new Font("SansSerif",Font.BOLD,18));
-        g.drawString(brand,29,y+49);
-        g.setColor(TEXT);g.setFont(new Font("SansSerif",Font.BOLD,18));
-        g.drawString(message,238,y+49);
-        g.setColor(RED);g.fillRect(w-16,y+5,16,BroadcastTheme.TICKER_HEIGHT-5);
+        // TikTok overlays its own post description over this region.
     }
 
     private static void paintImageFrame(Graphics2D g,BufferedImage source,int x,int y,int w,int h,int radius,double verticalBias){

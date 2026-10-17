@@ -53,6 +53,11 @@ public final class VisualSmoke {
             double duration=renderer.probeDuration(output);
             if(Math.abs(duration-2.6)>.30)throw new AssertionError("Video duration differs from audio: "+duration);
             if(captions.equals("sentence")){
+                String ass=Files.readString(d.resolve("test-sentence.mp4.ass"));
+                String expected=",0,2,"+BroadcastLayout.captionLeftMargin(360)+","+
+                        BroadcastLayout.captionRightMargin(360)+","+
+                        BroadcastLayout.captionVerticalMargin(640)+",1";
+                if(!ass.contains(expected))throw new AssertionError("ASS must reserve scaled TikTok-safe caption margins: "+expected);
                 Storyboard board=new Storyboard("smoke",2.6,"fixture",java.util.List.of(
                         new Storyboard.Scene(0,0,.85,"HOOK",0,java.util.List.of("FACT_A"),"PUSH_IN","CUT","fixture"),
                         new Storyboard.Scene(1,.85,1.70,"STATISTIC",1,java.util.List.of("FACT_B"),"STATIC","CUT","fixture"),
