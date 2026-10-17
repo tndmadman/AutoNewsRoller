@@ -789,3 +789,54 @@ Defaults:
     politicalAnalysisOllamaUrl=http://127.0.0.1:11434/api/generate
 
 These are worker-side settings. A headless controller does not require Ollama merely to host the dashboard or scan RSS feeds.
+
+
+## Operator Console (late-1990s terminal skin)
+
+The Command Center remains plain HTML, CSS and vanilla JavaScript. Its new visual shell is an
+industrial phosphor/amber terminal with square panels, 13–15px primary copy, keyboard-visible
+focus indicators, restrained scanlines and no continuously sweeping animated radar.
+
+- **Source signal array:** `#radarCanvas` plots feed state (OK, FAILED/ERROR, SCANNING or
+  unknown) using deterministic hashes of source identifiers. Coordinates are not geographic,
+  and this view does not claim latency, historical uptime or packet throughput.
+- **Feed status matrix:** a labeled current snapshot of individual RSS statuses; the detailed
+  source ledger below it retains publisher, category, endpoint and entries.
+- **Worker rack:** CPU, RAM, GPU and VRAM usage are percentage meters using worker heartbeat
+  values. Offline and unavailable GPU measurements are shown as `N/A`, not zero. Worker
+  identity, job and GPU name/memory/temperature remain visible.
+- **Story allocation strip:** uses status facets from the paginated board API. Uploaded,
+  scrapped and to-post are overlapping subsets of complete versions, so the strip excludes
+  those facets to avoid double counting. The strip describes current counts, not a timeline.
+- **Mission queue:** one scan-first row per story, with numeric `WORTH` score and segmented
+  meter, title, status, independent sources, publication age, production stage/progress,
+  any current failure, upload state and applicable controls. The score is an editorial
+  worthiness heuristic, never a truth or credibility probability. Open **INTELLIGENCE /
+  SOURCES / FRAMING / PRODUCTION DETAILS** for publisher tags, verification explanation,
+  render facts, source bias baseline and optional local Ollama framing. Expanded state is
+  preserved across ordinary keyed row updates. Recent failure attempt history remains
+  individually expandable in the visible error section.
+- **Version ledger / event console:** completed versions preserve their exact IDs and
+  per-version posting, scrap and restore operations. The operator log remains SSE-driven
+  and capped at 60 entries.
+
+The existing Story Operations Board controls are intentionally unchanged: search and status
+filter remain server-side; age filtering exempts QUEUED/PRODUCING/HOLD; page sizes are
+10/25/50/100 with top/bottom pagination; page-size preference persists locally. Lightweight
+5-second state polling, keyed row reconciliation, pending action locks and stale-request
+invalidation are unchanged. No unbounded set of story cards is sent to or rendered by the
+browser.
+
+The layout reflows at 1050px and 650px, leaves the horizontal status rail scrollable, and
+supports text selection and keyboard navigation. Canvas rendering uses actual snapshots,
+updates on feed SSE and resize events, and has no animation loop. CSS respects
+`prefers-reduced-motion`.
+
+### Visual regression and interaction evidence
+
+`npm run test:browser` exercises Chromium and Firefox. The suite tests unchanged command
+reliability and pagination alongside new data-driven instruments, stable expanded story
+details, scoped feed updates, and horizontal overflow at 1440x900, 1024x768, and 390x844.
+It captures fixture screenshots in `test-results/terminal-screenshots/`, including a failed
+story variant. The CI browser job uploads these screenshots as a build artifact.
+
