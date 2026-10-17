@@ -241,7 +241,7 @@ function render(){
   }
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
-  syncStoryAgeControl();renderWorkers();renderFeeds();renderVideos();
+  syncStoryAgeControl();renderWorkers();renderFeeds();renderFeedMatrix();renderVideos();drawRadar();
 }
 function renderRails(){
   const f=boardData.facets||{};
@@ -249,26 +249,80 @@ function renderRails(){
     railProducing:"PRODUCING",railFailed:"FAILED",railComplete:"COMPLETE",
     railToPost:"TO_POST",railUploaded:"UPLOADED",railScrapped:"SCRAPPED"};
   for(const [id,status] of Object.entries(fields))$("#"+id).textContent=f[status]||0;
+  renderStatusDistribution();
+}
+// Render genuine instantaneous utilization, with N/A rather than a false zero.
+function telemetryMeter(label,value){
+  const available=value!==null&&value!==undefined&&Number.isFinite(Number(value));
+  const percent=available?pct(value):0;
+  return '<div class="telemetryMeter'+(available?'':' unavailable')+'">'+
+    '<div class="meterReadout"><span>'+label+'</span><b>'+(available?Math.round(percent)+'%':'N/A')+'</b></div>'+
+    '<div class="meterTrack" role="meter" aria-label="'+label+'" aria-valuemin="0" aria-valuemax="100"'+
+    (available?' aria-valuenow="'+Math.round(percent)+'"':' aria-valuetext="Not available"')+'>'+
+    '<i class="meterFill" style="width:'+percent+'%"></i></div></div>';
 }
 function renderWorkers(){
   const root=$("#workers"),ws=state.workers||[];
   root.className=ws.length?"workerGrid":"workerGrid emptyState";
   reconcileList(root,ws.map(w=>{
-    const m=w.metrics||{},g=m.gpu||{},online=w.online;
-    const memTot=num(m.memoryTotalMb),memFree=num(m.memoryFreeMb),ram=memTot?Math.round((memTot-memFree)/memTot*100):0;
-    const gpuMem=num(g.memoryTotalMb)?Math.round(num(g.memoryUsedMb)/num(g.memoryTotalMb)*100):0;
+    const m=w.metrics||{},g=m.gpu||{},online=!!w.online;
+    const memTot=num(m.memoryTotalMb),memFree=num(m.memoryFreeMb);
+    const ram=online&&memTot>0&&m.memoryFreeMb!=null?(memTot-memFree)/memTot*100:null;
+    const gpuMem=online&&g.available&&num(g.memoryTotalMb)>0&&g.memoryUsedMb!=null?
+      num(g.memoryUsedMb)/num(g.memoryTotalMb)*100:null;
+    const gAvailable=online&&g.available;
+    const gpuInfo=gAvailable?
+      esc(g.name||"GPU")+" / "+(g.memoryUsedMb!=null?Math.round(num(g.memoryUsedMb)):"?")+
+      "/"+(g.memoryTotalMb!=null?Math.round(num(g.memoryTotalMb)):"?")+" MB VRAM / "+
+      (g.temperatureC!=null?Math.round(num(g.temperatureC))+"°C":"TEMP N/A"):
+      "GPU TELEMETRY N/A";
     return {key:String(w.id),html:`<div class="workerCard">
-      <div class="workerHead"><div class="workerName">${esc(w.id)}</div><div class="workerState">${online?"● ONLINE":"○ OFFLINE"} // ${esc(w.state||"UNKNOWN")}</div></div>
+      <div class="workerHead"><div class="workerName">${esc(w.id)}</div><div class="workerState ${online?'':'offline'}">${online?'● LINKED':'○ OFFLINE'} / ${esc(w.state||'UNKNOWN')}</div></div>
       <div class="telemetry">
-        <div><span>CPU</span><b>${Math.round(num(m.cpuLoad))}%</b></div>
-        <div><span>RAM</span><b>${ram}%</b></div>
-        <div><span>GPU</span><b>${g.available?Math.round(num(g.utilization))+"%":"N/A"}</b></div>
-        <div><span>VRAM</span><b>${g.available?gpuMem+"%":"N/A"}</b></div>
+        ${telemetryMeter('CPU',online?m.cpuLoad:null)}
+        ${telemetryMeter('RAM',ram)}
+        ${telemetryMeter('GPU',gAvailable?g.utilization:null)}
+        ${telemetryMeter('VRAM',gpuMem)}
       </div>
-      <div class="workerJob">${g.available?esc(g.name)+" // "+Math.round(num(g.memoryUsedMb))+"/"+Math.round(num(g.memoryTotalMb))+" MB // "+Math.round(num(g.temperatureC))+"°C":"NO NVIDIA TELEMETRY"}<br>${w.currentTopic?"JOB: "+esc(w.currentTopic):"IDLE / WAITING FOR QUEUE"}</div>
+      <div class="workerJob">${gpuInfo}<div>${online?(w.currentTopic?'JOB: '+esc(w.currentTopic):'IDLE / WAITING FOR QUEUE'):'NODE OFFLINE / LAST REPORT NOT CURRENT'}</div></div>
     </div>`}
   }),"No workers connected.");
 }
+// These status facets are current snapshot counts, not history or rate.
+function renderStatusDistribution(){
+  const f=boardData.facets||{},root=$("#statusDistribution");
+  if(!root)return;
+  const keys=['DISCOVERED','VERIFIED','QUEUED','PRODUCING','HOLD','FAILED','COMPLETE','SKIPPED'];
+  const buckets=keys.map(k=>({key:k,n:Math.max(0,Math.round(num(f[k])))}));
+  const known=buckets.reduce((n,b)=>n+b.n,0);
+  const other=Math.max(0,Math.round(num(f.ALL))-known);
+  if(other)buckets.push({key:'OTHER',n:other});
+  const sum=buckets.reduce((n,b)=>n+b.n,0);
+  const html='<div class="distributionHeading"><b>STATUS ALLOCATION / CURRENT SNAPSHOT</b><span>'+
+    sum.toLocaleString()+' CLASSIFIED / NO HISTORICAL RATE</span></div>'+
+    '<div class="distributionTrack" role="img" aria-label="'+esc(buckets.map(b=>b.key+' '+b.n).join(', '))+'">'+
+    buckets.map(b=>b.n?'<i class="distributionSegment '+b.key.toLowerCase()+'" style="width:'+(sum?b.n/sum*100:0)+'%"></i>':'').join('')+
+    '</div><div class="distributionLabels">'+
+    buckets.map(b=>'<span>'+esc(b.key)+' <b>'+b.n.toLocaleString()+'</b></span>').join('')+'</div>';
+  if(root._html!==html){root.innerHTML=html;root._html=html;}
+}
+function renderFeedMatrix(){
+  const root=$("#feedMatrix");if(!root)return;
+  const feeds=state.feeds||[];
+  const status=f=>String(f.status||'UNKNOWN').toUpperCase();
+  const failed=feeds.filter(f=>['FAILED','ERROR'].includes(status(f))).length;
+  const scanning=feeds.filter(f=>status(f)==='SCANNING').length;
+  const online=feeds.filter(f=>status(f)==='OK').length;
+  const cells=feeds.slice().sort((a,b)=>String(a.name||a.url).localeCompare(String(b.name||b.url))).map(f=>{
+    const st=status(f),cls=st==='OK'?'ok':st==='SCANNING'?'scanning':['FAILED','ERROR'].includes(st)?'failed':'unknown';
+    return '<i aria-hidden="true" class="matrixCell '+cls+'" title="'+esc(f.name||f.url)+' / '+esc(st)+'"></i>';
+  }).join('');
+  const html='<div class="matrixHeading"><b>FEED STATUS MATRIX / PRESENT SNAPSHOT</b><span>'+
+    online+' OK / '+failed+' FAILED / '+scanning+' SCANNING / '+Math.max(0,feeds.length-online-failed-scanning)+' OTHER</span></div>'+
+    '<div class="matrixCells" role="img" aria-label="'+feeds.length+' feeds: '+online+' online, '+failed+' failed, '+scanning+' scanning, '+Math.max(0,feeds.length-online-failed-scanning)+' other">'+cells+'</div>';
+  if(root._html!==html){root.innerHTML=html;root._html=html;}
+}
+
 // Board requests are independent of dashboard polls. A later generation invalidates
 // every older response, including those started before a successful mutation.
 function boardQuery(){
@@ -426,7 +480,7 @@ function storyCard(s){
     :"";
   return `<article class="storyCard${cls}" data-story-id="${esc(s.id)}" data-current-version-id="${esc(s.currentVideoVersionId||"")}">
     <div class="storyTop">
-      <div class="scoreRing" style="--score:${score}"><div><b>${score}</b><small>WORTH</small></div></div>
+      <div class="scoreRing" role="meter" aria-label="Worth score, not truth probability" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${score}"><div><b>${score}</b><small>WORTH</small></div><span class="scoreTrack"><i style="width:${pct(score)}%"></i></span></div>
       <div><div class="storyTitle">${esc(s.topic)}</div>
         <div class="storyMeta"><span class="statusTag ${verified||s.worthy?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
         ${s.manualVerificationOverride?'<span class="statusTag failed">MANUAL VERIFY OVERRIDE</span>':""}
@@ -435,20 +489,10 @@ function storyCard(s){
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
       </div>
     </div>
-    <div class="verifyReason">${verified?"✓ VERIFIED // ":s.worthy?"★ WORTHY // ":"⚠ "}${esc(s.verificationReason||"")}</div>
-    <div class="sources">${pubs||'<span class="sourceChip">NO SOURCE LABELS</span>'}</div>
     <div class="progressWrap"><div class="progressText"><span>${esc(s.stage||status)}</span><span>${Math.round(num(s.progress))}%</span></div><div class="progress"><i style="width:${pct(s.progress)}%"></i></div></div>
     ${failurePanel}
     ${liveDetail}
-    ${productionFacts}
     ${uploadState}
-    <div class="mix" title="${esc(mix.note||"External publisher baseline classifications")}">
-      <div class="mixTitle"><span>PUBLISHER BASELINE</span><span>${esc(mix.provider||"unconfigured")}${mix.asOf?" // "+esc(mix.asOf):""}</span></div>
-      <div class="mixBars"><div class="mixBar left"><i style="width:${bar("left")}%"></i></div><div class="mixBar center"><i style="width:${bar("center")}%"></i></div><div class="mixBar right"><i style="width:${bar("right")}%"></i></div><div class="mixBar unknown"><i style="width:${bar("unknown")}%"></i></div></div>
-      <div class="mixLabels"><span>LEFT ${num(mix.left)}</span><span>CENTER ${num(mix.center)}</span><span>RIGHT ${num(mix.right)}</span><span>UNKNOWN ${num(mix.unknown)}</span></div>
-      <div class="biasSourceDetails">${baselineDetails||'<span class="biasSourceChip">NO ATTRIBUTED RATING</span>'}</div>
-    </div>
-    ${framingPanel}
     <div class="storyActions">
       ${!completeLike?`
         <button class="btn good" data-command="WORTH" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
@@ -465,6 +509,18 @@ function storyCard(s){
           ?`<button class="btn uploadedBtn" data-command="UNUPLOAD">↩ UNMARK UPLOADED</button>`
           :`<button class="btn publish" data-command="UPLOAD">⇧ MARK UPLOADED</button>`):""}`:""}
     </div>
+    <details class="storyDetails"><summary>INTELLIGENCE / SOURCES / FRAMING / PRODUCTION DETAILS</summary><div class="storyIntel">
+    <div class="verifyReason">${verified?"✓ VERIFIED // ":s.worthy?"★ WORTHY // ":"⚠ "}${esc(s.verificationReason||"")}</div>
+    <div class="sources">${pubs||'<span class="sourceChip">NO SOURCE LABELS</span>'}</div>
+      ${productionFacts}
+    <div class="mix" title="${esc(mix.note||"External publisher baseline classifications")}">
+      <div class="mixTitle"><span>PUBLISHER BASELINE</span><span>${esc(mix.provider||"unconfigured")}${mix.asOf?" // "+esc(mix.asOf):""}</span></div>
+      <div class="mixBars"><div class="mixBar left"><i style="width:${bar("left")}%"></i></div><div class="mixBar center"><i style="width:${bar("center")}%"></i></div><div class="mixBar right"><i style="width:${bar("right")}%"></i></div><div class="mixBar unknown"><i style="width:${bar("unknown")}%"></i></div></div>
+      <div class="mixLabels"><span>LEFT ${num(mix.left)}</span><span>CENTER ${num(mix.center)}</span><span>RIGHT ${num(mix.right)}</span><span>UNKNOWN ${num(mix.unknown)}</span></div>
+      <div class="biasSourceDetails">${baselineDetails||'<span class="biasSourceChip">NO ATTRIBUTED RATING</span>'}</div>
+    </div>
+    ${framingPanel}
+    </div></details>
   </article>`
 }
 function renderFeeds(){
@@ -686,7 +742,7 @@ function applyLiveEvent(event){
     $("#feedsOnline").textContent=state.counts.feedsOk;
     $("#feedsFailed").textContent=state.counts.feedsFailed+" failed";
     $("#feedSummary").textContent=state.feeds.length+" FEEDS";
-    renderFeeds();
+    renderFeeds();renderFeedMatrix();drawRadar();
   }
   return true;
 }
@@ -714,17 +770,35 @@ function debouncedRefresh(){if(refreshTimer)return;refreshTimer=setTimeout(()=>{
 setInterval(()=>{$("#clock").textContent=new Date().toLocaleTimeString([],{hour12:false})},500);
 setInterval(()=>{loadState().catch(()=>{});loadBoard()},5000);
 
-let sweep=0;
+// This plot visualizes current source statuses. Coordinates are stable hashes, not geography.
 function drawRadar(){
-  const canvas=$("#radarCanvas"),rect=canvas.getBoundingClientRect(),dpr=devicePixelRatio||1;
-  if(canvas.width!==Math.floor(rect.width*dpr)||canvas.height!==Math.floor(rect.height*dpr)){canvas.width=Math.floor(rect.width*dpr);canvas.height=Math.floor(rect.height*dpr)}
-  const ctx=canvas.getContext("2d");ctx.setTransform(dpr,0,0,dpr,0,0);const w=rect.width,h=rect.height,cx=w/2,cy=h/2+5,r=Math.min(w,h)*.42;
-  ctx.clearRect(0,0,w,h);ctx.strokeStyle="rgba(56,232,255,.12)";ctx.lineWidth=1;
-  for(let i=1;i<=4;i++){ctx.beginPath();ctx.arc(cx,cy,r*i/4,0,Math.PI*2);ctx.stroke()}
-  for(let i=0;i<8;i++){const a=i*Math.PI/4;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r);ctx.stroke()}
-  const a=sweep;const grad=ctx.createLinearGradient(cx,cy,cx+Math.cos(a)*r,cy+Math.sin(a)*r);grad.addColorStop(0,"rgba(56,232,255,0)");grad.addColorStop(1,"rgba(56,232,255,.75)");ctx.strokeStyle=grad;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r);ctx.stroke();
-  (state.feeds||[]).forEach((f,i)=>{let hash=0;for(const ch of (f.url||f.name||""))hash=(hash*31+ch.charCodeAt(0))>>>0;const ang=(hash%6283)/1000,rr=r*(.2+((hash>>>8)%800)/1000*.78),x=cx+Math.cos(ang)*rr,y=cy+Math.sin(ang)*rr;ctx.fillStyle=f.status==="OK"?"#45ff9a":f.status==="FAILED"?"#ff5470":"#38e8ff";ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=7;ctx.beginPath();ctx.arc(x,y,2.4,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0});
+  const canvas=$("#radarCanvas");if(!canvas)return;
+  const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,3);
+  const w=rect.width,h=rect.height;if(w<=0||h<=0)return;
+  const cw=Math.max(1,Math.round(w*dpr)),ch=Math.max(1,Math.round(h*dpr));
+  if(canvas.width!==cw||canvas.height!==ch){canvas.width=cw;canvas.height=ch;}
+  const ctx=canvas.getContext("2d");if(!ctx)return;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);ctx.fillStyle="#080f09";ctx.fillRect(0,0,w,h);
+  const pad=18,left=pad,right=w-pad,top=pad,bottom=h-pad;
+  ctx.lineWidth=1;ctx.strokeStyle="#273b2a";
+  for(let x=left;x<=right;x+=24){ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,bottom);ctx.stroke();}
+  for(let y=top;y<=bottom;y+=24){ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(right,y);ctx.stroke();}
+  ctx.strokeStyle="#486549";ctx.strokeRect(left,top,right-left,bottom-top);
+  ctx.fillStyle="#87a184";ctx.font='10px Consolas, monospace';
+  ctx.fillText('CH01 / SIGNALS',left+6,top+12);
+  ctx.fillText('ID-HASH / NOT GEO',left+6,bottom-5);
+  for(const f of (state.feeds||[])){
+    let hash=2166136261;
+    for(const ch of String(f.url||f.name||''))hash=Math.imul(hash^ch.charCodeAt(0),16777619)>>>0;
+    const hx=(hash%997)/997,hy=((hash>>>12)%991)/991;
+    const x=left+11+hx*Math.max(0,right-left-22);
+    const y=top+17+hy*Math.max(0,bottom-top-34);
+    const st=String(f.status||'UNKNOWN').toUpperCase();
+    ctx.fillStyle=st==='OK'?'#9ef27c':st==='SCANNING'?'#f0c36c':['FAILED','ERROR'].includes(st)?'#e47a6b':'#9ba99b';
+    ctx.fillRect(Math.round(x)-2,Math.round(y)-2,4,4);
+  }
 }
-let lastRadarFrame=0;
-function animateRadar(now){requestAnimationFrame(animateRadar);if(document.hidden||now-lastRadarFrame<50)return;lastRadarFrame=now;sweep=(sweep+.03)%(Math.PI*2);drawRadar()}
-connectEvents();loadState().catch(()=>{});loadBoard(true);requestAnimationFrame(animateRadar);
+window.addEventListener('resize',drawRadar,{passive:true});
+if(typeof ResizeObserver!=='undefined')new ResizeObserver(drawRadar).observe($("#radarCanvas"));
+connectEvents();loadState().catch(()=>{});loadBoard(true);drawRadar();

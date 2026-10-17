@@ -1181,8 +1181,9 @@ public final class SelfTest {
         String css=Files.readString(root.resolve("web/command-center/styles.css"));
         ok(js.contains("feedEndpointLabel")&&js.contains("feedCategoryClass")&&js.contains("feedCategory")&&js.contains("feedEndpoint"),
                 "dashboard feed cards expose publisher, category, and endpoint identity");
-        ok(css.contains(".feedCategory")&&css.contains(".feed.cat-politics")&&css.contains(".feed.cat-health")&&css.contains(".feed.cat-science"),
-                "dashboard visually differentiates major RSS categories");
+        ok(css.contains(".feedCategory")&&css.contains(".feedPublisher")&&css.contains(".feedMeta")&&
+                        css.contains(".feed.ok .lamp")&&css.contains(".feed.failed .lamp"),
+                "dashboard labels RSS categories in text and reserves feed lamp colors for connection status");
     }
 
     private void testTtsFallback()throws Exception{
