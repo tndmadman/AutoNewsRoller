@@ -22,6 +22,33 @@ jobs:
         run: |
           batch_create_news_videos_windows.bat --self-test
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
+      - name: Windows worker web launcher smoke
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/runtime | Out-Null
+          '{"port":8788,"autoStart":false,"autoOpenBrowser":false}' | Set-Content -Path output/runtime/worker-ui-settings.json -Encoding utf8
+          $out = Join-Path $env:RUNNER_TEMP 'worker-ui-out.log'
+          $err = Join-Path $env:RUNNER_TEMP 'worker-ui-err.log'
+          $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c run_gpu_worker_ui_windows.bat http://127.0.0.1:8787 WIN-CI-WORKER' -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          try {
+            $ready = $false
+            for ($i=0; $i -lt 60; $i++) {
+              try {
+                $r = Invoke-RestMethod -Uri 'http://127.0.0.1:8788/api/worker/health' -TimeoutSec 2
+                if ($r.ok) { $ready = $true; break }
+              } catch {}
+              if ($p.HasExited) { break }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $ready) { throw 'Worker UI launcher did not start on port 8788' }
+            $state = Invoke-RestMethod -Uri 'http://127.0.0.1:8788/api/worker/status' -TimeoutSec 3
+            if ($state.worker.lifecycle -ne 'STOPPED') { throw 'Worker should remain stopped when autoStart=false' }
+            Write-Host 'Windows UI batch launcher and localhost health/status smoke PASS'
+          } finally {
+            if (-not $p.HasExited) { & taskkill /PID $p.Id /T /F | Out-Null }
+            if (Test-Path $out) { Get-Content $out -Tail 35 }
+            if (Test-Path $err) { Get-Content $err -Tail 35 }
+          }
       - name: FFmpeg for Windows motion/caption validation
         shell: pwsh
         run: |
