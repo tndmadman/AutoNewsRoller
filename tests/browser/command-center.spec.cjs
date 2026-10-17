@@ -443,9 +443,19 @@ test("status-changing action on the last filtered page clamps safely",async({pag
     await expect(page.locator("#boardResultCount")).toContainText("of 26");
     await page.locator("#boardBottomPager button[aria-label='Next page']").click();
     await expect(page.locator(".storyCard")).toHaveCount(1);
+    await page.evaluate(()=>{
+      window.__maxBoardAfterAction=0;
+      const root=document.querySelector("#stories");
+      window.__boardCapWatcher=new MutationObserver(()=>{
+        window.__maxBoardAfterAction=Math.max(window.__maxBoardAfterAction,root.querySelectorAll(".storyCard").length);
+      });
+      window.__boardCapWatcher.observe(root,{childList:true,subtree:false});
+    });
     await page.locator('.storyCard [data-command="MAKE"]').click();
     await expect(page.locator("#boardResultCount")).toContainText("Showing 1–25 of 25");
     await expect(page.locator(".storyCard")).toHaveCount(25);
+    const maximum=await page.evaluate(()=>{window.__boardCapWatcher.disconnect();return window.__maxBoardAfterAction});
+    expect(maximum).toBeLessThanOrEqual(25);
     expect(f.posts.filter(x=>x.body.action==="MAKE")).toHaveLength(1);
   }finally{await f.stop()}
 });
