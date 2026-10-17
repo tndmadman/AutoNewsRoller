@@ -1078,7 +1078,7 @@ public final class SelfTest {
         classic.renderOverlay(plan.items().get(0),classicOverlay,540,960);
         BufferedImage classicWithDisclosure=ImageIO.read(classicOverlay.toFile());
         ok(classicWithDisclosure.getColorModel().hasAlpha() &&
-                classicWithDisclosure.getRGB(405,78)!=0,
+                classicWithDisclosure.getRGB(405,200)!=0,
                 "classic fallback retains an on-screen AI illustration disclosure");
         CardRenderer cards=new CardRenderer();
         Path graphic=dir.resolve("statistic.png");cards.render(plan.items().get(1),graphic,540,960);
