@@ -770,17 +770,35 @@ function debouncedRefresh(){if(refreshTimer)return;refreshTimer=setTimeout(()=>{
 setInterval(()=>{$("#clock").textContent=new Date().toLocaleTimeString([],{hour12:false})},500);
 setInterval(()=>{loadState().catch(()=>{});loadBoard()},5000);
 
-let sweep=0;
+// This plot visualizes current source statuses. Coordinates are stable hashes, not geography.
 function drawRadar(){
-  const canvas=$("#radarCanvas"),rect=canvas.getBoundingClientRect(),dpr=devicePixelRatio||1;
-  if(canvas.width!==Math.floor(rect.width*dpr)||canvas.height!==Math.floor(rect.height*dpr)){canvas.width=Math.floor(rect.width*dpr);canvas.height=Math.floor(rect.height*dpr)}
-  const ctx=canvas.getContext("2d");ctx.setTransform(dpr,0,0,dpr,0,0);const w=rect.width,h=rect.height,cx=w/2,cy=h/2+5,r=Math.min(w,h)*.42;
-  ctx.clearRect(0,0,w,h);ctx.strokeStyle="rgba(56,232,255,.12)";ctx.lineWidth=1;
-  for(let i=1;i<=4;i++){ctx.beginPath();ctx.arc(cx,cy,r*i/4,0,Math.PI*2);ctx.stroke()}
-  for(let i=0;i<8;i++){const a=i*Math.PI/4;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r);ctx.stroke()}
-  const a=sweep;const grad=ctx.createLinearGradient(cx,cy,cx+Math.cos(a)*r,cy+Math.sin(a)*r);grad.addColorStop(0,"rgba(56,232,255,0)");grad.addColorStop(1,"rgba(56,232,255,.75)");ctx.strokeStyle=grad;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r);ctx.stroke();
-  (state.feeds||[]).forEach((f,i)=>{let hash=0;for(const ch of (f.url||f.name||""))hash=(hash*31+ch.charCodeAt(0))>>>0;const ang=(hash%6283)/1000,rr=r*(.2+((hash>>>8)%800)/1000*.78),x=cx+Math.cos(ang)*rr,y=cy+Math.sin(ang)*rr;ctx.fillStyle=f.status==="OK"?"#45ff9a":f.status==="FAILED"?"#ff5470":"#38e8ff";ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=7;ctx.beginPath();ctx.arc(x,y,2.4,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0});
+  const canvas=$("#radarCanvas");if(!canvas)return;
+  const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,3);
+  const w=rect.width,h=rect.height;if(w<=0||h<=0)return;
+  const cw=Math.max(1,Math.round(w*dpr)),ch=Math.max(1,Math.round(h*dpr));
+  if(canvas.width!==cw||canvas.height!==ch){canvas.width=cw;canvas.height=ch;}
+  const ctx=canvas.getContext("2d");if(!ctx)return;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);ctx.fillStyle="#080f09";ctx.fillRect(0,0,w,h);
+  const pad=18,left=pad,right=w-pad,top=pad,bottom=h-pad;
+  ctx.lineWidth=1;ctx.strokeStyle="#273b2a";
+  for(let x=left;x<=right;x+=24){ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,bottom);ctx.stroke();}
+  for(let y=top;y<=bottom;y+=24){ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(right,y);ctx.stroke();}
+  ctx.strokeStyle="#486549";ctx.strokeRect(left,top,right-left,bottom-top);
+  ctx.fillStyle="#87a184";ctx.font='10px Consolas, monospace';
+  ctx.fillText('CH01 / SIGNALS',left+6,top+12);
+  ctx.fillText('ID-HASH / NOT GEO',left+6,bottom-5);
+  for(const f of (state.feeds||[])){
+    let hash=2166136261;
+    for(const ch of String(f.url||f.name||''))hash=Math.imul(hash^ch.charCodeAt(0),16777619)>>>0;
+    const hx=(hash%997)/997,hy=((hash>>>12)%991)/991;
+    const x=left+11+hx*Math.max(0,right-left-22);
+    const y=top+17+hy*Math.max(0,bottom-top-34);
+    const st=String(f.status||'UNKNOWN').toUpperCase();
+    ctx.fillStyle=st==='OK'?'#9ef27c':st==='SCANNING'?'#f0c36c':['FAILED','ERROR'].includes(st)?'#e47a6b':'#9ba99b';
+    ctx.fillRect(Math.round(x)-2,Math.round(y)-2,4,4);
+  }
 }
-let lastRadarFrame=0;
-function animateRadar(now){requestAnimationFrame(animateRadar);if(document.hidden||now-lastRadarFrame<50)return;lastRadarFrame=now;sweep=(sweep+.03)%(Math.PI*2);drawRadar()}
-connectEvents();loadState().catch(()=>{});loadBoard(true);requestAnimationFrame(animateRadar);
+window.addEventListener('resize',drawRadar,{passive:true});
+if(typeof ResizeObserver!=='undefined')new ResizeObserver(drawRadar).observe($("#radarCanvas"));
+connectEvents();loadState().catch(()=>{});loadBoard(true);drawRadar();
