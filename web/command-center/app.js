@@ -480,7 +480,7 @@ function storyCard(s){
     :"";
   return `<article class="storyCard${cls}" data-story-id="${esc(s.id)}" data-current-version-id="${esc(s.currentVideoVersionId||"")}">
     <div class="storyTop">
-      <div class="scoreRing" style="--score:${score}"><div><b>${score}</b><small>WORTH</small></div></div>
+      <div class="scoreRing" role="meter" aria-label="Worth score, not truth probability" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${score}"><div><b>${score}</b><small>WORTH</small></div><span class="scoreTrack"><i style="width:${pct(score)}%"></i></span></div>
       <div><div class="storyTitle">${esc(s.topic)}</div>
         <div class="storyMeta"><span class="statusTag ${verified||s.worthy?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
         ${s.manualVerificationOverride?'<span class="statusTag failed">MANUAL VERIFY OVERRIDE</span>':""}
@@ -489,20 +489,10 @@ function storyCard(s){
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
       </div>
     </div>
-    <div class="verifyReason">${verified?"✓ VERIFIED // ":s.worthy?"★ WORTHY // ":"⚠ "}${esc(s.verificationReason||"")}</div>
-    <div class="sources">${pubs||'<span class="sourceChip">NO SOURCE LABELS</span>'}</div>
     <div class="progressWrap"><div class="progressText"><span>${esc(s.stage||status)}</span><span>${Math.round(num(s.progress))}%</span></div><div class="progress"><i style="width:${pct(s.progress)}%"></i></div></div>
     ${failurePanel}
     ${liveDetail}
-    ${productionFacts}
     ${uploadState}
-    <div class="mix" title="${esc(mix.note||"External publisher baseline classifications")}">
-      <div class="mixTitle"><span>PUBLISHER BASELINE</span><span>${esc(mix.provider||"unconfigured")}${mix.asOf?" // "+esc(mix.asOf):""}</span></div>
-      <div class="mixBars"><div class="mixBar left"><i style="width:${bar("left")}%"></i></div><div class="mixBar center"><i style="width:${bar("center")}%"></i></div><div class="mixBar right"><i style="width:${bar("right")}%"></i></div><div class="mixBar unknown"><i style="width:${bar("unknown")}%"></i></div></div>
-      <div class="mixLabels"><span>LEFT ${num(mix.left)}</span><span>CENTER ${num(mix.center)}</span><span>RIGHT ${num(mix.right)}</span><span>UNKNOWN ${num(mix.unknown)}</span></div>
-      <div class="biasSourceDetails">${baselineDetails||'<span class="biasSourceChip">NO ATTRIBUTED RATING</span>'}</div>
-    </div>
-    ${framingPanel}
     <div class="storyActions">
       ${!completeLike?`
         <button class="btn good" data-command="WORTH" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
@@ -519,6 +509,18 @@ function storyCard(s){
           ?`<button class="btn uploadedBtn" data-command="UNUPLOAD">↩ UNMARK UPLOADED</button>`
           :`<button class="btn publish" data-command="UPLOAD">⇧ MARK UPLOADED</button>`):""}`:""}
     </div>
+    <details class="storyDetails"><summary>INTELLIGENCE / SOURCES / FRAMING / PRODUCTION DETAILS</summary><div class="storyIntel">
+    <div class="verifyReason">${verified?"✓ VERIFIED // ":s.worthy?"★ WORTHY // ":"⚠ "}${esc(s.verificationReason||"")}</div>
+    <div class="sources">${pubs||'<span class="sourceChip">NO SOURCE LABELS</span>'}</div>
+      ${productionFacts}
+    <div class="mix" title="${esc(mix.note||"External publisher baseline classifications")}">
+      <div class="mixTitle"><span>PUBLISHER BASELINE</span><span>${esc(mix.provider||"unconfigured")}${mix.asOf?" // "+esc(mix.asOf):""}</span></div>
+      <div class="mixBars"><div class="mixBar left"><i style="width:${bar("left")}%"></i></div><div class="mixBar center"><i style="width:${bar("center")}%"></i></div><div class="mixBar right"><i style="width:${bar("right")}%"></i></div><div class="mixBar unknown"><i style="width:${bar("unknown")}%"></i></div></div>
+      <div class="mixLabels"><span>LEFT ${num(mix.left)}</span><span>CENTER ${num(mix.center)}</span><span>RIGHT ${num(mix.right)}</span><span>UNKNOWN ${num(mix.unknown)}</span></div>
+      <div class="biasSourceDetails">${baselineDetails||'<span class="biasSourceChip">NO ATTRIBUTED RATING</span>'}</div>
+    </div>
+    ${framingPanel}
+    </div></details>
   </article>`
 }
 function renderFeeds(){
