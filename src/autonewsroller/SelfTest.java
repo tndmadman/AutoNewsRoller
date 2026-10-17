@@ -1033,7 +1033,16 @@ public final class SelfTest {
                 "captions-off mode is explicitly reflected in visual layout validation");
         ok("passed".equals(BroadcastLayout.review(storyboard,1080,1920,true).get("status"))&&
                 "passed".equals(BroadcastLayout.review(storyboard,540,960,true).get("status")),
-                "shared caption safety geometry prevents overlap with fixed lower-thirds");
+                "shared caption safety geometry prevents overlap with platform-safe lower-thirds");
+        java.awt.Rectangle safeCaption=BroadcastLayout.captionArea(1080,1920);
+        ok(safeCaption.y>BroadcastLayout.panelBottom(1920)&&
+                        safeCaption.y+safeCaption.height<BroadcastLayout.safeBottom(1920)&&
+                        safeCaption.x+safeCaption.width<=BroadcastLayout.safeRight(1080)&&
+                        BroadcastLayout.headerTop(1920)>=200,
+                "TikTok profile reserves app header, bottom caption/title region and right action rail");
+        ok(BroadcastLayout.lowerThird("HOOK",1080,1920,true).y+
+                        BroadcastLayout.lowerThird("HOOK",1080,1920,true).height<safeCaption.y,
+                "classic enlarged lower-third also clears the spoken subtitles");
         ok(storyboard.scenes().size()==2&&storyboard.scenes().get(0).start()==0.0&&
                         Math.abs(storyboard.scenes().get(1).end()-5.0)<.001,
                 "typed storyboard covers actual narration duration with no gap");
