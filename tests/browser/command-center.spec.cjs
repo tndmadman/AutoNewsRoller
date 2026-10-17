@@ -49,7 +49,7 @@ function fixture(appOverride=null){
         facets[key]=state.stories.filter(s=>match(s,key)&&(recent(s)||operational.has(key))).length;
       const all=state.stories.filter(s=>match(s,status)&&(recent(s)||operational.has(status))
         &&[s.topic,s.category,s.uploadedPlatform,s.uploadNote,s.scrapReason,s.lastFailure,
-          s.failureType,s.lastAssignedWorker,...(s.publishers||[])].join(" ").toLowerCase().includes(query))
+          s.failureType,s.assignedWorker,s.lastAssignedWorker,...(s.publishers||[])].join(" ").toLowerCase().includes(query))
         .sort((a,b)=>(b.score||0)-(a.score||0)||String(a.id).localeCompare(String(b.id)));
       const totalPages=Math.max(1,Math.ceil(all.length/pageSize)),page=Math.min(Math.max(1,wanted),totalPages);
       const payload=JSON.stringify({stories:all.slice((page-1)*pageSize,page*pageSize),
