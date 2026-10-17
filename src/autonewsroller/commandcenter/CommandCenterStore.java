@@ -555,8 +555,14 @@ public final class CommandCenterStore {
         return payload;
     }
 
-    public synchronized Map<String,Object> snapshot(){
-        List<Map<String,Object>>ss=stories.values().stream().map(this::publicStory).sorted(Comparator.comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed()).toList();
+    public synchronized Map<String,Object> snapshot(){return snapshot(true);}
+
+    // Lightweight snapshots do not deep-copy, sort, or serialize any story.
+    public synchronized Map<String,Object> snapshot(boolean includeStories){
+        List<Map<String,Object>>ss=includeStories
+                ?stories.values().stream().map(this::publicStory)
+                    .sorted(Comparator.comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed()).toList()
+                :List.of();
         List<Map<String,Object>>ff=feeds.values().stream().map(CommandCenterStore::publicCopy).sorted(Comparator.comparing(x->String.valueOf(x.get("name")))).toList();
         List<Map<String,Object>>ww=workers.values().stream().map(x->{Map<String,Object>c=publicCopy(x);c.put("online",isOnline(x));return c;}).toList();
         List<Map<String,Object>>vv=videos.values().stream().map(CommandCenterStore::publicCopy).toList();
@@ -574,6 +580,87 @@ public final class CommandCenterStore {
         counts.put("biasAnalyzing",stories.values().stream().filter(x->"ANALYZING".equals(x.get("biasAnalysisStatus"))).count());
         counts.put("biasComplete",stories.values().stream().filter(x->"COMPLETE".equals(x.get("biasAnalysisStatus"))).count());
         Map<String,Object>out=new LinkedHashMap<>();out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
+    }
+
+
+    private static final Set<String> BOARD_STATUSES=Set.of(
+            "ALL","DISCOVERED","WORTHY","VERIFIED","QUEUED","PRODUCING",
+            "HOLD","FAILED","COMPLETE","TO_POST","UPLOADED","SCRAPPED","SKIPPED");
+
+    // Search, filtering and pagination operate on raw in-memory records; only the page
+    // is deep-copied into public story objects. Stable ID tie-breaking avoids page drift.
+    public synchronized Map<String,Object> boardStories(int requestedPage,int pageSize,String status,String search,int ageHours){
+        if(requestedPage<1||!Set.of(10,25,50,100).contains(pageSize)
+                ||!BOARD_STATUSES.contains(status)||!Set.of(0,1,2,3,4,6,8,12,24,48,72).contains(ageHours))
+            throw new IllegalArgumentException("Invalid board pagination or filter parameter");
+        String query=search==null?"":search.trim().toLowerCase(Locale.ROOT);
+        Instant cutoff=ageHours>0?Instant.now().minus(Duration.ofHours(ageHours)):null;
+        List<Map<String,Object>>matches=new ArrayList<>();
+        Map<String,Object>facets=new LinkedHashMap<>();
+        for(String key:BOARD_STATUSES)facets.put(key,0L);
+        for(Map<String,Object>story:stories.values()){
+            String rawStatus=String.valueOf(story.getOrDefault("status",""));
+            boolean recent=withinBoardAge(story,cutoff);
+            // Rail counts ignore search and mirror the existing browser's age
+            // behavior. Queue/producing/hold counts are intentionally age-exempt.
+            for(String key:BOARD_STATUSES){
+                if((recent||isOperationalBoardStatus(key))&&matchesBoardStatus(story,rawStatus,key))
+                    facets.put(key,((Long)facets.get(key))+1);
+            }
+            if(!matchesBoardStatus(story,rawStatus,status))continue;
+            if(!isOperationalBoardStatus(status)&&!recent)continue;
+            if(!query.isEmpty()&&!boardSearchText(story).contains(query))continue;
+            matches.add(story);
+        }
+        matches.sort(Comparator
+                .comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed()
+                .thenComparing(x->String.valueOf(x.getOrDefault("id",""))));
+        int total=matches.size();
+        int totalPages=Math.max(1,(int)((total+(long)pageSize-1)/pageSize));
+        int page=Math.min(requestedPage,totalPages);
+        int start=(int)(((long)page-1)*pageSize);
+        int end=Math.min(total,start+pageSize);
+        List<Map<String,Object>>publicPage=new ArrayList<>(end-start);
+        for(int i=start;i<end;i++)publicPage.add(publicStory(matches.get(i)));
+        Map<String,Object>out=new LinkedHashMap<>();
+        out.put("stories",publicPage);out.put("page",page);out.put("pageSize",pageSize);
+        out.put("total",total);out.put("totalPages",totalPages);out.put("facets",facets);
+        return out;
+    }
+
+    private static boolean isOperationalBoardStatus(String status){
+        return "QUEUED".equals(status)||"PRODUCING".equals(status)||"HOLD".equals(status);
+    }
+    private static boolean matchesBoardStatus(Map<String,Object>m,String rawStatus,String filter){
+        return switch(filter){
+            case "ALL"->true;
+            case "COMPLETE"->rawStatus.startsWith("COMPLETE");
+            case "TO_POST"->isToPost(m);
+            case "UPLOADED"->Boolean.TRUE.equals(m.get("uploaded"))&&!Boolean.TRUE.equals(m.get("scrapped"));
+            case "SCRAPPED"->Boolean.TRUE.equals(m.get("scrapped"));
+            case "WORTHY"->isActionableWorthy(m);
+            default->rawStatus.equals(filter);
+        };
+    }
+    private static boolean withinBoardAge(Map<String,Object>m,Instant cutoff){
+        if(cutoff==null)return true;
+        try{
+            String published=String.valueOf(m.getOrDefault("latestPublishedAt",""));
+            // Future publications were previously clamped to age zero in the UI.
+            return !Instant.parse(published).isBefore(cutoff);
+        }catch(Exception e){return false;}
+    }
+    private static String boardSearchText(Map<String,Object>m){
+        StringBuilder sb=new StringBuilder();
+        for(String key:List.of("topic","category","uploadedPlatform","uploadNote","scrapReason",
+                "lastFailure","failureType","lastAssignedWorker")){
+            Object value=m.get(key);
+            if(value!=null)sb.append(value).append(' ');
+        }
+        Object publishers=m.get("publishers");
+        if(publishers instanceof Collection<?> collection)
+            for(Object publisher:collection)sb.append(publisher).append(' ');
+        return sb.toString().toLowerCase(Locale.ROOT);
     }
 
     private Map<String,Object>feed(SourceConfig s){
