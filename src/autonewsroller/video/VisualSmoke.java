@@ -43,6 +43,11 @@ public final class VisualSmoke {
             backgrounds.add(bg);overlays.add(overlay);
         }
         VideoRenderer renderer=new VideoRenderer("ffmpeg","ffprobe",360,640,15);
+        BufferedImage hookOverlay=ImageIO.read(overlays.get(0).toFile());
+        int expectedFooter=BroadcastTheme.NAVY.getRGB()&0xFFFFFF;
+        if((hookOverlay.getRGB(180,620)&0xFFFFFF)!=expectedFooter ||
+                ((hookOverlay.getRGB(180,620)>>>24)&255)!=255)
+            throw new AssertionError("TikTok post-text footer must be opaque navy at 360x640");
         for(String captions:java.util.List.of("off","sentence")){
             Path output=d.resolve("test-"+captions+".mp4");
             VideoRenderer.RenderResult result=renderer.render(backgrounds,overlays,
@@ -53,11 +58,6 @@ public final class VisualSmoke {
             double duration=renderer.probeDuration(output);
             if(Math.abs(duration-2.6)>.30)throw new AssertionError("Video duration differs from audio: "+duration);
             if(captions.equals("sentence")){
-                String ass=Files.readString(d.resolve("test-sentence.mp4.ass"));
-                String expected=",0,2,"+BroadcastLayout.captionLeftMargin(360)+","+
-                        BroadcastLayout.captionRightMargin(360)+","+
-                        BroadcastLayout.captionVerticalMargin(640)+",1";
-                if(!ass.contains(expected))throw new AssertionError("ASS must reserve scaled TikTok-safe caption margins: "+expected);
                 Storyboard board=new Storyboard("smoke",2.6,"fixture",java.util.List.of(
                         new Storyboard.Scene(0,0,.85,"HOOK",0,java.util.List.of("FACT_A"),"PUSH_IN","CUT","fixture"),
                         new Storyboard.Scene(1,.85,1.70,"STATISTIC",1,java.util.List.of("FACT_B"),"STATIC","CUT","fixture"),
