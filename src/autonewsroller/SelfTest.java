@@ -30,6 +30,7 @@ public final class SelfTest {
         testSourceConfig(root);
         List<Article>a=testRss(root);
         testRedirectAnd304Cache(root);
+        testFeedTransportResilience(root);
         testClusterAndVerify(a);
         testCommandCenterQueue(a);
         testCommandCenterMediaReporting(root,a);
@@ -132,6 +133,51 @@ public final class SelfTest {
         }finally{
             server.stop(0);
         }
+    }
+
+
+    private void testFeedTransportResilience(Path root)throws Exception{
+        byte[] good=Files.readAllBytes(root.resolve("tests/fixtures/source_a.xml"));
+        java.util.concurrent.atomic.AtomicInteger hits=new java.util.concurrent.atomic.AtomicInteger();
+        com.sun.net.httpserver.HttpServer server=com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/retry",exchange->{
+            int hit=hits.incrementAndGet();
+            if(hit==1){
+                exchange.sendResponseHeaders(503,-1);
+            }else{
+                exchange.getResponseHeaders().set("Content-Type","application/rss+xml");
+                exchange.sendResponseHeaders(200,good.length);
+                try(OutputStream out=exchange.getResponseBody()){out.write(good);}
+            }
+            exchange.close();
+        });
+        server.start();
+        try{
+            String url="http://127.0.0.1:"+server.getAddress().getPort()+"/retry";
+            var config=new SourceConfig("Transient Fixture","rss","world",url,true,2,false);
+            RssSource fetch=new RssSource(config,5,2,"AutoNewsRoller-SelfTest",root.resolve("output/test-feed-resilience.json"));
+            ok(!fetch.discover().isEmpty()&&hits.get()==2,
+                    "feed HTTP retry switches transport version while retaining XML parsing");
+        }finally{server.stop(0);}
+        String prefix="<?xml version=\"1.0\" encoding=\"UTF-8\"?><rss><channel><item><title>News ";
+        String suffix=" update</title><link>https://example.org/article</link></item></channel></rss>";
+        byte[] left=prefix.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] right=suffix.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] invalid=new byte[left.length+1+right.length];
+        System.arraycopy(left,0,invalid,0,left.length);
+        invalid[left.length]=(byte)0x92;
+        System.arraycopy(right,0,invalid,left.length+1,right.length);
+        var brokenConfig=new SourceConfig("Legacy Publisher","rss","general","fixture",true,2,false);
+        java.util.List<Article> recovered=RssSource.parse(new java.io.ByteArrayInputStream(invalid),brokenConfig,Instant.now());
+        ok(recovered.size()==1&&recovered.get(0).title().contains("News")&&
+                recovered.get(0).title().contains("update"),
+                "invalid legacy byte in declared UTF-8 feed is replaced without losing valid news entries");
+        var current=FeedRegistry.load(root.resolve("config/sources.json"));
+        ok(current.size()==167&&current.stream().map(SourceConfig::url).distinct().count()==167&&
+                current.stream().anyMatch(x->x.url().equals("https://www.tomshardware.com/feeds.xml"))&&
+                current.stream().anyMatch(x->x.url().equals("https://www.space.com/feeds.xml")),
+                "RSS source pack retains 167 unique entries and uses canonical Future feeds");
     }
 
     private void testClusterAndVerify(List<Article>a){
