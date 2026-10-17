@@ -96,7 +96,17 @@
         <button class="rail" data-filter="UPLOADED">UPLOADED <b id="railUploaded">0</b></button>
         <button class="rail" data-filter="SCRAPPED">SCRAPPED <b id="railScrapped">0</b></button>
       </div>
+      <div class="boardPagingHeader">
+        <span id="boardResultCount" role="status" aria-live="polite">Loading stories…</span>
+        <label for="boardPageSize">PER PAGE</label>
+        <select id="boardPageSize" aria-label="Stories per page">
+          <option value="10">10</option><option value="25" selected>25</option>
+          <option value="50">50</option><option value="100">100</option>
+        </select>
+        <nav id="boardTopPager" class="boardPager" aria-label="Story board pagination, top"></nav>
+      </div>
       <div id="stories" class="storyGrid"></div>
+      <nav id="boardBottomPager" class="boardPager boardPagerBottom" aria-label="Story board pagination, bottom"></nav>
     </section>
 
     <section class="split">
