@@ -80,12 +80,12 @@ function fixture(appOverride=null){
         version.uploaded=!!body.uploaded;
         target.uploaded=version.uploaded;
         state.counts.uploaded=+version.uploaded;
-        storyResult={...story};
+        storyResult={...target};
       }else if(url.pathname.endsWith("/scrap-status")){
         version.scrapped=!!body.scrapped;
         target.scrapped=version.scrapped;
         state.counts.scrapped=+version.scrapped;
-        storyResult={...story};
+        storyResult={...target};
       }
       if(dropResponse){dropResponse=false;req.socket.destroy();return}
       const response=JSON.stringify(storyResult);
@@ -415,7 +415,7 @@ test("out-of-order requests never replace later pages or newer searches",async({
     await page.waitForTimeout(300);
     f.setBoardDelay(0);
     await page.locator("#search").fill("Page race 3");
-    await expect(page.locator(".storyCard")).toContainText("Page race 3");
+    await expect(page.locator(".storyCard").first()).toContainText("Page race 3");
     await page.waitForTimeout(1100);
     await expect(page.locator(".storyCard").first()).toContainText("Page race 3");
   }finally{await f.stop()}
