@@ -291,6 +291,13 @@ public final class SelfTest {
                 "extreme requested page clamps without integer overflow");
         ok(((Number)store.boardStories(1,10,"ALL","Synthetic story 2999",0).get("total")).intValue()==1,
                 "search reaches story 2,999 beyond the first page");
+        Map<String,Object>assigned=new LinkedHashMap<>(Json.object(records.get("synthetic-2999")));
+        assigned.put("assignedWorker","test-active-worker");
+        Path assignedState=dir.resolve("assigned-search.json");
+        Json.write(assignedState,Map.of("stories",Map.of("synthetic-2999",assigned)));
+        CommandCenterStore assignedStore=new CommandCenterStore(assignedState,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        ok(((Number)assignedStore.boardStories(1,25,"ALL","test-active-worker",0).get("total")).intValue()==1,
+                "active assigned worker is globally searchable");
         ok(((Number)store.boardStories(1,25,"QUEUED","",1).get("total")).intValue()==600
                 &&((Number)store.boardStories(1,25,"FAILED","",1).get("total")).intValue()==300,
                 "age filtering exempts queued operations but limits failed stories");
