@@ -34,6 +34,8 @@ public final class WorkerWebConsole implements AutoCloseable {
     private volatile Map<String,Object> metrics=Map.of("status","measuring"),diagnostics=Map.of("status","NOT CHECKED","results",List.of());
     private volatile long metricsAt=0;
     private volatile Map<String,Object> preferences;
+    private volatile Path currentProductionDir;
+    private final Map<Path,Long> tailOffsets=new HashMap<>();
     private volatile String lifecycle="STOPPED",lastIssue="";
     private volatile boolean restartRequested;
     private volatile RemoteWorker worker;
@@ -61,7 +63,11 @@ public final class WorkerWebConsole implements AutoCloseable {
         preferences=Map.copyOf(initial);
         if(Files.isRegularFile(historyFile))try{
             for(Object entry:Json.array(Json.read(historyFile))){
-                if(entry instanceof Map<?,?>)jobs.addLast(new LinkedHashMap<>(Json.object(entry)));
+                if(entry instanceof Map<?,?>){
+                    Map<String,Object> prior=new LinkedHashMap<>(Json.object(entry));
+                    if("RUNNING".equals(prior.get("result")))prior.put("result","UNKNOWN");
+                    jobs.addLast(prior);
+                }
                 if(jobs.size()>=MAX_JOBS)break;
             }
         }catch(Exception e){System.err.println("Worker job ledger could not be read: "+e.getMessage());}
@@ -73,7 +79,7 @@ public final class WorkerWebConsole implements AutoCloseable {
         server.setExecutor(httpThreads);server.start();
         log("INFO","console","Listening at http://127.0.0.1:"+port);
         sampler.scheduleWithFixedDelay(()->{
-            try{metrics=SystemMetrics.snapshot();metricsAt=System.currentTimeMillis();}
+            try{metrics=SystemMetrics.snapshot();metricsAt=System.currentTimeMillis();tailProductionLogs();}
             catch(Throwable t){log("WARN","telemetry","Sampling failed: "+t.getClass().getSimpleName());}
         },0,6,TimeUnit.SECONDS);
         if(Boolean.TRUE.equals(preferences.get("autoStart")))control("start");
@@ -181,7 +187,13 @@ public final class WorkerWebConsole implements AutoCloseable {
     private void onWorkerEvent(Map<String,Object> e){
         String type=String.valueOf(e.get("type"));
         String detail=String.valueOf(e.getOrDefault("detail",e.getOrDefault("message",type)));
-        if("job-start".equals(type)){
+        if("job-dir".equals(type)){
+            try{
+                Path base=root.resolve("output/remote_worker").toAbsolutePath().normalize();
+                Path dir=Path.of(String.valueOf(e.get("dir"))).toAbsolutePath().normalize();
+                if(dir.startsWith(base)){currentProductionDir=dir;tailOffsets.clear();}
+            }catch(Exception ignored){}
+        }else if("job-start".equals(type)){
             Map<String,Object> entry=new LinkedHashMap<>(e);
             entry.put("startedAt",e.get("at"));entry.put("result","RUNNING");entry.remove("claimIdPresent");
             synchronized(jobs){jobs.addFirst(entry);while(jobs.size()>MAX_JOBS)jobs.removeLast();}
@@ -204,6 +216,32 @@ public final class WorkerWebConsole implements AutoCloseable {
         else if("lifecycle".equals(type))log("INFO","lifecycle",String.valueOf(e.get("state")));
         broadcast(e);
     }
+    /** Incremental, bounded reads of two explicitly worker-owned production log files. */
+    private void tailProductionLogs(){
+        Path dir=currentProductionDir;
+        if(dir==null)return;
+        for(Path file:List.of(dir.resolve("debug.log"),dir.resolve("runtime/worker_001.log"))){
+            if(!Files.isRegularFile(file))continue;
+            try(RandomAccessFile input=new RandomAccessFile(file.toFile(),"r")){
+                long length=input.length(),start=tailOffsets.getOrDefault(file,0L);
+                if(start>length)start=0;
+                // Bound each read, even after a worker crashes and leaves a large log.
+                if(length-start>32768)start=length-32768;
+                long count=Math.min(16384,length-start);
+                if(count<=0)continue;
+                byte[] bytes=new byte[(int)count];
+                input.seek(start);input.readFully(bytes);
+                tailOffsets.put(file,start+count);
+                String chunk=new String(bytes,StandardCharsets.UTF_8);
+                String[] lines=chunk.split("\\R",-1);
+                int from=Math.max(0,lines.length-40);
+                for(int i=from;i<lines.length;i++){
+                    String line=lines[i].trim();
+                    if(!line.isEmpty())log("INFO",file.getFileName().toString(),line);
+                }
+            }catch(Exception e){log("WARN","log-tail","Production log unavailable: "+e.getClass().getSimpleName());}
+        }
+    }
     private void log(String level,String component,String message){
         Map<String,Object> entry=Map.of("at",Instant.now().toString(),"severity",level,
                 "component",component,"message",safe(message));
@@ -216,7 +254,7 @@ public final class WorkerWebConsole implements AutoCloseable {
     }
     private static String safe(String x){
         if(x==null)return "";
-        String s=x.replaceAll("(?i)(token|password|authorization|api[-_]?key)\\s*[:=]\\s*\\S+","$1=[REDACTED]");
+        String s=x.replaceAll("(?i)(token|password|authorization|api[-_]?key)\\s*[:=]\\s*\\S+","$1=[REDACTED]").replaceAll("(?i)Bearer\\s+[A-Za-z0-9._-]+","Bearer [REDACTED]");
         return s.length()>1300?s.substring(0,1300):s;
     }
     private void broadcast(Map<String,Object> event){

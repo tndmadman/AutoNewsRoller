@@ -840,3 +840,14 @@ details, scoped feed updates, and horizontal overflow at 1440x900, 1024x768, and
 It captures fixture screenshots in `test-results/terminal-screenshots/`, including a failed
 story variant. The CI browser job uploads these screenshots as a build artifact.
 
+
+
+## Companion GPU Worker management interface
+
+A separate loopback interface on the Windows GPU worker is available at
+`http://127.0.0.1:8788` via `run_gpu_worker_ui_windows.bat`.
+It controls the local worker lifecycle and displays local hardware,
+pipeline event history, dependency diagnostics, and worker preferences.
+The Command Center at port 8787 remains authoritative for queue state,
+claims, lease recovery, uploads and publication; the browser does **not**
+claim controller jobs independently. See [GPU Worker Web UI](GPU_WORKER_WEB_UI.md).

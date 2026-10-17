@@ -28,6 +28,7 @@ public final class RemoteWorker {
     private final Supplier<Map<String,Object>> metrics;
     private volatile String state="IDLE",currentJob="",currentTopic="",currentClaimId="";
     private volatile String jobType="",stage="",detail="",jobStartedAt="",lastError="";
+    private volatile String actualEncoder="",actualTts="",actualVoice="",comfyActivity="";
     private volatile Instant lastContact,lastHeartbeat,lastErrorAt;
     private volatile int failures;
     private volatile boolean running=true,paused=false,draining=false;
@@ -81,7 +82,9 @@ public final class RemoteWorker {
         m.put("running",launched.get()&&running);m.put("paused",paused);m.put("draining",draining);
         m.put("state",state);m.put("currentJob",currentJob);m.put("currentTopic",currentTopic);
         m.put("claimActive",!currentJob.isBlank());m.put("jobType",jobType);m.put("stage",stage);m.put("detail",detail);
-        m.put("jobStartedAt",jobStartedAt);m.put("connected",lastContact!=null&&Duration.between(lastContact,Instant.now()).getSeconds()<35);
+        m.put("jobStartedAt",jobStartedAt);
+        m.put("actualEncoder",actualEncoder);m.put("actualTts",actualTts);m.put("actualVoice",actualVoice);
+        m.put("comfyActivity",comfyActivity);m.put("connected",lastContact!=null&&Duration.between(lastContact,Instant.now()).getSeconds()<35);
         m.put("lastContact",lastContact==null?null:lastContact.toString());
         m.put("lastHeartbeat",lastHeartbeat==null?null:lastHeartbeat.toString());
         m.put("connectionFailures",failures);m.put("lastError",lastError);
@@ -111,6 +114,7 @@ public final class RemoteWorker {
         state="POLITICAL_ANALYSIS".equals(type)?"ANALYZING_BIAS":"PRODUCING";
         jobType=type;stage="POLITICAL_ANALYSIS".equals(type)?"ANALYSIS":"CLAIMED";
         detail="Controller job claimed";jobStartedAt=Instant.now().toString();
+        actualEncoder="";actualTts="";actualVoice="";comfyActivity="";
         event("job-start",Map.of("jobId",jobId,"jobType",type,"topic",currentTopic,"stage",stage,"workerId",workerId));
         try{
             if("POLITICAL_ANALYSIS".equals(type)){runPoliticalAnalysis(job);return;}
@@ -127,6 +131,7 @@ public final class RemoteWorker {
             event("progress",Map.of("stage","CLAIMED","detail","durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy));
             String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
             Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+stamp);
+            event("job-dir",Map.of("dir",batch.toString()));
             final String claimId=currentClaimId;
             NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,e->progressSafe(jobId,claimId,e));
             PoliticalVisualData political=job.get("politicalVisualData") instanceof Map<?,?>?PoliticalVisualData.fromMap(Json.object(job.get("politicalVisualData"))):null;
@@ -181,6 +186,10 @@ public final class RemoteWorker {
     }
     private void progressSafe(String jobId,String claimId,WorkerState update){
         stage=update.stage().name();detail=update.detail()==null?"":update.detail();
+        if(detail.startsWith("ENCODER ACTUAL="))actualEncoder=detail.substring("ENCODER ACTUAL=".length());
+        if(detail.startsWith("KOKORO USED")){actualTts="Kokoro";actualVoice=extract(detail,"voice=");}
+        if(detail.startsWith("QWEN3 FALLBACK USED")){actualTts="Qwen3 fallback";actualVoice=extract(detail,"voice=");}
+        if(detail.startsWith("COMFYUI "))comfyActivity=detail;
         event("progress",Map.of("stage",stage,"detail",detail,"timestamp",update.timestamp().toString()));
         try{post("/api/jobs/"+enc(jobId)+"/progress",Map.of("stage",stage,"detail",detail,"timestamp",update.timestamp().toString(),"workerId",workerId,"claimId",claimId));}
         catch(Exception e){error("progress-callback",e);}
@@ -204,6 +213,10 @@ public final class RemoteWorker {
         HttpRequest.Builder b=HttpRequest.newBuilder(URI.create(controller+path)).header("User-Agent","AutoNewsRoller-Worker/1.0");
         if(!token.isBlank())b.header("X-AutoNews-Token",token);
         return b;
+    }
+    private static String extract(String message,String key){
+        int start=message.indexOf(key);if(start<0)return "";
+        return message.substring(start+key.length()).split("\\s+",2)[0];
     }
     private static boolean bool(Object x){return x instanceof Boolean b?b:Boolean.parseBoolean(String.valueOf(x));}
     private static String enc(String x){return URLEncoder.encode(x,StandardCharsets.UTF_8);}

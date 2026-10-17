@@ -19,7 +19,7 @@ echo  Worker ID: %WORKER_ID%
 echo ============================================================
 echo.
 echo Configure AUTONEWS_TOKEN in your environment if required.
-echo Closing this window drains active work before the process exits.
+echo Use DRAIN / STOP in the browser before closing this window to protect job leases.
 java -cp build\classes autonewsroller.Main --worker-ui --controller-url "%CONTROLLER%" --worker-id "%WORKER_ID%"
 if errorlevel 1 (
   echo Worker web console could not start. Check port 8788 and Java output above.

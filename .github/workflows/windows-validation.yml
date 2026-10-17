@@ -19,7 +19,9 @@ jobs:
           python-version: '3.12'
       - name: Self test
         shell: cmd
-        run: batch_create_news_videos_windows.bat --self-test
+        run: |
+          batch_create_news_videos_windows.bat --self-test
+          java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
       - name: FFmpeg for Windows motion/caption validation
         shell: pwsh
         run: |
@@ -45,7 +47,9 @@ jobs:
         with:
           node-version: '22'
       - name: Dashboard JavaScript syntax
-        run: node --check web/command-center/app.js
+        run: |
+          node --check web/command-center/app.js
+          node --check web/worker-console/app.js
       - name: Compile and self-test
         shell: bash
         run: |
@@ -54,6 +58,7 @@ jobs:
           bash -n run_gpu_worker_linux.sh
           bash build_linux.sh
           java -cp build/classes autonewsroller.Main --self-test
+          java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264
       - name: V5 FFmpeg render and actual MP4 contact sheet
         shell: bash
@@ -108,4 +113,11 @@ jobs:
         with:
           name: command-center-retro-screenshots
           path: test-results/terminal-screenshots/
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worker-console-responsive-screenshots
+          path: test-results/worker-console-screenshots/
           if-no-files-found: ignore

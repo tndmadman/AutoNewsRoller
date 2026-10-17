@@ -69,6 +69,8 @@ function renderStatus(data){
   val("jobTitle",w.currentTopic||"No active job running");val("jobId",w.currentJob||"—");
   val("jobType",w.jobType||"—");val("jobStage",w.stage||"—");
   val("jobDetail",w.detail||"—");val("jobStart",stamp(w.jobStartedAt));
+  val("jobEncoder",w.actualEncoder||"NOT REPORTED");val("jobTts",w.actualTts||"NOT REPORTED");
+  val("jobVoice",w.actualVoice||"NOT REPORTED");val("jobComfy",w.comfyActivity||"NOT REPORTED");
   val("jobElapsed",w.jobStartedAt?duration((Date.now()-new Date(w.jobStartedAt).getTime())/1000):"—");
   if(oldId!==w.currentJob){state.activeJob=w.currentJob;state.stageEvents=[];renderStages()}
   for(const b of document.querySelectorAll("[data-action]")){
