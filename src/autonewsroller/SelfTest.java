@@ -1089,7 +1089,7 @@ public final class SelfTest {
         BufferedImage graphicOverlay=ImageIO.read(overlayGraphic.toFile());
         ok(graphicOverlay.getColorModel().hasAlpha()&&
                 ImageIO.read(bgGraphic.toFile()).getWidth()==540&&
-                graphicOverlay.getRGB(50,165)!=0,
+                graphicOverlay.getRGB(50,195)!=0,
                 "statistic and context graphics can reveal accurate content over a lightweight base");
         Path background=dir.resolve("normalized.png"),overlay=dir.resolve("overlay.png"),preview=dir.resolve("preview.png");
         cards.renderBackground(plan.items().get(0),image,background,540,960);
