@@ -481,3 +481,61 @@ test("old queued stories remain visible under age filter, failed stories obey ag
     await expect(page.locator("#boardResultCount")).toContainText("of 1");
   }finally{await f.stop()}
 });
+
+
+test("operator console uses real feed and worker instruments and retains expanded intelligence",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator("#feedMatrix .matrixCell")).toHaveCount(90);
+    await expect(page.locator(".workerCard .telemetryMeter")).toHaveCount(20);
+    await expect(page.locator(".workerCard .telemetryMeter.unavailable")).toHaveCount(10);
+    await expect(page.locator("#statusDistribution")).toContainText("CURRENT SNAPSHOT");
+    const details=page.locator(".storyCard .storyDetails").first();
+    await expect(details).toBeVisible();
+    await expect(details).not.toHaveAttribute("open","");
+    await details.locator("summary").click();
+    await expect(details).toHaveAttribute("open","");
+    await expect(details.locator(".sources")).toContainText("Reuters");
+    const card=page.locator(".storyCard").first();
+    await page.evaluate(()=>{window.__ledgerCard=document.querySelector(".storyCard")});
+    f.story.progress=24;f.event("story");
+    await page.waitForTimeout(650);
+    await expect(details).toHaveAttribute("open","");
+    expect(await page.evaluate(()=>window.__ledgerCard===document.querySelector(".storyCard"))).toBe(true);
+    await expect(card.locator('[data-command="MAKE"]')).toBeVisible();
+  }finally{await f.stop()}
+});
+test("source matrix responds to live SSE without a full state read",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator("#feedMatrix .matrixCell.ok")).toHaveCount(90);
+    const reads=f.getCount;
+    f.event("feed",{...f.state.feeds[0],status:"FAILED"});
+    await expect(page.locator("#feedMatrix .matrixCell.failed")).toHaveCount(1);
+    expect(f.getCount).toBe(reads);
+    await expect(page.locator("#feedMatrix")).toContainText("1 FAILED");
+  }finally{await f.stop()}
+});
+test("terminal screenshots and horizontal overflow across reference viewports",async({page})=>{
+  const f=fixture(),url=await f.start();
+  const dir=path.join(ROOT,"test-results","terminal-screenshots");
+  fs.mkdirSync(dir,{recursive:true});
+  try{
+    await page.goto(url);
+    await expect(page.locator(".storyCard")).toHaveCount(1);
+    for(const [w,h] of [[1440,900],[1024,768],[390,844]]){
+      await page.setViewportSize({width:w,height:h});
+      await expect(page.locator(".storyCard [data-command='MAKE']")).toBeVisible();
+      await page.screenshot({path:path.join(dir,"console-"+w+"x"+h+".png"),fullPage:true,animations:"disabled"});
+      const width=await page.evaluate(()=>({page:document.documentElement.scrollWidth,viewport:innerWidth}));
+      expect(width.page).toBeLessThanOrEqual(width.viewport+2);
+    }
+    f.story.status="FAILED";f.story.lastFailure="Render stage exhausted its retries";
+    f.story.productionAttempts=[{event:"FAILED",stage:"VISUALS",worker:"worker-2",at:new Date().toISOString()}];
+    f.event("story");
+    await expect(page.locator(".failurePanel")).toBeVisible();
+    await page.screenshot({path:path.join(dir,"console-failed-390x844.png"),fullPage:true,animations:"disabled"});
+  }finally{await f.stop()}
+});
