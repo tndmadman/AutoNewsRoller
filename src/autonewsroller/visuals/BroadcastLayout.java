@@ -4,69 +4,65 @@ import java.awt.Rectangle;
 import java.util.*;
 
 /**
- * TikTok-safe 9:16 broadcast geometry. All coordinates are in the 1080x1920
- * reference frame and scale with the actual output dimensions.
- * Platform chrome is NOT part of the encoded video; reserve it here so uploaded
- * posts remain readable with long TikTok descriptions and the right action rail.
+ * Single dimension-scaled definition for subtitle and panel safety regions.
+ * This validates reserved geometry, not the subjective legibility of footage.
  */
 public final class BroadcastLayout {
     private BroadcastLayout(){}
-    public static int sx(int n,int w){return (int)Math.round(n*w/1080.0);}
-    public static int sy(int n,int h){return (int)Math.round(n*h/1920.0);}
-    public static int headerTop(int height){return sy(240,height);}
-    public static int panelBottom(int height){return sy(1000,height);}
-    public static int safeRight(int width){return sx(835,width);}
-    public static int safeBottom(int height){return sy(1320,height);}
-    public static int graphicBottom(int height){return sy(1080,height);}
-    public static int captionFont(int width){return Math.max(18,sx(44,width));}
-    public static int captionLeftMargin(int width){return Math.max(20,sx(80,width));}
-    public static int captionRightMargin(int width){return Math.max(30,sx(245,width));}
-    /** Retained for existing callers; the ASS style uses asymmetric margins. */
-    public static int captionHorizontalMargin(int width){return captionLeftMargin(width);}
-    public static int captionVerticalMargin(int height){return sy(680,height);}
-    public static Rectangle captionArea(int width,int height){
-        int left=captionLeftMargin(width),right=captionRightMargin(width);
-        int baseline=height-captionVerticalMargin(height);
-        int lines=(int)Math.ceil(captionFont(width)*2.8);
-        return new Rectangle(left,baseline-lines,Math.max(1,width-left-right),lines);
+    /** Dark footer keeps TikTok's own post description readable. Scales from 220px at 1080x1920. */
+    public static int postTextSafeFooter(int height){return (int)Math.round(height*220.0/1920.0);}
+    public static int tickerTop(int height){return height-postTextSafeFooter(height)-(int)Math.round(height*80.0/1920.0);}
+    public static int captionFont(int width){return Math.max(18,(int)Math.round(44.0*width/1080));}
+    public static int captionHorizontalMargin(int width){return Math.max(20,(int)Math.round(width*.072));}
+    public static int captionVerticalMargin(int height){return captionVerticalMargin(height,false);}
+    public static int captionVerticalMargin(int height,boolean classic){
+        // Raise normal captions only 48px to clear the relocated hook headline.
+        // Classic's taller panel requires captions slightly higher.
+        return classic?(int)Math.round(height*.405):
+                Math.max(80,(int)Math.round(height*.268))+(int)Math.round(height*48.0/1920.0);
+    }
+    public static Rectangle captionArea(int width,int height){return captionArea(width,height,false);}
+    public static Rectangle captionArea(int width,int height,boolean classic){
+        int margin=captionHorizontalMargin(width),baseline=height-captionVerticalMargin(height,classic);
+        int twoLines=(int)Math.ceil(captionFont(width)*2.8);
+        return new Rectangle(margin,baseline-twoLines,Math.max(1,width-margin*2),twoLines);
     }
     public static Rectangle lowerThird(String type,int width,int height){
         return lowerThird(type,width,height,false);
     }
     public static Rectangle lowerThird(String type,int width,int height,boolean classic){
-        boolean hook="HOOK".equalsIgnoreCase(type);
-        int panel=sy(classic?(hook?430:300):(hook?235:148),height);
-        int bottom=panelBottom(height);
-        return new Rectangle(0,bottom-panel,safeRight(width),panel);
+        double scale=height/1920.0;
+        int ticker=(int)Math.round(80*scale);
+        int panel=(int)Math.round((classic?("HOOK".equalsIgnoreCase(type)?430:300):
+                ("HOOK".equalsIgnoreCase(type)?235:148))*scale);
+        return new Rectangle(0,Math.max(0,height-postTextSafeFooter(height)-ticker-panel),width,panel);
     }
     public static Map<String,Object> review(Storyboard board,int width,int height,boolean captions){
+        return review(board,width,height,captions,false);
+    }
+    public static Map<String,Object> review(Storyboard board,int width,int height,boolean captions,boolean classic){
         if(width<240||height<320)throw new IllegalArgumentException("Output dimensions too small for readable news graphics");
-        Rectangle area=captionArea(width,height);
-        Rectangle top=new Rectangle(0,0,width,headerTop(height));
-        boolean headerCollision=captions&&area.intersects(top);
-        boolean sideUiCollision=captions&&area.x+area.width>safeRight(width);
-        boolean bottomUiCollision=captions&&area.y+area.height>safeBottom(height);
+        Rectangle area=captionArea(width,height,classic);
+        int topReserved=(int)Math.round(height*118/1920.0);
+        int tickerTop=tickerTop(height);
+        boolean headerCollision=area.y<topReserved;
+        boolean tickerCollision=area.y+area.height>tickerTop;
         List<Integer>panelCollision=new ArrayList<>();
         if(captions)for(Storyboard.Scene scene:board.scenes()){
-            String type=scene.type();
-            if(Set.of("HOOK","EDITORIAL_PHOTO","DIRECT_EVENT","PERSON","LOCATION","OBJECT","INSTITUTION","PROCESS","BACKGROUND","CONTEXT").contains(type.toUpperCase(Locale.ROOT))
-                    &&area.intersects(lowerThird(type,width,height)))panelCollision.add(scene.index());
+            if(scene.type().equalsIgnoreCase("HOOK")||scene.type().equalsIgnoreCase("EDITORIAL_PHOTO")
+                    ||scene.type().equalsIgnoreCase("DIRECT_EVENT")){
+                if(area.intersects(lowerThird(scene.type(),width,height,classic)))panelCollision.add(scene.index());
+            }
         }
-        boolean geometryValid=lowerThird("HOOK",width,height).y>=headerTop(height)
-                &&lowerThird("HOOK",width,height).y+lowerThird("HOOK",width,height).height<area.y
-                &&graphicBottom(height)<area.y
-                &&area.x+area.width<=safeRight(width)
-                &&area.y+area.height<=safeBottom(height);
-        boolean okay=geometryValid&&(!captions||(!headerCollision&&!sideUiCollision&&!bottomUiCollision&&panelCollision.isEmpty()));
+        boolean footerCollision=area.y+area.height>height-postTextSafeFooter(height);
+        boolean okay=!captions||(!headerCollision&&!tickerCollision&&!footerCollision&&panelCollision.isEmpty());
         Map<String,Object>result=new LinkedHashMap<>();
-        result.put("profile","tiktok");
-        result.put("captionEnabled",captions);
-        result.put("captionBounds",Map.of("x",area.x,"y",area.y,"width",area.width,"height",area.height));
-        result.put("safeRight",safeRight(width));result.put("safeBottom",safeBottom(height));
+        result.put("profile","tiktok-footer-220");result.put("footerHeight",postTextSafeFooter(height));
+        result.put("classicCaptions",classic);
+        result.put("captionEnabled",captions);result.put("captionBounds",Map.of("x",area.x,"y",area.y,"width",area.width,"height",area.height));
         result.put("headlineLowerThirdCollisionSceneIndexes",panelCollision);
-        result.put("headerCollision",headerCollision);result.put("tickerCollision",false);
-        result.put("sideUiCollision",sideUiCollision);result.put("bottomUiCollision",bottomUiCollision);
-        result.put("geometryValid",geometryValid);
+        result.put("headerCollision",captions&&headerCollision);result.put("tickerCollision",captions&&tickerCollision);
+        result.put("footerCollision",captions&&footerCollision);
         result.put("status",okay?"passed":"rejected");
         return result;
     }
