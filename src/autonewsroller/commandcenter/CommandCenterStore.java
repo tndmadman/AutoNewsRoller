@@ -832,11 +832,13 @@ public final class CommandCenterStore {
         row.put("entryMode",mode.name());
         row.put("productionMode",mode.name());
         row.put("displayTitle",name);
-        row.put("entryActive",active);
-        row.put("entryHasVideo",completed!=null);
+        boolean live=active&&!Set.of("COMPLETE","COMPLETE_HISTORY").contains(
+                String.valueOf(story.getOrDefault("status","")));
+        row.put("entryActive",live);
+        row.put("entryHasVideo",completed!=null&&!live);
         row.put("entryMayRemake","COMPLETE".equals(String.valueOf(story.get("status")))
                 &&completed!=null);
-        if(completed!=null){
+        if(completed!=null&&!live){
             row.put("status","COMPLETE");
             row.put("stage","COMPLETE");
             row.put("progress",100);
