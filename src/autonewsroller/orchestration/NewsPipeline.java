@@ -135,8 +135,12 @@ public final class NewsPipeline {
     }
 
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,boolean dryRun)throws Exception{
+        return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,suppliedPolitical,ProductionMode.STANDARD,dryRun);
+    }
+    public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,boolean dryRun)throws Exception{
+        if(mode==null)throw new IllegalArgumentException("Production mode required");
         Files.createDirectories(slotDir);
-        StoryCluster c=enrichForProduction(cand.cluster());
+        StoryCluster c=mode==ProductionMode.FRAMING_EXPOSURE?cand.cluster():enrichForProduction(cand.cluster());
         VerificationResult refreshed=new SourceVerifier().verify(c,cfg.minimumIndependentSources());
         FactPackage fp=refreshed.factPackage();
         logs.worker(worker,"slot="+slot+" story="+c.topic+" started facts="+fp.facts().size()+" enrichedBodies="+c.articles.stream().filter(a->a.bodyText()!=null&&!a.bodyText().isBlank()).count());
@@ -162,7 +166,19 @@ public final class NewsPipeline {
                 cfg.getDouble("ollamaTemperature",0.2)
         );
         NewsScriptGenerator scriptGenerator=new NewsScriptGenerator(oc,cfg.getInt("ollamaRetries",5));
-        NewsScript script=scriptGenerator.generate(fp,targetSeconds,dryRun);
+        PoliticalFramingEvidenceBuilder.Evidence evidence=null;
+        PoliticalFramingScriptGenerator exposureGenerator=null;
+        if(mode==ProductionMode.FRAMING_EXPOSURE){
+            if(!cfg.getBool("politicalExposureEnabled",true))throw new IllegalStateException("Framing experiment disabled");
+            if(political.politicalRelevance()<0.35||"not_political".equals(political.storyClassification()))
+                throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: Story not meaningfully political");
+            evidence=new PoliticalFramingEvidenceBuilder().build(c,fp,political);
+            Json.write(slotDir.resolve("framing_evidence.json"),evidence.toMap());
+            exposureGenerator=new PoliticalFramingScriptGenerator(oc,cfg.getInt("ollamaRetries",5));
+        }
+        NewsScript script=mode==ProductionMode.FRAMING_EXPOSURE
+                ?exposureGenerator.generate(fp,evidence,targetSeconds,dryRun)
+                :scriptGenerator.generate(fp,targetSeconds,dryRun);
         Json.write(slotDir.resolve("script.json"),script.toMap());
         events.emit(worker,slot,PipelineStage.SCRIPT,"script ready; words="+Text.words(script.narration())+
                 " hookWords="+(script.segments().isEmpty()?0:Text.words(script.segments().get(0).narration()))+
@@ -171,7 +187,7 @@ public final class NewsPipeline {
         if(dryRun){
             GroundedVisualPromptGenerator.Result visualPrompts=generateVisualPrompts(script,fp,c,true,worker,slot);
             Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
-            VisualPlan plan=new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
+            VisualPlan plan=mode==ProductionMode.FRAMING_EXPOSURE ?new PoliticalFramingVisualPlanner().plan(script,evidence):new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
             Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
             SpeechTiming.Alignment dryTiming=SpeechTiming.align(script.narration(),script.segments(),null,Math.max(1,script.estimatedDuration()));
@@ -209,7 +225,7 @@ public final class NewsPipeline {
             events.emit(worker,slot,PipelineStage.SCRIPT,retry);
             logs.worker(worker,"slot="+slot+" "+retry);
 
-            script=scriptGenerator.generate(fp,adjustedTarget,false);
+            script=mode==ProductionMode.FRAMING_EXPOSURE?exposureGenerator.generate(fp,evidence,adjustedTarget,false):scriptGenerator.generate(fp,adjustedTarget,false);
             Json.write(slotDir.resolve("script.json"),script.toMap());
             nr=narrate(c,script,wav,worker,slot);
             narrationSeconds=audioDuration(nr.wav());
@@ -220,7 +236,7 @@ public final class NewsPipeline {
 
         GroundedVisualPromptGenerator.Result visualPrompts=generateVisualPrompts(script,fp,c,false,worker,slot);
         Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
-        VisualPlan plan=new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
+        VisualPlan plan=mode==ProductionMode.FRAMING_EXPOSURE ?new PoliticalFramingVisualPlanner().plan(script,evidence):new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
         Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
         Path timingSidecar=nr.wav().resolveSibling(nr.wav().getFileName().toString().replaceFirst("\\.wav$",".timing.tsv"));
@@ -239,7 +255,9 @@ public final class NewsPipeline {
         CardRenderer cards=classic?new ClassicCardRenderer():new CardRenderer();int i=0;
         for(VisualPlan.Item item:plan.items()){
             Path p=visuals.resolve(String.format("%02d_%s.png",i++,item.type().toLowerCase(Locale.ROOT)));
-            cards.render(item,p,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+            if(mode==ProductionMode.FRAMING_EXPOSURE)
+                new PoliticalFramingCardRenderer().render(item,p,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),classic);
+            else cards.render(item,p,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
             imgs.add(p);renderBackgrounds.add(p);renderOverlays.add(null);renderMotion.add(false);
             imageSources.add(Map.of("type","procedural-card","path",p.toString(),"visualType",item.type()));
             if(!"classic".equalsIgnoreCase(cfg.get("visualQualityPreset","enhanced"))
@@ -262,6 +280,8 @@ public final class NewsPipeline {
         String usedCheckpoint="";
         int comfyGenerated=0;
         if(requireComfy&&!useComfy)throw new IllegalStateException("ComfyUI is required for this job but useComfy=false");
+        if(useComfy&&mode==ProductionMode.FRAMING_EXPOSURE)
+            throw new IllegalStateException("Framing exposure uses verified procedural evidence cards, not fabricated article images.");
         if(useComfy){
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI CHECK starting");
             ComfyImageGenerator comfy=new ComfyImageGenerator(root,cfg.get("comfyUrl","http://127.0.0.1:8188"),cfg.get("qwenUrl","http://127.0.0.1:8765"));
@@ -403,15 +423,22 @@ public final class NewsPipeline {
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI DISABLED for this job");
         }
 
-        Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v5-editorial");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30),classic);List<Double>sceneWeights=!classic&&cfg.getBool("visualNarrationSyncEnabled",true)?storyboard.durations():plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,nr.wav(),render,encoder,cfg.get("captions","sentence"),script.narration(),cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null);
+        Path renderAudio=nr.wav();
+        if(mode==ProductionMode.FRAMING_EXPOSURE){
+            if(!cfg.getBool("politicalExposureIntroSoundEnabled",true))
+                throw new IllegalStateException("Required experimental audio sting disabled");
+            renderAudio=new NewsIntroAudioMixer().mix(nr.wav(),slotDir.resolve("narration/intro_mixed.wav"),
+                    cfg.get("ffmpegCommand","ffmpeg"),cfg.getDouble("politicalExposureIntroSoundGainDb",-14));
+        }
+        Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v5-editorial");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30),classic);List<Double>sceneWeights=!classic&&cfg.getBool("visualNarrationSyncEnabled",true)?storyboard.durations():plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,renderAudio,render,encoder,cfg.get("captions","sentence"),script.narration(),cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null);
         events.emit(worker,slot,PipelineStage.RENDER,"ENCODER ACTUAL="+rr.encoder());
-        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,nr.wav(),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();Map<String,Object>visualQuality=VisualQualityReport.create(cfg.get("ffmpegCommand","ffmpeg"),render,slotDir,finalSeconds,storyboard,cfg.getBool("visualGenerateContactSheet",true),!"off".equalsIgnoreCase(cfg.get("captions","sentence")),classic);
+        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,renderAudio,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();Map<String,Object>visualQuality=VisualQualityReport.create(cfg.get("ffmpegCommand","ffmpeg"),render,slotDir,finalSeconds,storyboard,cfg.getBool("visualGenerateContactSheet",true),!"off".equalsIgnoreCase(cfg.get("captions","sentence")),classic);
         visualQuality.put("imageInspections",imageReviews);
         visualQuality.put("acceptedComfyImages",comfyGenerated);
         Json.write(slotDir.resolve("visual_quality_report.json"),visualQuality);
-        audit.put("visualQuality",visualQuality);audit.put("narrationTiming",alignment.toMap());if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);audit.put("hook",script.hook());audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());audit.put("visualPackage",BroadcastTheme.PACKAGE_ID);audit.put("postLayout","tiktok-footer-220");audit.put("thumbnailStrategy","hook-frame-zero");putVisualPromptAudit(audit,visualPrompts);putPoliticalAudit(audit,political,plan);Json.write(slotDir.resolve("audit.json"),audit);
+        audit.put("visualQuality",visualQuality);audit.put("narrationTiming",alignment.toMap());if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("productionMode",mode.name());audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);audit.put("hook",script.hook());audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());audit.put("visualPackage",BroadcastTheme.PACKAGE_ID);audit.put("postLayout","tiktok-footer-220");audit.put("thumbnailStrategy","hook-frame-zero");putVisualPromptAudit(audit,visualPrompts);putPoliticalAudit(audit,political,plan);Json.write(slotDir.resolve("audit.json"),audit);
         Path finalDir=slotDir.getParent().resolve("final_videos");Path finalVideo=FileNames.unique(finalDir,c.topic,".mp4");Files.createDirectories(finalDir);Files.copy(render,finalVideo,StandardCopyOption.REPLACE_EXISTING);
-        Map<String,Object>prov=new LinkedHashMap<>();prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("postLayout","tiktok-footer-220");prov.put("motionPackage","editorial-motion-v5");prov.put("narrationTiming",alignment.toMap());prov.put("visualStoryboard",storyboard.toMap());prov.put("visualQuality",visualQuality);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
+        Map<String,Object>prov=new LinkedHashMap<>();prov.put("productionMode",mode.name());prov.put("experimentalFormatVersion",mode==ProductionMode.FRAMING_EXPOSURE?"framing-exposure-v1":"");if(evidence!=null){prov.put("framingEvidence",evidence.toMap());prov.put("lockedHeadline",script.headline());prov.put("lockedTeaser",PoliticalFramingScriptGenerator.TEASER);prov.put("introSound",Map.of("identity",NewsIntroAudioMixer.STING_ID,"gainDb",cfg.getDouble("politicalExposureIntroSoundGainDb",-14),"startSeconds",0));}prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("postLayout","tiktok-footer-220");prov.put("motionPackage","editorial-motion-v5");prov.put("narrationTiming",alignment.toMap());prov.put("visualStoryboard",storyboard.toMap());prov.put("visualQuality",visualQuality);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
         history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
     }
 
