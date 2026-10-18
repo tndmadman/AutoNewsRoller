@@ -33,21 +33,34 @@ public final class PoliticalFramingScriptGenerator {
             );
         }else{
             Exception last=null;
+            List<String>draftToRewrite=null;
+            List<String>attemptHistory=new ArrayList<>();
             for(int attempt=1;attempt<=attempts;attempt++){
                 try{
                     int desired=(ScriptValidator.minWords(targetSeconds)+ScriptValidator.maxWords(targetSeconds))/2;
                     int targetBodyWords=Math.max(100,desired-Text.words(headline)-Text.words(TEASER));
+                    int recapWords=Math.min(22,Math.max(12,(int)Math.round(targetBodyWords*.12)));
+                    int analyticalWords=Math.max(10,(targetBodyWords-recapWords)/5);
                     Map<String,Object>input=new LinkedHashMap<>();
                     Map<String,Object>grounding=new LinkedHashMap<>();
                     grounding.put("headline",facts.headline());
                     grounding.put("summary",facts.summary());
-                    grounding.put("facts",facts.facts().stream().map(FactClaim::toMap).toList());
-                    grounding.put("disputedClaims",facts.disputedClaims().stream().map(FactClaim::toMap).toList());
+                    // Avoid flooding a one-article framing task with dozens of extracted event claims.
+                    // Full evidence is retained in the fact package and checked during validation.
+                    grounding.put("facts",facts.facts().stream().limit(12).map(FactClaim::toMap).toList());
+                    grounding.put("disputedClaims",facts.disputedClaims().stream().limit(8).map(FactClaim::toMap).toList());
                     grounding.put("independentSourceCount",facts.independentSourceCount());
                     grounding.put("authoritativePrimaryAccepted",facts.authoritativePrimaryAccepted());
                     input.put("factualGrounding",grounding);
                     input.put("articleEvidence",evidence.toMap());
-                    input.put("control",Map.of("targetBodyWords",targetBodyWords,"paragraphCount",6,"attempt",attempt));
+                    input.put("control",Map.of("targetBodyWords",targetBodyWords,
+                            "targetRecapWords",recapWords,"targetWordsPerAnalysisParagraph",analyticalWords,
+                            "maximumTotalNarrationWords",ScriptValidator.maxWords(targetSeconds),
+                            "minimumTotalNarrationWords",ScriptValidator.minWords(targetSeconds),
+                            "attempt",attempt));
+                    // Length failures get a targeted rewrite of the SAME analysis, not a fresh
+                    // free-form 300-400-word generation.
+                    if(draftToRewrite!=null)input.put("previousDraftForCondensing",draftToRewrite);
                     String system="""
 You are a source-grounded news-media framing analyst. Write a politically neutral EXPOSÉ OF THE FRAMING
 INSIDE ONE SUPPLIED NEWS ARTICLE. Do NOT compare this article with other news outlets or use publisher
@@ -80,8 +93,16 @@ article-body framing cannot be assessed from available material.
 Political classification is an unverified model interpretation, not a fact or a truth score.
 Maintain measured, punchy broadcast prose, grounded in the article.
 Aim for the supplied targetBodyWords TOTAL across six paragraphs. Keep paragraph 0 short.
+HARD EDITING BUDGET: Paragraph 0 should be approximately targetRecapWords words. Paragraphs 1-5
+should each be approximately targetWordsPerAnalysisParagraph words. Keep each one to
+ONE OR TWO meaningful short sentences. The completed script will be rejected if it is
+outside minimumTotalNarrationWords and maximumTotalNarrationWords, including the fixed
+headline and teaser. Do not pad with generic rhetoric.
+If previousDraftForCondensing exists, REWRITE THAT DRAFT into six concise segments.
+Preserve its specific source-backed framing observations and qualifications,
+remove redundant sentences, and add no new facts, quotes, or numbers.
 """;
-                    String raw=ollama.generateJson(system,Json.stringify(input),"json",0.12,2200);
+                    String raw=ollama.generateJson(system,Json.stringify(input),"json",0.08,1600);
                     Map<String,Object>parsed=Json.object(Json.parse(raw));
                     Object list=parsed.get("segments");
                     if(!(list instanceof List<?>rows)||rows.size()!=6)
@@ -92,13 +113,38 @@ Aim for the supplied targetBodyWords TOTAL across six paragraphs. Keep paragraph
                         if(text.isBlank())throw new IllegalArgumentException("Empty analysis segment");
                         candidateBody.add(text);
                     }
-                    NewsScript candidate=assemble(facts,headline,publisher,candidateBody,targetSeconds);
-                    validate(candidate,facts,evidence,targetSeconds);
-                    return candidate;
-                }catch(Exception e){last=e;}
+                    PoliticalFramingLengthEditor.Edit edit=PoliticalFramingLengthEditor.compact(
+                            candidateBody,headline,TEASER,targetSeconds);
+                    // The editor only removes complete existing sentences. No facts, claims
+                    // or quotations are invented. Every edited draft is fully validated.
+                    List<String>chosenBody=edit.changed()?edit.paragraphs():candidateBody;
+                    NewsScript candidate=assemble(facts,headline,publisher,chosenBody,targetSeconds);
+                    try{
+                        validate(candidate,facts,evidence,targetSeconds);
+                        return candidate;
+                    }catch(IllegalArgumentException validation){
+                        attemptHistory.add("attempt "+attempt+" words="+edit.originalWords()+
+                                " editor="+edit.method()+" finalWords="+Text.words(candidate.narration())+
+                                " reason="+validation.getMessage());
+                        last=validation;
+                        // Recoverable length problems should be rewritten from previous draft,
+                        // rather than discard useful article analysis and restart generation.
+                        int total=Text.words(candidate.narration());
+                        boolean budgetIssue=total<ScriptValidator.minWords(targetSeconds)
+                                ||total>ScriptValidator.maxWords(targetSeconds)
+                                ||validation.getMessage().contains("65%");
+                        draftToRewrite=budgetIssue?List.copyOf(candidateBody):null;
+                    }
+                }catch(Exception e){
+                    last=e;
+                    attemptHistory.add("attempt "+attempt+" generation="+e.getClass().getSimpleName()+
+                            ": "+e.getMessage());
+                    draftToRewrite=null;
+                }
             }
             throw new IllegalStateException("FRAMING_SCRIPT_VALIDATION_FAILED after "+attempts+
-                    " attempts: "+(last==null?"unknown":last.getMessage()),last);
+                    " attempts; "+String.join(" | ",attemptHistory)+
+                    (last==null?"":"; last="+last.getMessage()),last);
         }
         NewsScript script=assemble(facts,headline,publisher,body,targetSeconds);
         validate(script,facts,evidence,targetSeconds,true);
