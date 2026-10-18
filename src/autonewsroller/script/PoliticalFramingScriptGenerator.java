@@ -94,8 +94,15 @@ Never include instructions, extra hooks, unverified quotes, policy advocacy, sou
                 ||!script.segments().get(1).narration().equals(TEASER)
                 ||!script.narration().startsWith(script.headline()+" "+TEASER))
             throw new IllegalArgumentException("Locked political framing opening changed");
-        if(!dryRun&&Text.words(script.narration())<ScriptValidator.minWords(targetSeconds))
-            throw new IllegalArgumentException("Framing narration too short: "+Text.words(script.narration()));
+        if(!dryRun){
+            int words=Text.words(script.narration());
+            if(words<ScriptValidator.minWords(targetSeconds)||words>ScriptValidator.maxWords(targetSeconds))
+                throw new IllegalArgumentException("Framing narration word count out of range: "+words);
+            int analysisWords=0;
+            for(int i=3;i<8;i++)analysisWords+=Text.words(script.segments().get(i).narration());
+            if((double)analysisWords/Math.max(1,words)<0.65)
+                throw new IllegalArgumentException("Less than 65% of framing script contains evidence analysis");
+        }
         StringBuilder supported=new StringBuilder(facts.headline()).append(' ').append(facts.summary());
         for(FactClaim fact:facts.facts())supported.append(' ').append(fact.statement());
         for(Map<String,Object>article:evidence.articles())

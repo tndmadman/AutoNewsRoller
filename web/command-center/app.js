@@ -501,7 +501,7 @@ function storyCard(s){
         <button class="btn warn" data-command="HOLD">Ⅱ HOLD</button>
         <button class="btn bad" data-command="SKIP">× NOT WORTH</button>
         <button class="btn ghost" data-command="AUTO">↻ AUTO</button>`:""}
-      <button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${["QUEUED","PRODUCING"].includes(status)?"disabled title='Another video is already queued or producing'":""}>◉ MAKE POLITICAL FRAMING EXPOSURE VIDEO</button>
+      ${s.politicalCandidate?`<button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${["QUEUED","PRODUCING"].includes(status)?"disabled title='Another video is already queued or producing'":""}>◉ MAKE POLITICAL FRAMING EXPOSURE VIDEO</button>`:""}
       ${status==="COMPLETE"?`
         <button class="btn primary" data-command="REMAKE">↻ RE-MAKE VIDEO</button>
         ${s.scrapped

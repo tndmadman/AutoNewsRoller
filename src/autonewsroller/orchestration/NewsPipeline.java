@@ -138,6 +138,9 @@ public final class NewsPipeline {
         return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,suppliedPolitical,ProductionMode.STANDARD,dryRun);
     }
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,boolean dryRun)throws Exception{
+        return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,suppliedPolitical,mode,Map.of(),dryRun);
+    }
+    public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis,boolean dryRun)throws Exception{
         if(mode==null)throw new IllegalArgumentException("Production mode required");
         Files.createDirectories(slotDir);
         StoryCluster c=mode==ProductionMode.FRAMING_EXPOSURE?cand.cluster():enrichForProduction(cand.cluster());
@@ -172,7 +175,11 @@ public final class NewsPipeline {
             if(!cfg.getBool("politicalExposureEnabled",true))throw new IllegalStateException("Framing experiment disabled");
             if(political.politicalRelevance()<0.35||"not_political".equals(political.storyClassification()))
                 throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: Story not meaningfully political");
+            if(fp.independentSourceCount()<cfg.getInt("politicalExposureMinimumIndependentSources",2))
+                throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: Minimum independent source count not met");
             evidence=new PoliticalFramingEvidenceBuilder().build(c,fp,political);
+            if(rawAnalysis!=null&&!rawAnalysis.isEmpty())
+                evidence=new PoliticalFramingEvidenceBuilder.Evidence(evidence.storyId(),evidence.contentFingerprint(),evidence.articles(),new LinkedHashMap<>(rawAnalysis));
             Json.write(slotDir.resolve("framing_evidence.json"),evidence.toMap());
             exposureGenerator=new PoliticalFramingScriptGenerator(oc,cfg.getInt("ollamaRetries",5));
         }
@@ -242,6 +249,20 @@ public final class NewsPipeline {
         Path timingSidecar=nr.wav().resolveSibling(nr.wav().getFileName().toString().replaceFirst("\\.wav$",".timing.tsv"));
         SpeechTiming.Alignment alignment=SpeechTiming.align(script.narration(),script.segments(),
                 cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null,narrationSeconds);
+        if(mode==ProductionMode.FRAMING_EXPOSURE){
+            List<Double>parts=alignment.segmentDurations();
+            if(parts.size()!=8)throw new IllegalStateException("Framing segment duration alignment unavailable.");
+            double analysisDuration=0,totalDuration=0;
+            for(int i=0;i<parts.size();i++){
+                totalDuration+=parts.get(i);
+                if(i>=3)analysisDuration+=parts.get(i);
+            }
+            double actualShare=analysisDuration/Math.max(0.001,totalDuration);
+            if(actualShare<cfg.getDouble("politicalExposureRequiredAnalysisFraction",0.65))
+                throw new IllegalStateException(String.format(Locale.ROOT,
+                    "Framing analysis occupies %.1f%% of narration; minimum %.1f%%",
+                    actualShare*100,cfg.getDouble("politicalExposureRequiredAnalysisFraction",0.65)*100));
+        }
         Storyboard storyboard=new VisualDirector().direct(plan,script,alignment,narrationSeconds);
         Json.write(slotDir.resolve("visual_storyboard.json"),storyboard.toMap());
 

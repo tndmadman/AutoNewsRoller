@@ -4,6 +4,7 @@ import autonewsroller.config.NewsConfig;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.*;
 import autonewsroller.util.Json;
+import autonewsroller.util.Hashing;
 import java.io.IOException;
 import java.net.*;
 import java.net.http.*;
@@ -143,6 +144,14 @@ public final class RemoteWorker {
             if(productionMode==ProductionMode.FRAMING_EXPOSURE&&!cfg.getBool("politicalExposureEnabled",true))
                 throw new IllegalStateException("Worker does not support framing exposure v1.");
             NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
+            if(productionMode==ProductionMode.FRAMING_EXPOSURE){
+                String expected=String.valueOf(job.getOrDefault("framingContentFingerprint",""));
+                String current=Hashing.sha256(candidate.cluster().articles.stream()
+                        .map(a->a.id()+"|"+a.title()+"|"+a.description()+"|"+a.bodyText()).sorted()
+                        .reduce("",(a,b)->a+"|"+b));
+                if(expected.isBlank()||!expected.equals(current))
+                    throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Article text changed since analysis.");
+            }
             Map<String,Object> settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
             int requestedDuration=settings.get("duration") instanceof Number n?n.intValue():cfg.duration();
             int duration=Math.max(cfg.getInt("commandCenterMinimumTargetSeconds",70),requestedDuration);
@@ -164,7 +173,8 @@ public final class RemoteWorker {
                 requireComfy=useComfy;
                 duration=Math.max(duration,cfg.getInt("politicalExposureDefaultDurationSeconds",75));
             }
-            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,dryRun);
+            Map<String,Object>framingAnalysis=job.get("framingAnalysis") instanceof Map<?,?>?Json.object(job.get("framingAnalysis")):Map.of();
+            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,framingAnalysis,dryRun);
             stage="UPLOAD";detail="Local output ready; awaiting controller acknowledgement";
             event("progress",Map.of("stage",stage,"detail",detail));
             if(!dryRun&&output.toString().toLowerCase(Locale.ROOT).endsWith(".mp4")){
