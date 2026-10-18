@@ -748,7 +748,7 @@ public final class CommandCenterStore {
         List<Map<String,Object>>matches=new ArrayList<>();
         Map<String,Object>facets=new LinkedHashMap<>();
         for(String key:BOARD_STATUSES)facets.put(key,0L);
-        for(Map<String,Object>story:stories.values()){
+        for(Map<String,Object>story:boardEntries()){
             String rawStatus=String.valueOf(story.getOrDefault("status",""));
             boolean recent=withinBoardAge(story,cutoff);
             // Rail counts ignore search and mirror the existing browser's age
@@ -764,7 +764,8 @@ public final class CommandCenterStore {
         }
         matches.sort(Comparator
                 .comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed()
-                .thenComparing(x->String.valueOf(x.getOrDefault("id",""))));
+                .thenComparing(x->String.valueOf(x.getOrDefault("id","")))
+                .thenComparingInt(x->"FRAMING_EXPOSURE".equals(x.get("entryMode"))?1:0));
         int total=matches.size();
         int totalPages=Math.max(1,(int)((total+(long)pageSize-1)/pageSize));
         int page=Math.min(requestedPage,totalPages);
@@ -778,6 +779,101 @@ public final class CommandCenterStore {
         return out;
     }
 
+    /**
+     * Operationally there is ONE RSS story/queue lease, but each produced format
+     * is an independently actionable board item. Project the two rows here
+     * rather than duplicating the job, which would break claim/retry semantics.
+     *
+     * Only the most recent completed version of each format is shown on the
+     * Story Operations Board. Older versions remain in the posting ledger.
+     * The archive is indexed once to avoid O(stories * videoVersions) scans.
+     */
+    private List<Map<String,Object>>boardEntries(){
+        Map<String,Map<ProductionMode,Map<String,Object>>>latest=new HashMap<>();
+        for(Map<String,Object>video:videos.values()){
+            String id=String.valueOf(video.getOrDefault("storyId",video.getOrDefault("jobId","")));
+            if(!stories.containsKey(id))continue;
+            ProductionMode mode=ProductionMode.fromPersisted(video.get("productionMode"));
+            Map<ProductionMode,Map<String,Object>>modes=latest.computeIfAbsent(id,k->new EnumMap<>(ProductionMode.class));
+            Map<String,Object>old=modes.get(mode);
+            if(old==null||integer(video.get("version"))>integer(old.get("version")))
+                modes.put(mode,video);
+        }
+        List<Map<String,Object>>rows=new ArrayList<>(stories.size()*2);
+        for(Map<String,Object>story:stories.values()){
+            String id=String.valueOf(story.get("id"));
+            Map<ProductionMode,Map<String,Object>>modes=latest.getOrDefault(id,Map.of());
+            boolean paired=story.containsKey("pairedVideoState")
+                    ||story.containsKey("pairedStandardVersionId")
+                    ||story.containsKey("pairedFramingVersionId");
+            ProductionMode active=ProductionMode.fromPersisted(story.get("productionMode"));
+            // Untouched RSS discovery entries are still one normal story card.
+            boolean standard=paired||modes.containsKey(ProductionMode.STANDARD)
+                    ||active==ProductionMode.STANDARD;
+            boolean review=paired||modes.containsKey(ProductionMode.FRAMING_EXPOSURE)
+                    ||active==ProductionMode.FRAMING_EXPOSURE;
+            if(standard)rows.add(boardEntry(story,ProductionMode.STANDARD,
+                    modes.get(ProductionMode.STANDARD),active==ProductionMode.STANDARD));
+            if(review)rows.add(boardEntry(story,ProductionMode.FRAMING_EXPOSURE,
+                    modes.get(ProductionMode.FRAMING_EXPOSURE),active==ProductionMode.FRAMING_EXPOSURE));
+        }
+        return rows;
+    }
+
+    private Map<String,Object>boardEntry(Map<String,Object>story,ProductionMode mode,
+            Map<String,Object>completed,boolean active){
+        Map<String,Object>row=new LinkedHashMap<>(story);
+        String sourceId=String.valueOf(story.get("id"));
+        String originalTitle=String.valueOf(story.getOrDefault("topic",""));
+        String name=mode==ProductionMode.FRAMING_EXPOSURE
+                ?"Narrative Review: "+originalTitle:originalTitle;
+        row.put("boardEntryId",sourceId+"::"+mode.name());
+        row.put("sourceStoryId",sourceId);
+        row.put("entryMode",mode.name());
+        row.put("productionMode",mode.name());
+        row.put("displayTitle",name);
+        row.put("entryActive",active);
+        row.put("entryHasVideo",completed!=null);
+        row.put("entryMayRemake","COMPLETE".equals(String.valueOf(story.get("status")))
+                &&completed!=null);
+        if(completed!=null){
+            row.put("status","COMPLETE");
+            row.put("stage","COMPLETE");
+            row.put("progress",100);
+            row.put("videoVersion",completed.get("version"));
+            row.put("currentVideoVersionId",completed.get("versionId"));
+            row.put("videoFilename",completed.getOrDefault("filename",""));
+            row.put("serverVideo",completed.getOrDefault("path",""));
+            row.put("completedAt",completed.getOrDefault("completedAt",""));
+            for(String key:List.of("ttsEngine","ttsVoice","visualMode","comfyCheckpoint","comfyImages"))
+                if(completed.containsKey(key))row.put(key,completed.get(key));else row.remove(key);
+            copyPublicationState(completed,row);
+            row.remove("lastFailure");row.remove("failureType");row.remove("error");
+            row.put("detail",mode==ProductionMode.STANDARD
+                    ?"Original report archived as "+completed.get("versionId")
+                    :"Narrative review archived as "+completed.get("versionId"));
+        }else if(!active){
+            // Second card is visible as soon as the first report is chosen,
+            // even though the dependent review is not yet claimable.
+            row.put("status","WAITING");
+            row.put("stage","WAITING_FOR_NORMAL_VIDEO");
+            row.put("progress",0);
+            row.put("detail","Waiting for original news video to complete");
+            row.put("entryMayRemake",false);
+            row.remove("currentVideoVersionId");
+            row.remove("videoVersion");
+            row.remove("videoFilename");
+            row.remove("lastFailure");row.remove("error");
+            row.put("uploaded",false);row.put("scrapped",false);
+        }else{
+            row.remove("currentVideoVersionId");
+            row.remove("videoVersion");
+            row.remove("videoFilename");
+            row.put("uploaded",false);row.put("scrapped",false);
+        }
+        return row;
+    }
+
     private static boolean isOperationalBoardStatus(String status){
         return "QUEUED".equals(status)||"PRODUCING".equals(status)||"HOLD".equals(status);
     }
@@ -786,6 +882,7 @@ public final class CommandCenterStore {
             case "ALL"->true;
             case "COMPLETE"->rawStatus.startsWith("COMPLETE");
             case "TO_POST"->isToPost(m);
+            case "QUEUED"->"QUEUED".equals(rawStatus)||"WAITING".equals(rawStatus);
             case "UPLOADED"->Boolean.TRUE.equals(m.get("uploaded"))&&!Boolean.TRUE.equals(m.get("scrapped"));
             case "SCRAPPED"->Boolean.TRUE.equals(m.get("scrapped"));
             case "WORTHY"->isActionableWorthy(m);
@@ -802,7 +899,7 @@ public final class CommandCenterStore {
     }
     private static String boardSearchText(Map<String,Object>m){
         StringBuilder sb=new StringBuilder();
-        for(String key:List.of("topic","category","uploadedPlatform","uploadNote","scrapReason",
+        for(String key:List.of("topic","displayTitle","entryMode","category","uploadedPlatform","uploadNote","scrapReason",
                 "lastFailure","failureType","assignedWorker","lastAssignedWorker")){
             Object value=m.get(key);
             if(value!=null)sb.append(value).append(' ');
@@ -854,6 +951,7 @@ public final class CommandCenterStore {
     }
     private static boolean isToPost(Map<String,Object>m){
         return "COMPLETE".equals(String.valueOf(m.get("status")))
+                &&Boolean.TRUE.equals(m.getOrDefault("entryHasVideo",true))
                 &&!Boolean.TRUE.equals(m.get("uploaded"))
                 &&!Boolean.TRUE.equals(m.get("scrapped"));
     }
