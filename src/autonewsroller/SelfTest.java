@@ -44,6 +44,7 @@ public final class SelfTest {
         testPublisherBiasRegistry(root);
         testPoliticalAnalysisQueue(a);
         testPoliticalExposureMode();
+        testPairedSequentialVideoProduction();
         testPoliticalExposureLengthRecovery();
         testPoliticalVisualGraphics(root,a);
         testAuthoritative(root);
@@ -754,6 +755,120 @@ public final class SelfTest {
         ok(ProductionMode.fromPersisted(null)==ProductionMode.STANDARD,"legacy jobs default to standard");
         try{ProductionMode.fromPersisted("BROKEN");throw new AssertionError("Unknown mode accepted");}
         catch(IllegalArgumentException expected){ok(true,"unknown mode is explicitly rejected");}
+    }
+
+    private void testPairedSequentialVideoProduction()throws Exception{
+        Instant now=Instant.now();
+        Article article=new Article("paired-a","Fixture News",
+                "City council proposes a change to neighborhood voting rules",
+                "https://fixture.example/vote","https://fixture.example/vote",now,now,"","local",
+                "Council members proposed an adjustment to voting procedures.","","en",1,false);
+        StoryCluster cluster=new StoryCluster("paired-story",article.title(),List.of(article),Set.of("council"),"paired-fingerprint");
+        FactPackage facts=new FactPackage(cluster.id,article.title(),"Council members proposed a voting change.",
+                List.of(),List.of(),List.of(Map.of("publisher",article.publisher())),1,1,.6,false);
+        NewsPipeline.DiscoveryResult discovery=new NewsPipeline.DiscoveryResult(
+                List.of(new NewsPipeline.DiscoveryItem(cluster,facts,false,"one attributable report",0.9,false)),
+                1,1,0,1,1,1,1,now);
+        Path dir=Files.createTempDirectory("autonews-sequential-pair-");
+        Path state=dir.resolve("state.json");
+        CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),
+                false,.68,12,null,75,.74,.82,0,0,1,true);
+        store.applyDiscovery(discovery);
+        store.action(cluster.id,"MAKE","selected-once");
+        ok("STANDARD_QUEUED".equals(store.storyDetail(cluster.id).get("pairedVideoState")),
+                "chosen MAKE job records a two-video sequence before rendering");
+        store.heartbeat("updated-worker",Map.of("id","updated-worker",
+                "capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>normal=store.claim("updated-worker",Map.of("duration",70));
+        ok("VIDEO".equals(normal.get("jobType"))&&"STANDARD".equals(normal.get("productionMode")),
+                "first claimed job is always the original normal video");
+        ok(store.claim("updated-worker",Map.of())==null,
+                "second video is never claimable while the standard video is in progress");
+        store.complete(cluster.id,Map.of("workerId","updated-worker","claimId",normal.get("claimId"),
+                "sidecar",Map.of("productionMode","STANDARD")));
+        Map<String,Object>afterFirst=store.storyDetail(cluster.id);
+        ok("QUEUED".equals(afterFirst.get("status"))
+                &&"FRAMING_EXPOSURE".equals(afterFirst.get("productionMode"))
+                &&"FRAMING_QUEUED".equals(afterFirst.get("pairedVideoState")),
+                "successful normal completion queues a separate framing review automatically");
+        String firstVersion=String.valueOf(afterFirst.get("pairedStandardVersionId"));
+        ok(firstVersion.equals(afterFirst.get("currentVideoVersionId")),
+                "first normal video remains the published current version until the review completes");
+        store.setUploadStatus(cluster.id,firstVersion,true,"TikTok","normal news posted");
+        store.applyDiscovery(discovery);
+        ok("QUEUED".equals(store.storyDetail(cluster.id).get("status")),
+                "feed rescan cannot discard or duplicate a pending second video");
+        CommandCenterStore reloaded=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),
+                false,.68,12,null,75,.74,.82,0,0,1,true);
+        ok("FRAMING_QUEUED".equals(reloaded.storyDetail(cluster.id).get("pairedVideoState")),
+                "paired handoff survives a Command Center restart");
+        Map<String,Object>analysisJob=reloaded.claim("old-worker",Map.of());
+        ok(analysisJob!=null&&"POLITICAL_ANALYSIS".equals(analysisJob.get("jobType")),
+                "second video waits for article framing analysis even for a local category");
+        Map<String,Object>framing=new LinkedHashMap<>();
+        framing.put("politicalRelevance",.12);framing.put("overallClassification","not_political");
+        framing.put("overallConfidence",.7);
+        framing.put("overallWeights",Map.of("left",.3,"center",.4,"right",.3));
+        framing.put("summary","No documented partisan framing from the text.");
+        framing.put("articles",List.of(Map.of("id",article.id(),"classification","not_political")));
+        reloaded.politicalAnalysisComplete(cluster.id,framing,"old-worker");
+        ok(reloaded.claim("old-worker",Map.of())==null,
+                "legacy workers cannot take the review without the capability");
+        reloaded.heartbeat("updated-worker",Map.of("id","updated-worker",
+                "capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>review=reloaded.claim("updated-worker",Map.of("duration",75));
+        ok(review!=null&&"VIDEO".equals(review.get("jobType"))
+                &&"FRAMING_EXPOSURE".equals(review.get("productionMode")),
+                "second video is claimed as framing exposure rather than another news report");
+        reloaded.complete(cluster.id,Map.of("workerId","updated-worker","claimId",review.get("claimId"),
+                "sidecar",Map.of("productionMode","FRAMING_EXPOSURE")));
+        Map<String,Object>done=reloaded.storyDetail(cluster.id);
+        ok("COMPLETE".equals(done.get("status"))
+                &&"COMPLETE".equals(done.get("pairedVideoState"))
+                &&!firstVersion.equals(done.get("pairedFramingVersionId")),
+                "two-video sequence completes with distinct archived version identifiers");
+        List<?>versions=(List<?>)reloaded.snapshot().get("videos");
+        ok(versions.size()==2&&versions.stream().anyMatch(v->v instanceof Map<?,?>m
+                &&"STANDARD".equals(m.get("productionMode"))&&Boolean.TRUE.equals(m.get("uploaded")))
+                &&versions.stream().anyMatch(v->v instanceof Map<?,?>m
+                &&"FRAMING_EXPOSURE".equals(m.get("productionMode"))&&!Boolean.TRUE.equals(m.get("uploaded"))),
+                "both versions retain independent publication status");
+        ok(reloaded.claim("updated-worker",Map.of())==null,
+                "a completed pair does not silently create a third video");
+
+        // Explicit exposure action remains a one-video choice, with no standard prelude.
+        Path onlyState=dir.resolve("framing-only.json");
+        CommandCenterStore only=new CommandCenterStore(onlyState,BiasRegistry.load(dir.resolve("bias.json")),
+                false,.68,12,null,75,.74,.82,0,0,1,true);
+        only.applyDiscovery(discovery);
+        only.action(cluster.id,"MAKE_FRAMING_EXPOSURE");
+        ok("FRAMING_EXPOSURE".equals(only.storyDetail(cluster.id).get("productionMode"))
+                &&only.storyDetail(cluster.id).get("pairedStandardVersionId")==null,
+                "standalone framing button does not unexpectedly create a news report");
+
+        // A failed standard first stage must never enqueue a review.
+        Path failureState=dir.resolve("first-failure.json");
+        CommandCenterStore fail=new CommandCenterStore(failureState,BiasRegistry.load(dir.resolve("bias.json")),
+                false,.68,12,null,75,.74,.82,0,0,1,true);
+        fail.applyDiscovery(discovery);
+        fail.action(cluster.id,"MAKE");
+        Map<String,Object>bad=fail.claim("old-worker",Map.of());
+        fail.fail(cluster.id,"Synthetic standard rendering failure","old-worker",
+                String.valueOf(bad.get("claimId")));
+        ok("FAILED".equals(fail.storyDetail(cluster.id).get("status"))
+                &&"STANDARD_FAILED".equals(fail.storyDetail(cluster.id).get("pairedVideoState"))
+                &&((List<?>)fail.snapshot().get("videos")).isEmpty(),
+                "failed original video does not enqueue a premature framing review");
+
+        // Re-making a completed pair starts a new independent two-video cycle.
+        reloaded.action(cluster.id,"REMAKE");
+        Map<String,Object>remake=reloaded.claim("updated-worker",Map.of());
+        ok("STANDARD".equals(remake.get("productionMode")),"REMAKE starts a new normal video first");
+        reloaded.complete(cluster.id,Map.of("workerId","updated-worker","claimId",remake.get("claimId"),
+                "sidecar",Map.of("productionMode","STANDARD")));
+        ok(((List<?>)reloaded.snapshot().get("videos")).size()==3
+                &&"FRAMING_QUEUED".equals(reloaded.storyDetail(cluster.id).get("pairedVideoState")),
+                "remake preserves both original files and queues its own review");
     }
 
     private void testPoliticalExposureLengthRecovery()throws Exception{
