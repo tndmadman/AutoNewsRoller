@@ -199,6 +199,11 @@ public final class CommandCenterStore {
     public synchronized Map<String,Object> action(String storyId,String action,String operationId){
         Map<String,Object>m=requireStory(storyId);
         String a=action==null?"":action.trim().toUpperCase(Locale.ROOT);
+        // The retry button on a failed SECOND video should retry ONLY the framing
+        // review. Never overwrite/re-render an already successful first video.
+        if("FAILED".equals(m.get("status"))&&"FRAMING_FAILED".equals(m.get("pairedVideoState"))
+                &&Set.of("MAKE","QUEUE","WORTH","WORTH_IT","WORTH-IT").contains(a))
+            return action(storyId,"MAKE_FRAMING_EXPOSURE",operationId);
         String identity="action:"+storyId+":"+a;
         if(alreadyHandled(operationId,identity))return publicStory(m);
         String status=String.valueOf(m.getOrDefault("status",""));
@@ -258,6 +263,8 @@ public final class CommandCenterStore {
                     throw new IllegalStateException("Existing version missing; cannot archive.");
                 m.put("manualWorth",true);m.put("worthy",true);m.put("decision",a);
                 m.put("manualFramingRequested",true);m.put("politicalCandidate",true);
+                if("FRAMING_FAILED".equals(m.get("pairedVideoState")))
+                    m.put("pairedVideoState","FRAMING_QUEUED");
                 m.put("productionMode",ProductionMode.FRAMING_EXPOSURE.name());
                 m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("progress",15);
                 m.remove("error");clearLease(m);resetFailureRetryState(m);
@@ -280,10 +287,14 @@ public final class CommandCenterStore {
                 }
             }
             case "HOLD"->{
+                if("FRAMING_QUEUED".equals(m.get("pairedVideoState")))
+                    m.put("pairedVideoState","FRAMING_HELD");
                 m.put("decision","HOLD");m.put("status","HOLD");m.put("stage","HOLD");m.put("progress",10);
                 m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
             }
             case "SKIP","NOT_WORTH","NOT-WORTH"->{
+                if("FRAMING_QUEUED".equals(m.get("pairedVideoState")))
+                    m.put("pairedVideoState","FRAMING_SKIPPED");
                 m.put("manualWorth",false);m.put("worthy",false);m.put("decision","SKIP");m.put("status","SKIPPED");m.put("stage","SKIPPED");m.put("progress",0);
                 m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
             }
@@ -953,6 +964,12 @@ public final class CommandCenterStore {
                 m.put("lastFailure","Worker lease expired "+leaseRecoveries+" times; automatic lease recovery stopped.");
                 m.put("lastFailedAt",now.toString());m.put("error",m.get("lastFailure"));
                 m.put("detail","Worker lease recovery exhausted; manual retry required");
+                if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE&&
+                        String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("FRAMING_"))
+                    m.put("pairedVideoState","FRAMING_FAILED");
+                else if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.STANDARD&&
+                        String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("STANDARD_"))
+                    m.put("pairedVideoState","STANDARD_FAILED");
             }
             recovered++;if(announce)emit("story",publicStory(m));
         }

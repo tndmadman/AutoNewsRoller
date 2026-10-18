@@ -498,7 +498,7 @@ function storyCard(s){
     <div class="storyActions">
       ${!completeLike?`
         <button class="btn good" data-command="WORTH" title="Select for normal news followed by a framing review" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
-        <button class="btn primary" data-command="MAKE" title="Make normal news video, then queue a separate political-framing review" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
+        <button class="btn primary" data-command="MAKE" title="Make normal news video, then queue a separate political-framing review" ${makeDisabled?"disabled":""}>${status==="FAILED"&&s.pairedVideoState==="FRAMING_FAILED"?"↻ RETRY FRAMING REVIEW":status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
         <button class="btn warn" data-command="HOLD">Ⅱ HOLD</button>
         <button class="btn bad" data-command="SKIP">× NOT WORTH</button>
         <button class="btn ghost" data-command="AUTO">↻ AUTO</button>`:""}
