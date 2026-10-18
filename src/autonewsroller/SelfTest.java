@@ -43,6 +43,7 @@ public final class SelfTest {
         testCommandCenterLeaseRecovery(a);
         testPublisherBiasRegistry(root);
         testPoliticalAnalysisQueue(a);
+        testPoliticalExposureMode();
         testPoliticalVisualGraphics(root,a);
         testAuthoritative(root);
         testMalformed(root);
@@ -655,6 +656,76 @@ public final class SelfTest {
         ok("Right".equals(fox.get("originalClassification"))&&String.valueOf(fox.get("url")).contains("allsides.com"),"publisher bias preserves provider label and citation URL");
         Map<String,Object>deduped=registry.mix(List.of("BBC News","BBC News","bbc news"));
         ok(((Number)deduped.get("center")).intValue()==1&&((Number)deduped.get("left")).intValue()==0&&((Number)deduped.get("right")).intValue()==0,"publisher bias mix deduplicates repeated publishers case-insensitively");
+    }
+
+    private void testPoliticalExposureMode()throws Exception{
+        Instant now=Instant.now();
+        Article first=new Article("frame-a","Publisher A",
+                "Senate election bill sparks debate about voting rules",
+                "https://publisher-a.example/news/bill","https://publisher-a.example/news/bill",now,now,"","politics",
+                "Legislators discussed a voting bill.","","en",1,false);
+        Article second=new Article("frame-b","Publisher B",
+                "Senate election bill raises concerns about voting access",
+                "https://publisher-b.example/news/bill","https://publisher-b.example/news/bill",now,now,"","politics",
+                "The senate election bill prompted discussion of voting access.","","en",1,false);
+        StoryCluster cluster=new StoryCluster("framing-experiment-fixture",first.title(),List.of(first,second),
+                Set.of("Senate","election"),"fixture-fingerprint");
+        FactPackage fp=new FactPackage(cluster.id,first.title(),
+                "The Senate debated an election bill concerning voting rules.",
+                List.of(),List.of(),List.of(Map.of("publisher","Publisher A"),Map.of("publisher","Publisher B")),2,2,0.9,false);
+        NewsPipeline.DiscoveryItem item=new NewsPipeline.DiscoveryItem(cluster,fp,true,"fixture verified",0.91,false);
+        NewsPipeline.DiscoveryResult found=new NewsPipeline.DiscoveryResult(List.of(item),2,2,0,2,2,2,2,now);
+        Path dir=Files.createTempDirectory("autonews-political-exposure-");
+        Path state=dir.resolve("state.json");
+        CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),false,0.68,12,null);
+        store.applyDiscovery(found);
+        Map<String,Object>queued=store.action(cluster.id,"MAKE_FRAMING_EXPOSURE","same-operation");
+        ok("FRAMING_EXPOSURE".equals(queued.get("productionMode"))
+                &&"QUEUED".equals(queued.get("status")),"framing exposure action sets explicit experimental mode");
+        store.action(cluster.id,"MAKE_FRAMING_EXPOSURE","same-operation");
+        ok("WAITING_FOR_FRAMING_ANALYSIS".equals(store.storyDetail(cluster.id).get("stage")),
+                "experiment waits for framing evidence, duplicate operation does not create another job");
+        Map<String,Object>analysisJob=store.claim("old-worker",Map.of());
+        ok("POLITICAL_ANALYSIS".equals(analysisJob.get("jobType")),"legacy worker may handle political classification, not experimental video");
+        Map<String,Object>analysis=new LinkedHashMap<>();
+        analysis.put("politicalRelevance",0.91);analysis.put("overallClassification","mixed");
+        analysis.put("overallConfidence",0.85);analysis.put("overallWeights",Map.of("left",0.4,"center",0.2,"right",0.4));
+        analysis.put("summary","Different choices of headline emphasis.");analysis.put("model","fixture-model");
+        store.politicalAnalysisComplete(cluster.id,analysis,"old-worker");
+        ok(store.claim("old-worker",Map.of())==null,"worker without exposure capability cannot claim experimental render");
+        CommandCenterStore loaded=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),false,0.68,12,null);
+        ok("FRAMING_EXPOSURE".equals(loaded.storyDetail(cluster.id).get("productionMode")),
+                "experimental mode survives restart");
+        loaded.heartbeat("new-worker",Map.of("id","new-worker","capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>job=loaded.claim("new-worker",Map.of("duration",75));
+        ok("VIDEO".equals(job.get("jobType"))&&"FRAMING_EXPOSURE".equals(job.get("productionMode")),
+                "capable worker claims only requested experiment");
+        loaded.complete(cluster.id,Map.of("workerId","new-worker","claimId",job.get("claimId"),
+                "sidecar",Map.of("productionMode","FRAMING_EXPOSURE")));
+        Map<String,Object>done=loaded.storyDetail(cluster.id);
+        String versionId=String.valueOf(done.get("currentVideoVersionId"));
+        loaded.setUploadStatus(cluster.id,versionId,true,"TikTok","first experiment");
+        loaded.action(cluster.id,"REMAKE");
+        ok("STANDARD".equals(loaded.storyDetail(cluster.id).get("productionMode")),
+                "ordinary remake explicitly returns to STANDARD");
+        Map<String,Object>snapshot=loaded.snapshot();
+        List<?>versions=(List<?>)snapshot.get("videos");
+        ok(versions.stream().anyMatch(v->v instanceof Map<?,?>m&&
+                "FRAMING_EXPOSURE".equals(m.get("productionMode"))&&Boolean.TRUE.equals(m.get("uploaded"))),
+                "historic framing video keeps its mode and independent uploaded flag");
+
+        PoliticalVisualData context=PoliticalVisualData.from(true,Map.of(),analysis,"COMPLETE","");
+        var evidence=new PoliticalFramingEvidenceBuilder().build(cluster,fp,context);
+        NewsScript script=new PoliticalFramingScriptGenerator(null,1).generate(fp,evidence,75,true);
+        ok(script.narration().startsWith(first.title()+" "+PoliticalFramingScriptGenerator.TEASER),
+                "title followed by exact mandatory audible teaser");
+        VisualPlan plan=new PoliticalFramingVisualPlanner().plan(script,evidence);
+        ok(plan.items().size()==8&&"FRAMING_HEADLINE".equals(plan.items().get(0).type())
+                &&"SOURCE_COMPARISON".equals(plan.items().get(3).type()),
+                "visual plan uses source-grounded opening and comparison cards");
+        ok(ProductionMode.fromPersisted(null)==ProductionMode.STANDARD,"legacy jobs default to standard");
+        try{ProductionMode.fromPersisted("BROKEN");throw new AssertionError("Unknown mode accepted");}
+        catch(IllegalArgumentException expected){ok(true,"unknown mode is explicitly rejected");}
     }
 
     private void testPoliticalAnalysisQueue(List<Article>a)throws Exception{
