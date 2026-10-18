@@ -139,6 +139,9 @@ public final class RemoteWorker {
         event("job-start",Map.of("jobId",jobId,"jobType",type,"topic",currentTopic,"stage",stage,"workerId",workerId));
         try{
             if("POLITICAL_ANALYSIS".equals(type)){runPoliticalAnalysis(job);return;}
+            ProductionMode productionMode=ProductionMode.fromPersisted(job.get("productionMode"));
+            if(productionMode==ProductionMode.FRAMING_EXPOSURE&&!cfg.getBool("politicalExposureEnabled",true))
+                throw new IllegalStateException("Worker does not support framing exposure v1.");
             NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
             Map<String,Object> settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
             int requestedDuration=settings.get("duration") instanceof Number n?n.intValue():cfg.duration();
@@ -156,7 +159,12 @@ public final class RemoteWorker {
             final String claimId=currentClaimId;
             NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,e->progressSafe(jobId,claimId,e));
             PoliticalVisualData political=job.get("politicalVisualData") instanceof Map<?,?>?PoliticalVisualData.fromMap(Json.object(job.get("politicalVisualData"))):null;
-            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,dryRun);
+            if(productionMode==ProductionMode.FRAMING_EXPOSURE){
+                useComfy=cfg.getBool("politicalExposureRequireComfy",false);
+                requireComfy=useComfy;
+                duration=Math.max(duration,cfg.getInt("politicalExposureDefaultDurationSeconds",75));
+            }
+            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,dryRun);
             stage="UPLOAD";detail="Local output ready; awaiting controller acknowledgement";
             event("progress",Map.of("stage",stage,"detail",detail));
             if(!dryRun&&output.toString().toLowerCase(Locale.ROOT).endsWith(".mp4")){
@@ -219,7 +227,9 @@ public final class RemoteWorker {
         try{
             Map<String,Object> m=new LinkedHashMap<>();
             m.put("id",workerId);m.put("state",state);m.put("currentJob",currentJob);m.put("currentTopic",currentTopic);
-            m.put("claimId",currentClaimId);m.put("metrics",metrics.get());m.put("timestamp",Instant.now().toString());
+            m.put("claimId",currentClaimId);
+            m.put("capabilities",cfg.getBool("politicalExposureEnabled",true)?List.of("framing_exposure_v1"):List.of());
+            m.put("metrics",metrics.get());m.put("timestamp",Instant.now().toString());
             post("/api/workers/heartbeat",m);lastHeartbeat=Instant.now();
         }catch(Exception e){error("heartbeat",e);}
     }

@@ -485,6 +485,7 @@ function storyCard(s){
         <div class="storyMeta"><span class="statusTag ${verified||s.worthy?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
         ${s.manualVerificationOverride?'<span class="statusTag failed">MANUAL VERIFY OVERRIDE</span>':""}
         ${s.softVerificationOverride?'<span class="statusTag">RELAXED 1-SOURCE</span>':""}
+        ${s.productionMode==="FRAMING_EXPOSURE"?'<span class="statusTag">FRAMING EXPOSURE</span>':""}
         ${s.scrapped?'<span class="statusTag scrapped">SCRAPPED</span>':s.uploaded?'<span class="statusTag uploaded">UPLOADED</span>':status==="COMPLETE"?'<span class="statusTag toPost">TO POST</span>':""}
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
       </div>
@@ -500,6 +501,7 @@ function storyCard(s){
         <button class="btn warn" data-command="HOLD">Ⅱ HOLD</button>
         <button class="btn bad" data-command="SKIP">× NOT WORTH</button>
         <button class="btn ghost" data-command="AUTO">↻ AUTO</button>`:""}
+      <button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${["QUEUED","PRODUCING"].includes(status)?"disabled title='Another video is already queued or producing'":""}>◉ MAKE POLITICAL FRAMING EXPOSURE VIDEO</button>
       ${status==="COMPLETE"?`
         <button class="btn primary" data-command="REMAKE">↻ RE-MAKE VIDEO</button>
         ${s.scrapped
@@ -559,7 +561,7 @@ function renderVideos(){
     const remakeButton=v.current
       ?`<button class="btn primary" data-command="REMAKE">RE-MAKE</button>`
       :"";
-    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${lifecycle}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions"><a href="${href}" target="_blank">OPEN MP4</a>${remakeButton}${uploadButton}${scrapButton}</div></div>`}
+    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${lifecycle}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions"><a href="${href}" target="_blank">OPEN MP4</a>${remakeButton}${uploadButton}${scrapButton}</div></div>`}
   }),"No completed videos yet.");
 }
 
@@ -604,6 +606,7 @@ document.addEventListener("click",e=>{
   const versionId=row.dataset.versionId||row.dataset.currentVersionId||"";
   const path="/api/stories/"+encodeURIComponent(id);
   if(command==="REMAKE"&&!confirm("Queue a fresh re-make? The existing completed video will stay in the archive as its own version."))return;
+  if(command==="MAKE_FRAMING_EXPOSURE"&&!confirm("Create a political framing exposure video from source evidence? Completed versions remain archived."))return;
   if(command==="ANALYZE"){
     submitOperation(id,button,path+"/analyze-bias",{},"POST","Political framing analysis queued for an idle worker.");
     return;
@@ -635,7 +638,7 @@ document.addEventListener("click",e=>{
     return;
   }
   submitOperation(id,button,path+"/action",{action:command},"POST",
-    command==="MAKE"?"Queued for video production.":command==="WORTH"?"Marked WORTH IT and queued.":command==="REMAKE"?"Re-make queued; previous version archived.":command+" saved.");
+    command==="MAKE_FRAMING_EXPOSURE"?"Political framing experiment queued.":command==="MAKE"?"Queued for video production.":command==="WORTH"?"Marked WORTH IT and queued.":command==="REMAKE"?"Re-make queued; previous version archived.":command+" saved.");
 });
 // Toolbar actions also acknowledge the initial click and lock while the request runs.
 $("#autoVideoToggle").onclick=async()=>{

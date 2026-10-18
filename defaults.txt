@@ -89,3 +89,14 @@ politicalGraphicsShowConfidence=true
 politicalGraphicsShowSourceMix=true
 politicalGraphicsSceneSeconds=5.0
 politicalGraphicsShowOnUncertain=true
+
+# Manual-only experimental framing format (standard format unchanged)
+politicalExposureEnabled=true
+politicalExposureDefaultDurationSeconds=75
+politicalExposureMinimumIndependentSources=2
+politicalExposureRequireEvidence=true
+politicalExposureIntroSoundEnabled=true
+politicalExposureIntroSoundGainDb=-14
+politicalExposureRequiredAnalysisFraction=0.65
+politicalExposureAllowSingleSource=false
+politicalExposureRequireComfy=false
