@@ -43,7 +43,8 @@ public final class CommandCenterServer {
                 cfg.getDouble("commandCenterSingleSourceAutoQueueThreshold",0.82),
                 cfg.getInt("commandCenterFailureMaxRetries",3),
                 cfg.getInt("commandCenterFailureRetryDelaySeconds",20),
-                cfg.getInt("commandCenterLeaseRecoveryMaxRetries",3)
+                cfg.getInt("commandCenterLeaseRecoveryMaxRetries",3),
+                cfg.getBool("commandCenterPairFramingVideos",true)
         );
     }
 
