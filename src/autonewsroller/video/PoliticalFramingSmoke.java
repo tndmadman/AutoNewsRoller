@@ -17,22 +17,22 @@ public final class PoliticalFramingSmoke {
         Article a=new Article("a","Publisher A","Senate election bill sparks debate over voting rules",
                 "https://a.example/1","https://a.example/1",now,now,"","politics",
                 "Senators discussed a voting bill.","","en",1,false);
-        Article b=new Article("b","Publisher B","Senate election bill draws criticism over voter access",
-                "https://b.example/1","https://b.example/1",now,now,"","politics",
-                "The Senate discussed voter access.","","en",1,false);
-        StoryCluster cluster=new StoryCluster("political-test",a.title(),List.of(a,b),Set.of("Senate"),"fixture");
+        StoryCluster cluster=new StoryCluster("political-test",a.title(),List.of(a),Set.of("Senate"),"fixture");
         FactPackage facts=new FactPackage(cluster.id,a.title(),"The Senate debated a voting bill.",
-                List.of(),List.of(),List.of(Map.of("publisher","Publisher A"),Map.of("publisher","Publisher B")),
-                2,2,.9,false);
-        Map<String,Object>raw=Map.of("politicalRelevance",.9,"overallClassification","mixed",
-                "overallConfidence",.8,"overallWeights",Map.of("left",.4,"center",.2,"right",.4),
-                "summary","Different observable headline emphasis.");
+                List.of(),List.of(),List.of(Map.of("publisher","Publisher A")),
+                1,1,.5,false);
+        Map<String,Object>raw=Map.of("politicalRelevance",.4,"overallClassification","uncertain",
+                "overallConfidence",.6,"overallWeights",Map.of("left",.3,"center",.4,"right",.3),
+                "summary","Analyze the headline's wording without presuming partisan intent.");
         var political=PoliticalVisualData.from(true,Map.of(),raw,"COMPLETE","");
         var evidence=new PoliticalFramingEvidenceBuilder().build(cluster,facts,political);
         NewsScript script=new PoliticalFramingScriptGenerator(null,1).generate(facts,evidence,75,true);
         if(!script.narration().startsWith(a.title()+" "+PoliticalFramingScriptGenerator.TEASER))
             throw new AssertionError("Opening altered");
         VisualPlan plan=new PoliticalFramingVisualPlanner().plan(script,evidence);
+        if(evidence.articles().size()!=1||!script.sourceLabels().equals(List.of("Publisher A"))
+                ||!"LANGUAGE_HIGHLIGHT".equals(plan.items().get(3).type()))
+            throw new AssertionError("Experiment must only expose one article's framing");
         List<Path>images=new ArrayList<>();
         for(VisualPlan.Item item:plan.items()){
             Path image=dir.resolve("frame-"+item.index()+".png");
@@ -68,7 +68,7 @@ public final class PoliticalFramingSmoke {
             Path d=Path.of("test-results","v5","framing-exposure");Files.createDirectories(d);
             Files.copy(mp4,d.resolve("synthetic-framing.mp4"),StandardCopyOption.REPLACE_EXISTING);
             Files.copy(opening,d.resolve("opening-frame.png"),StandardCopyOption.REPLACE_EXISTING);
-            Files.copy(images.get(3),d.resolve("attributed-source-comparison.png"),StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(images.get(3),d.resolve("headline-framing.png"),StandardCopyOption.REPLACE_EXISTING);
         }
         System.out.println("FRAMING EXPOSURE SYNTHETIC MP4 PASS: "+seconds+" seconds, original sting, cards, footer; NO REAL TTS");
     }

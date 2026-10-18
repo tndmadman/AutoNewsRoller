@@ -7,7 +7,7 @@ const ROOT=path.resolve(__dirname,"../..");
 const files={"": "index.html","/":"index.html","/app.js":"app.js","/styles.css":"styles.css"};
 function fixture(appOverride=null){
   const story={id:"story-1",topic:"Selected text must survive updates and worker activity",status:"VERIFIED",stage:"DISCOVERED",progress:12,score:.9,verified:true,worthy:true,
-    latestPublishedAt:new Date().toISOString(),publishers:["Associated Press","Reuters"],category:"politics",politicalCandidate:true,independentSources:2,sourceMix:{left:0,center:2,right:0,unknown:0}};
+    latestPublishedAt:new Date().toISOString(),publishers:["Associated Press","Reuters"],category:"local",politicalCandidate:false,independentSources:1,sourceMix:{left:0,center:2,right:0,unknown:0}};
   const version={storyId:"story-1",versionId:"story-1#v1",version:1,current:true,topic:story.topic,
     completedAt:new Date().toISOString(),filename:"test.mp4",productionMode:"STANDARD",uploaded:false,scrapped:false};
   const state={stories:[story],videos:[version],workers:Array.from({length:5},(_,i)=>({id:"worker-"+i,online:true,state:"IDLE",metrics:{cpuLoad:12+i,memoryTotalMb:20000,memoryFreeMb:10000,gpu:{available:false}}})),
@@ -106,7 +106,7 @@ function fixture(appOverride=null){
     async start(){await new Promise(ok=>server.listen(0,"127.0.0.1",ok));return "http://127.0.0.1:"+server.address().port},
     async stop(){for(const client of clients)client.destroy();await new Promise(ok=>server.close(ok))}};
 }
-test("political framing experiment uses guarded button, exact action and archived version mode",async({page})=>{
+test("any one-source story can request framing exposure without publisher comparison",async({page})=>{
   const f=fixture(),url=await f.start();
   try{
     await page.goto(url);
@@ -114,6 +114,7 @@ test("political framing experiment uses guarded button, exact action and archive
     await expect(card).toBeVisible();
     const experiment=card.locator('[data-command="MAKE_FRAMING_EXPOSURE"]');
     await expect(experiment).toBeVisible();
+    await expect(experiment).toContainText("EXPOSE POLITICAL FRAMING");
     await expect(page.locator(".videoRow")).toContainText("STANDARD");
     page.on("dialog",dialog=>dialog.accept());
     await experiment.click();

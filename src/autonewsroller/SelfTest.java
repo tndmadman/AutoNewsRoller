@@ -664,15 +664,11 @@ public final class SelfTest {
                 "Senate election bill sparks debate about voting rules",
                 "https://publisher-a.example/news/bill","https://publisher-a.example/news/bill",now,now,"","politics",
                 "Legislators discussed a voting bill.","","en",1,false);
-        Article second=new Article("frame-b","Publisher B",
-                "Senate election bill raises concerns about voting access",
-                "https://publisher-b.example/news/bill","https://publisher-b.example/news/bill",now,now,"","politics",
-                "The senate election bill prompted discussion of voting access.","","en",1,false);
-        StoryCluster cluster=new StoryCluster("framing-experiment-fixture",first.title(),List.of(first,second),
+        StoryCluster cluster=new StoryCluster("framing-experiment-fixture",first.title(),List.of(first),
                 Set.of("Senate","election"),"fixture-fingerprint");
         FactPackage fp=new FactPackage(cluster.id,first.title(),
                 "The Senate debated an election bill concerning voting rules.",
-                List.of(),List.of(),List.of(Map.of("publisher","Publisher A"),Map.of("publisher","Publisher B")),2,2,0.9,false);
+                List.of(),List.of(),List.of(Map.of("publisher","Publisher A")),1,1,0.45,false);
         NewsPipeline.DiscoveryItem item=new NewsPipeline.DiscoveryItem(cluster,fp,true,"fixture verified",0.91,false);
         NewsPipeline.DiscoveryResult found=new NewsPipeline.DiscoveryResult(List.of(item),2,2,0,2,2,2,2,now);
         Path dir=Files.createTempDirectory("autonews-political-exposure-");
@@ -688,9 +684,12 @@ public final class SelfTest {
         Map<String,Object>analysisJob=store.claim("old-worker",Map.of());
         ok("POLITICAL_ANALYSIS".equals(analysisJob.get("jobType")),"legacy worker may handle political classification, not experimental video");
         Map<String,Object>analysis=new LinkedHashMap<>();
-        analysis.put("politicalRelevance",0.91);analysis.put("overallClassification","mixed");
-        analysis.put("overallConfidence",0.85);analysis.put("overallWeights",Map.of("left",0.4,"center",0.2,"right",0.4));
-        analysis.put("summary","Different choices of headline emphasis.");analysis.put("model","fixture-model");
+        analysis.put("politicalRelevance",0.11);analysis.put("overallClassification","not_political");
+        analysis.put("overallConfidence",0.85);analysis.put("overallWeights",Map.of("left",0.3,"center",0.4,"right",0.3));
+        analysis.put("summary","Insufficient evidence of political slant in the available text.");
+        analysis.put("articles",List.of(Map.of("id",first.id(),"classification","not_political",
+                "rationale","Only the headline and short description are available.")));
+        analysis.put("model","fixture-model");
         store.politicalAnalysisComplete(cluster.id,analysis,"old-worker");
         ok(store.claim("old-worker",Map.of())==null,"worker without exposure capability cannot claim experimental render");
         CommandCenterStore loaded=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),false,0.68,12,null);
@@ -721,8 +720,36 @@ public final class SelfTest {
                 "title followed by exact mandatory audible teaser");
         VisualPlan plan=new PoliticalFramingVisualPlanner().plan(script,evidence);
         ok(plan.items().size()==8&&"FRAMING_HEADLINE".equals(plan.items().get(0).type())
-                &&"SOURCE_COMPARISON".equals(plan.items().get(3).type()),
-                "visual plan uses source-grounded opening and comparison cards");
+                &&"LANGUAGE_HIGHLIGHT".equals(plan.items().get(3).type())
+                &&"RHETORIC_CARD".equals(plan.items().get(4).type()),
+                "visual plan inspects the one source without a publisher comparison");
+        ok(evidence.articles().size()==1
+                &&"HEADLINE_AND_DESCRIPTION".equals(evidence.articles().get(0).get("availableTextScope")),
+                "single-source headline and description provide usable attributed framing evidence");
+        ok(script.sourceLabels().equals(List.of("Publisher A"))
+                &&script.segments().stream().noneMatch(s->s.purpose().equals("SECOND_SOURCE")),
+                "single-source script does not request a second publisher");
+        var filtered=new PoliticalFramingEvidenceBuilder().withArticleAnalysis(evidence,analysis);
+        ok(Json.object(filtered.politicalAnalysis().get("primaryArticleAnalysis")).get("classification").equals("not_political"),
+                "no-political-slant article finding is retained, not fabricated into a partisan verdict");
+        // A non-political category must still be eligible for a user-triggered framing check.
+        Article plain=new Article("frame-plain","Example News","City council announces new budget process",
+                "https://example.org/budget","https://example.org/budget",now,now,"","local","","","en",1,false);
+        StoryCluster plainCluster=new StoryCluster("manual-framing-story",plain.title(),List.of(plain),Set.of(),"plain");
+        FactPackage plainFacts=new FactPackage(plainCluster.id,plain.title(),plain.title(),List.of(),
+                List.of(),List.of(Map.of("publisher","Example News")),1,1,0.35,false);
+        NewsPipeline.DiscoveryResult plainDiscovery=new NewsPipeline.DiscoveryResult(
+                List.of(new NewsPipeline.DiscoveryItem(plainCluster,plainFacts,false,"one report",0.45,false)),
+                1,1,0,1,1,1,1,now);
+        CommandCenterStore singleStore=new CommandCenterStore(dir.resolve("non-political.json"),
+                BiasRegistry.load(dir.resolve("bias.json")),false,0.68,12,null);
+        singleStore.applyDiscovery(plainDiscovery);
+        ok(!Boolean.TRUE.equals(singleStore.storyDetail(plainCluster.id).get("politicalCandidate")),
+                "single-source non-political story is not auto-classified as political");
+        singleStore.action(plainCluster.id,"MAKE_FRAMING_EXPOSURE");
+        singleStore.applyDiscovery(plainDiscovery);
+        ok("QUEUED".equals(singleStore.storyDetail(plainCluster.id).get("biasAnalysisStatus")),
+                "manual exposure keeps its analysis queued across a feed rescan");
         ok(ProductionMode.fromPersisted(null)==ProductionMode.STANDARD,"legacy jobs default to standard");
         try{ProductionMode.fromPersisted("BROKEN");throw new AssertionError("Unknown mode accepted");}
         catch(IllegalArgumentException expected){ok(true,"unknown mode is explicitly rejected");}
