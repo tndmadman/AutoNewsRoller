@@ -7,9 +7,9 @@ const ROOT=path.resolve(__dirname,"../..");
 const files={"": "index.html","/":"index.html","/app.js":"app.js","/styles.css":"styles.css"};
 function fixture(appOverride=null){
   const story={id:"story-1",topic:"Selected text must survive updates and worker activity",status:"VERIFIED",stage:"DISCOVERED",progress:12,score:.9,verified:true,worthy:true,
-    latestPublishedAt:new Date().toISOString(),publishers:["Associated Press","Reuters"],category:"general",independentSources:2,sourceMix:{left:0,center:2,right:0,unknown:0}};
+    latestPublishedAt:new Date().toISOString(),publishers:["Associated Press","Reuters"],category:"politics",politicalCandidate:true,independentSources:2,sourceMix:{left:0,center:2,right:0,unknown:0}};
   const version={storyId:"story-1",versionId:"story-1#v1",version:1,current:true,topic:story.topic,
-    completedAt:new Date().toISOString(),filename:"test.mp4",uploaded:false,scrapped:false};
+    completedAt:new Date().toISOString(),filename:"test.mp4",productionMode:"STANDARD",uploaded:false,scrapped:false};
   const state={stories:[story],videos:[version],workers:Array.from({length:5},(_,i)=>({id:"worker-"+i,online:true,state:"IDLE",metrics:{cpuLoad:12+i,memoryTotalMb:20000,memoryFreeMb:10000,gpu:{available:false}}})),
     feeds:Array.from({length:90},(_,i)=>({url:"https://feed.test/rss/"+i,name:"Publisher "+i,category:"general",status:"OK",entries:3})),
     counts:{stories:1,worthy:1,verified:1,feedsOk:90,feedsFailed:0,workersOnline:5,queued:0,producing:0,complete:1,videoVersions:1,toPost:1,uploaded:0,scrapped:0},
@@ -71,7 +71,7 @@ function fixture(appOverride=null){
       let storyResult={...target};
       if(url.pathname.endsWith("/action")){
         const a=body.action;
-        if(a==="MAKE"||a==="WORTH"||a==="REMAKE"){target.status="QUEUED";target.stage="QUEUED";target.progress=15;state.counts.queued=1;}
+        if(a==="MAKE"||a==="WORTH"||a==="REMAKE"||a==="MAKE_FRAMING_EXPOSURE"){target.status="QUEUED";target.productionMode=a==="MAKE_FRAMING_EXPOSURE"?"FRAMING_EXPOSURE":"STANDARD";target.stage="QUEUED";target.progress=15;state.counts.queued=1;}
         else if(a==="HOLD"){target.status="HOLD";target.stage="HOLD"}
         else if(a==="SKIP"){target.status="SKIPPED";target.stage="SKIPPED"}
         else if(a==="AUTO"){target.status="VERIFIED";target.stage="DISCOVERED"}
@@ -106,6 +106,24 @@ function fixture(appOverride=null){
     async start(){await new Promise(ok=>server.listen(0,"127.0.0.1",ok));return "http://127.0.0.1:"+server.address().port},
     async stop(){for(const client of clients)client.destroy();await new Promise(ok=>server.close(ok))}};
 }
+test("political framing experiment uses guarded button, exact action and archived version mode",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    const card=page.locator("#stories .storyCard").first();
+    await expect(card).toBeVisible();
+    const experiment=card.locator('[data-command="MAKE_FRAMING_EXPOSURE"]');
+    await expect(experiment).toBeVisible();
+    await expect(page.locator(".videoRow")).toContainText("STANDARD");
+    page.on("dialog",dialog=>dialog.accept());
+    await experiment.click();
+    await expect.poll(()=>f.posts.filter(x=>x.body.action==="MAKE_FRAMING_EXPOSURE").length).toBe(1);
+    await expect(card.locator(".statusTag").filter({hasText:"FRAMING EXPOSURE"})).toBeVisible();
+    await expect(experiment).toBeDisabled();
+    expect(f.posts.filter(x=>x.body.action==="MAKE_FRAMING_EXPOSURE")).toHaveLength(1);
+    await expect(page.locator(".videoRow")).toContainText("STANDARD");
+  }finally{await f.stop();}
+});
 test("selected text and card identity survive thirty seconds of live worker/feed updates",async({page})=>{
   const f=fixture(),url=await f.start();
   try{
