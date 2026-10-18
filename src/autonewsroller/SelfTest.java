@@ -44,6 +44,7 @@ public final class SelfTest {
         testPublisherBiasRegistry(root);
         testPoliticalAnalysisQueue(a);
         testPoliticalExposureMode();
+        testPoliticalExposureLengthRecovery();
         testPoliticalVisualGraphics(root,a);
         testAuthoritative(root);
         testMalformed(root);
@@ -753,6 +754,83 @@ public final class SelfTest {
         ok(ProductionMode.fromPersisted(null)==ProductionMode.STANDARD,"legacy jobs default to standard");
         try{ProductionMode.fromPersisted("BROKEN");throw new AssertionError("Unknown mode accepted");}
         catch(IllegalArgumentException expected){ok(true,"unknown mode is explicitly rejected");}
+    }
+
+    private void testPoliticalExposureLengthRecovery()throws Exception{
+        Instant now=Instant.now();
+        Article article=new Article("framing-length-one","Fixture Gazette",
+                "Senate debates election proposal and new voting procedures",
+                "https://fixture.example/article","https://fixture.example/article",now,now,"","politics",
+                "Senate members debated a proposal about voting procedures.","","en",1,false);
+        StoryCluster cluster=new StoryCluster("length-fixture",article.title(),List.of(article),Set.of("Senate"),"length-test");
+        FactPackage facts=new FactPackage(cluster.id,article.title(),
+                "The source reports that senators debated changes to voting procedures.",
+                List.of(),List.of(),List.of(Map.of("publisher",article.publisher())),1,1,.5,false);
+        Map<String,Object>analysis=Map.of("politicalRelevance",.7,
+                "overallClassification","uncertain","overallConfidence",.5,
+                "overallWeights",Map.of("left",.3,"center",.4,"right",.3),
+                "summary","Headline wording should be inspected without assuming motives.");
+        PoliticalVisualData political=PoliticalVisualData.from(true,Map.of(),analysis,"COMPLETE","");
+        var evidence=new PoliticalFramingEvidenceBuilder().build(cluster,facts,political);
+
+        String[]sentences={
+                "The article reports that senators debated changes to voting procedures today.",
+                "The headline presents the debate as a proposed change under discussion.",
+                "This wording foregrounds the institutional process rather than a definite outcome.",
+                "The description discusses procedures but does not identify a final decision.",
+                "That distinction matters because a proposal is not an enacted policy.",
+                "Readers may interpret an active debate differently from a finished action.",
+                "The available article excerpt cannot establish the publisher's private motives."
+        };
+        List<String>oversized=new ArrayList<>();
+        for(int i=0;i<6;i++){
+            List<String>parts=new ArrayList<>();
+            for(int j=0;j<7;j++)parts.add(sentences[(i+j)%sentences.length]);
+            oversized.add(String.join(" ",parts));
+        }
+        int rawWords=autonewsroller.util.Text.words(article.title())
+                +autonewsroller.util.Text.words(PoliticalFramingScriptGenerator.TEASER)
+                +oversized.stream().mapToInt(autonewsroller.util.Text::words).sum();
+        ok(rawWords>300,"test Ollama produces a script longer than the 70-second upper limit");
+        PoliticalFramingLengthEditor.Edit edited=PoliticalFramingLengthEditor.compact(
+                oversized,article.title(),PoliticalFramingScriptGenerator.TEASER,70);
+        ok(edited.changed()&&edited.resultingWords()>=ScriptValidator.minWords(70)
+                &&edited.resultingWords()<=ScriptValidator.maxWords(70),
+                "oversized six-beat script is edited to valid duration budget using complete sentences");
+        ok(edited.paragraphs().size()==6
+                &&edited.paragraphs().stream().allMatch(x->x.endsWith("."))
+                &&edited.paragraphs().get(0).contains("reports"),
+                "length repair retains all six editorial beats and complete original sentences");
+        List<String>shortDraft=List.of("A factual summary.","An article headline.","A possible emphasis.",
+                "Evidence is limited.","An interpretation is possible.","No motive is established.");
+        ok(!PoliticalFramingLengthEditor.compact(shortDraft,article.title(),
+                PoliticalFramingScriptGenerator.TEASER,70).changed(),
+                "short drafts are never fabricated or padded with unsupported claims");
+
+        AtomicInteger calls=new AtomicInteger();
+        HttpServer mock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        mock.createContext("/generate",exchange->{
+            calls.incrementAndGet();
+            byte[]response=Json.stringify(Map.of("response",Json.stringify(Map.of("segments",oversized)),
+                    "done_reason","stop")).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type","application/json");
+            exchange.sendResponseHeaders(200,response.length);
+            try(OutputStream output=exchange.getResponseBody()){output.write(response);}
+        });
+        mock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-length-recovery-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+mock.getAddress().getPort()+"/generate",
+                    "mock-framing","5m",scratch.resolve("ollama.lock"));
+            NewsScript repaired=new PoliticalFramingScriptGenerator(client,5).generate(facts,evidence,70,false);
+            ok(calls.get()==1,"an overlong Ollama response repairs locally, without five remote regenerations");
+            ok(autonewsroller.util.Text.words(repaired.narration())>=ScriptValidator.minWords(70)
+                    &&autonewsroller.util.Text.words(repaired.narration())<=ScriptValidator.maxWords(70),
+                    "repaired script passes strict 70-second word budget");
+            ok(repaired.narration().startsWith(article.title()+" "+PoliticalFramingScriptGenerator.TEASER)
+                    &&repaired.sourceLabels().equals(List.of(article.publisher())),
+                    "repair preserves exact intro, attribution and one-article analysis");
+        }finally{mock.stop(0);}
     }
 
     private void testPoliticalAnalysisQueue(List<Article>a)throws Exception{
