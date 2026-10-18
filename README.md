@@ -14,6 +14,7 @@ The detailed project knowledge is maintained under docs/:
 - [Configuration reference](docs/CONFIGURATION_REFERENCE.md)
 - [Windows operations](docs/WINDOWS_OPERATIONS.md)
 - [Command Center](docs/COMMAND_CENTER.md)
+- [Political framing exposure experiment](docs/POLITICAL_FRAMING_EXPOSURE.md)
 - [News sources, polling, bot behavior, and content use](docs/NEWS_SOURCES_AND_CONTENT_USE.md)
 - [TTS, GPU, ComfyUI, captions, and video](docs/TTS_GPU_VISUALS_VIDEO.md)
 - [Output, audit, provenance, and history](docs/OUTPUT_AUDIT_HISTORY.md)
