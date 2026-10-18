@@ -475,6 +475,8 @@ function storyCard(s){
         ${s.comfyImages!=null?`<span><b>COMFY</b> ${num(s.comfyImages)} generated image(s)</span>`:""}
         ${num(s.leaseRecoveries)>0?`<span><b>RECOVERED</b> ${num(s.leaseRecoveries)} worker lease(s)</span>`:""}
       </div>`:"";
+  const boardVideoUrl=hasVideo&&s.videoFilename
+    ?"/videos/"+encodeURIComponent(s.videoFilename)+(token?"?token="+encodeURIComponent(token):""):"";
   const uploadState=status==="COMPLETE"&&hasVideo
     ?(s.scrapped
       ?`<div class="uploadState scrapped"><b>× SCRAPPED VERSION ${num(s.videoVersion)||""}</b><span>${s.scrappedAt?new Date(s.scrappedAt).toLocaleString():""}${s.scrapReason?" // "+esc(s.scrapReason):""}</span></div>`
@@ -503,6 +505,7 @@ function storyCard(s){
     ${liveDetail}
     ${uploadState}
     <div class="storyActions">
+      ${boardVideoUrl?`<a class="btn ghost" href="${esc(boardVideoUrl)}" target="_blank" rel="noopener">OPEN MP4</a>`:""}
       ${!review&&!completeLike?`
         <button class="btn good" data-command="WORTH" title="Queue normal news followed by a narrative review" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
         <button class="btn primary" data-command="MAKE" title="Make normal news, then a narrative review" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
@@ -569,9 +572,9 @@ function renderVideos(){
       ?`<button class="btn ghost" data-command="RESTORE">RESTORE</button>`
       :`<button class="btn bad" data-command="SCRAP">SCRAP</button>`;
     const remakeButton=v.current
-      ?`<button class="btn primary" data-command="REMAKE">RE-MAKE</button>`
+      ?`<button class="btn primary" data-command="${v.productionMode==="FRAMING_EXPOSURE"?"REMAKE_FRAMING_EXPOSURE":"REMAKE"}">${v.productionMode==="FRAMING_EXPOSURE"?"RE-MAKE REVIEW":"RE-MAKE NEWS"}</button>`
       :"";
-    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.productionMode==="FRAMING_EXPOSURE"?"Narrative Review: "+String(v.topic||storyId).replace(/^Narrative Review:\\s*/i,""):v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${lifecycle}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions"><a href="${href}" target="_blank">OPEN MP4</a>${remakeButton}${uploadButton}${scrapButton}</div></div>`}
+    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.productionMode==="FRAMING_EXPOSURE"?"Narrative Review: "+String(v.topic||storyId).replace(/^Narrative Review:\s*/i,""):v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${lifecycle}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions"><a href="${href}" target="_blank">OPEN MP4</a>${remakeButton}${uploadButton}${scrapButton}</div></div>`}
   }),"No completed videos yet.");
 }
 
