@@ -20,6 +20,20 @@ Stories with insufficient evidence of political slant still receive a careful fr
 
 Both the standard report and the review now use the original two-tone breaking-news sting at the start, beneath narration. Both default to `-4.46 dB`, rather than the previous experimental `-14.00 dB`: a difference of +9.54 dB, or approximately **three times the input waveform amplitude** before FFmpeg's limiter. Speech is not amplified. Audio limiting can reduce the exact perceived/peak increase to avoid clipping. The sidecar identifies the sting and gain for either video.
 
+## Separate Story Operations Board entries
+
+The Command Center now projects one **Original News** entry and one **Narrative Review** entry for a selected two-video story, without duplicating the underlying RSS cluster or worker lease.
+
+- Original card title is the exact article/story title; review card title is `Narrative Review: [Original Headline]`.
+- The review appears immediately with `WAITING FOR NORMAL VIDEO`, then moves independently to queued, producing, failed or completed as the single job progresses. The original card remains **COMPLETE** and available under **TO POST** while the review produces.
+- Every board entry has a stable `boardEntryId` (`storyId::STANDARD` or `storyId::FRAMING_EXPOSURE`), `entryMode` and `displayTitle`. The API still uses the original source `id` for authorized job actions; upload/scrap use the **specific archived `versionId`**.
+- Story Operations Board search, server-side pagination and filters count entries, not raw RSS clusters. Two modes from one cluster count as two board entries. Older remakes remain in the version ledger rather than multiplying active-board cards.
+- Both entries can open their respective completed MP4 directly. Upload/scrap status and action buttons are scoped to each version. Retrying a failed review never remakes its original video.
+- The Version / Posting Ledger separately names completed reviews and preserves its existing per-version posting records. Remaking the review from that ledger uses `REMAKE_FRAMING_EXPOSURE`, not normal `REMAKE`.
+- Legacy stories and unproduced discoveries remain one board entry; no conversion of existing persisted job IDs is required.
+
+The review's separate board identity is a *projection*, not a second producer job. This avoids dual leases, duplicate claims, crossed failure budgets and invalid upload actions.
+
 ## Command Center workflow
 
 1. Select a story card, including a story with only one publisher or whose category is not labeled political.

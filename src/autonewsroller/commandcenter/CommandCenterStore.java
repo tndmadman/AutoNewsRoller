@@ -814,8 +814,17 @@ public final class CommandCenterStore {
                     ||active==ProductionMode.FRAMING_EXPOSURE;
             if(standard)rows.add(boardEntry(story,ProductionMode.STANDARD,
                     modes.get(ProductionMode.STANDARD),active==ProductionMode.STANDARD));
-            if(review)rows.add(boardEntry(story,ProductionMode.FRAMING_EXPOSURE,
-                    modes.get(ProductionMode.FRAMING_EXPOSURE),active==ProductionMode.FRAMING_EXPOSURE));
+            if(review){
+                // A new remake cycle must show its NEXT review as waiting,
+                // not disguise an older archived review as the new companion.
+                Map<String,Object>reviewVideo=modes.get(ProductionMode.FRAMING_EXPOSURE);
+                if(paired&&active==ProductionMode.STANDARD
+                        &&Set.of("STANDARD_QUEUED","STANDARD_PRODUCING","STANDARD_FAILED")
+                            .contains(String.valueOf(story.get("pairedVideoState"))))
+                    reviewVideo=null;
+                rows.add(boardEntry(story,ProductionMode.FRAMING_EXPOSURE,
+                        reviewVideo,active==ProductionMode.FRAMING_EXPOSURE));
+            }
         }
         return rows;
     }
