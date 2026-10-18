@@ -397,7 +397,7 @@ function renderStories(){
   const empty=storyAgeLimitHours>0
     ?"No stories in this view were published within the last "+storyAgeLimitHours+" hour(s)."
     :"No stories match this view.";
-  boardRenderDeferred=reconcileList(root,ss.map(s=>({key:String(s.id),html:storyCard(s)})),empty);
+  boardRenderDeferred=reconcileList(root,ss.map(s=>({key:String(s.boardEntryId||s.id),html:storyCard(s)})),empty);
   renderPagination();
 }
 function failurePanelHtml(s,status){
@@ -428,7 +428,11 @@ function storyCard(s){
   const bar=k=>Math.round(num(mix[k])/total*100);
   const pubs=(s.publishers||[]).slice(0,8).map(p=>`<span class="sourceChip">${esc(p)}</span>`).join("");
   const cls=status==="PRODUCING"?" producing":status==="FAILED"?" failed":"";
-  const makeDisabled=["QUEUED","PRODUCING","COMPLETE","COMPLETE_HISTORY"].includes(status);
+  const review=s.entryMode==="FRAMING_EXPOSURE"||s.productionMode==="FRAMING_EXPOSURE";
+  const hasVideo=s.entryHasVideo===undefined?status==="COMPLETE":!!s.entryHasVideo;
+  const canRemake=s.entryMayRemake===undefined?status==="COMPLETE":!!s.entryMayRemake;
+  const working=status==="QUEUED"||status==="PRODUCING"||status==="WAITING";
+  const makeDisabled=working||["COMPLETE","COMPLETE_HISTORY"].includes(status);
   const completeLike=status.startsWith("COMPLETE");
   const engine=esc(s.ttsEngine||"pending");
   const voice=esc(s.ttsVoice||"");
@@ -471,21 +475,24 @@ function storyCard(s){
         ${s.comfyImages!=null?`<span><b>COMFY</b> ${num(s.comfyImages)} generated image(s)</span>`:""}
         ${num(s.leaseRecoveries)>0?`<span><b>RECOVERED</b> ${num(s.leaseRecoveries)} worker lease(s)</span>`:""}
       </div>`:"";
-  const uploadState=status==="COMPLETE"
+  const uploadState=status==="COMPLETE"&&hasVideo
     ?(s.scrapped
       ?`<div class="uploadState scrapped"><b>× SCRAPPED VERSION ${num(s.videoVersion)||""}</b><span>${s.scrappedAt?new Date(s.scrappedAt).toLocaleString():""}${s.scrapReason?" // "+esc(s.scrapReason):""}</span></div>`
       :s.uploaded
         ?`<div class="uploadState uploaded"><b>✓ MANUALLY UPLOADED // V${num(s.videoVersion)||1}</b><span>${esc(s.uploadedPlatform||"platform not noted")}${s.uploadedAt?" // "+new Date(s.uploadedAt).toLocaleString():""}${s.uploadNote?" // "+esc(s.uploadNote):""}</span></div>`
         :`<div class="uploadState pending"><b>⇧ READY TO POST // V${num(s.videoVersion)||1}</b><span>Not marked uploaded yet.</span></div>`)
     :"";
-  return `<article class="storyCard${cls}" data-story-id="${esc(s.id)}" data-current-version-id="${esc(s.currentVideoVersionId||"")}">
+  return `<article class="storyCard${cls}" data-story-id="${esc(s.sourceStoryId||s.id)}"
+    data-board-entry-id="${esc(s.boardEntryId||s.id)}"
+    data-entry-mode="${review?"FRAMING_EXPOSURE":"STANDARD"}"
+    data-current-version-id="${esc(s.currentVideoVersionId||"")}">
     <div class="storyTop">
       <div class="scoreRing" role="meter" aria-label="Worth score, not truth probability" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${score}"><div><b>${score}</b><small>WORTH</small></div><span class="scoreTrack"><i style="width:${pct(score)}%"></i></span></div>
-      <div><div class="storyTitle">${esc(s.topic)}</div>
+      <div><div class="storyTitle">${esc(s.displayTitle||s.topic)}</div>
         <div class="storyMeta"><span class="statusTag ${verified||s.worthy?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
         ${s.manualVerificationOverride?'<span class="statusTag failed">MANUAL VERIFY OVERRIDE</span>':""}
         ${s.softVerificationOverride?'<span class="statusTag">RELAXED 1-SOURCE</span>':""}
-        ${s.productionMode==="FRAMING_EXPOSURE"?'<span class="statusTag">FRAMING EXPOSURE</span>':""}
+        ${review?'<span class="statusTag">NARRATIVE REVIEW</span>':'<span class="statusTag">ORIGINAL NEWS</span>'}
         ${s.pairedVideoState?'<span class="statusTag">PAIR: '+esc(s.pairedVideoState.replaceAll("_"," "))+"</span>":""}
         ${s.scrapped?'<span class="statusTag scrapped">SCRAPPED</span>':s.uploaded?'<span class="statusTag uploaded">UPLOADED</span>':status==="COMPLETE"?'<span class="statusTag toPost">TO POST</span>':""}
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
@@ -496,15 +503,17 @@ function storyCard(s){
     ${liveDetail}
     ${uploadState}
     <div class="storyActions">
-      ${!completeLike?`
-        <button class="btn good" data-command="WORTH" title="Select for normal news followed by a framing review" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
-        <button class="btn primary" data-command="MAKE" title="Make normal news video, then queue a separate political-framing review" ${makeDisabled?"disabled":""}>${status==="FAILED"&&s.pairedVideoState==="FRAMING_FAILED"?"↻ RETRY FRAMING REVIEW":status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
-        <button class="btn warn" data-command="HOLD">Ⅱ HOLD</button>
-        <button class="btn bad" data-command="SKIP">× NOT WORTH</button>
-        <button class="btn ghost" data-command="AUTO">↻ AUTO</button>`:""}
-      <button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${["QUEUED","PRODUCING"].includes(status)?"disabled title='Another video is already queued or producing'":""}>◉ EXPOSE POLITICAL FRAMING</button>
-      ${status==="COMPLETE"?`
-        <button class="btn primary" data-command="REMAKE" title="Remake the normal report, then queue another framing review">↻ RE-MAKE VIDEO</button>
+      ${!review&&!completeLike?`
+        <button class="btn good" data-command="WORTH" title="Queue normal news followed by a narrative review" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
+        <button class="btn primary" data-command="MAKE" title="Make normal news, then a narrative review" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
+        <button class="btn warn" data-command="HOLD" ${working?"disabled":""}>Ⅱ HOLD</button>
+        <button class="btn bad" data-command="SKIP" ${working?"disabled":""}>× NOT WORTH</button>
+        <button class="btn ghost" data-command="AUTO" ${working?"disabled":""}>↻ AUTO</button>`:""}
+      ${review&&!completeLike?`<button class="btn primary" data-command="MAKE_FRAMING_EXPOSURE"
+        ${working?"disabled":""}>${status==="FAILED"?"↻ RETRY NARRATIVE REVIEW":status==="WAITING"?"WAITING FOR ORIGINAL VIDEO":working?"NARRATIVE REVIEW QUEUED":"◉ MAKE NARRATIVE REVIEW"}</button>`:""}
+      ${!review&&!completeLike&&status!=="WAITING"?`<button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${working?"disabled":""}>◉ EXPOSE POLITICAL FRAMING</button>`:""}
+      ${completeLike&&canRemake?`<button class="btn primary" data-command="${review?"REMAKE_FRAMING_EXPOSURE":"REMAKE"}" title="${review?"Regenerate only the narrative review":"Remake news followed by its review"}">↻ ${review?"RE-MAKE REVIEW":"RE-MAKE NEWS"}</button>`:""}
+      ${completeLike&&hasVideo?`
         ${s.scrapped
           ?`<button class="btn ghost" data-command="RESTORE">↩ RESTORE VIDEO</button>`
           :`<button class="btn bad" data-command="SCRAP">× SCRAP VIDEO</button>`}
@@ -562,7 +571,7 @@ function renderVideos(){
     const remakeButton=v.current
       ?`<button class="btn primary" data-command="REMAKE">RE-MAKE</button>`
       :"";
-    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${lifecycle}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions"><a href="${href}" target="_blank">OPEN MP4</a>${remakeButton}${uploadButton}${scrapButton}</div></div>`}
+    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.productionMode==="FRAMING_EXPOSURE"?"Narrative Review: "+String(v.topic||storyId).replace(/^Narrative Review:\\s*/i,""):v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${lifecycle}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions"><a href="${href}" target="_blank">OPEN MP4</a>${remakeButton}${uploadButton}${scrapButton}</div></div>`}
   }),"No completed videos yet.");
 }
 
@@ -575,7 +584,7 @@ async function submitOperation(id,button,path,body,verb,success){
   try{
     const result=await api(path,{method:verb||"POST",headers:{"Content-Type":"application/json"},body:body?JSON.stringify({...body,operationId:requestId()}):undefined,signal:controller.signal});
     stateEpoch++;
-    if(result&&result.id){
+    if(result&&result.id&&!boardData.stories?.some(s=>s.boardEntryId)){
       const i=(boardData.stories||[]).findIndex(s=>s.id===result.id);
       if(i!==-1){boardData.stories[i]={...boardData.stories[i],...result};renderStories();}
     }
@@ -606,8 +615,10 @@ document.addEventListener("click",e=>{
   if(pendingActions.has(id))return;
   const versionId=row.dataset.versionId||row.dataset.currentVersionId||"";
   const path="/api/stories/"+encodeURIComponent(id);
-  if(command==="REMAKE"&&!confirm("Queue a fresh re-make? The existing completed video will stay in the archive as its own version."))return;
-  if(command==="MAKE_FRAMING_EXPOSURE"&&!confirm("Analyze the political framing within this article? A second news outlet is not required. Completed versions remain archived."))return;
+  if(["REMAKE","REMAKE_FRAMING_EXPOSURE"].includes(command)&&!confirm(command==="REMAKE"
+  ?"Remake normal news and its narrative review? Existing versions remain archived."
+  :"Remake ONLY the narrative review? The normal news video remains unchanged."))return;
+  if(command==="MAKE_FRAMING_EXPOSURE"&&!confirm("Create or retry the narrative review from this article? Existing videos remain archived."))return;
   if(command==="ANALYZE"){
     submitOperation(id,button,path+"/analyze-bias",{},"POST","Political framing analysis queued for an idle worker.");
     return;
@@ -639,7 +650,7 @@ document.addEventListener("click",e=>{
     return;
   }
   submitOperation(id,button,path+"/action",{action:command},"POST",
-    command==="MAKE_FRAMING_EXPOSURE"?"Standalone framing review queued.":command==="MAKE"?"Queued original video, then framing review.":command==="WORTH"?"Queued original video, then framing review.":command==="REMAKE"?"Remake queued, followed by a framing review.":command+" saved.");
+    ["MAKE_FRAMING_EXPOSURE","REMAKE_FRAMING_EXPOSURE"].includes(command)?"Narrative review queued.":command==="MAKE"?"Queued original video, then framing review.":command==="WORTH"?"Queued original video, then framing review.":command==="REMAKE"?"Remake queued, followed by a framing review.":command+" saved.");
 });
 // Toolbar actions also acknowledge the initial click and lock while the request runs.
 $("#autoVideoToggle").onclick=async()=>{
