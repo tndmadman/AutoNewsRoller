@@ -257,8 +257,10 @@ public final class CommandCenterStore {
                 String inputHash=String.valueOf(m.getOrDefault("biasAnalysisInputHash",""));
                 String analyzedHash=String.valueOf(m.getOrDefault("framingInputHash",""));
                 if(!"COMPLETE".equals(String.valueOf(m.get("biasAnalysisStatus")))||!inputHash.equals(analyzedHash)){
-                    m.put("biasAnalysisStatus","QUEUED");
-                    m.put("biasAnalysisQueuedAt",Instant.now().toString());m.remove("biasAnalysisError");
+                    if(!"ANALYZING".equals(String.valueOf(m.get("biasAnalysisStatus")))){
+                        m.put("biasAnalysisStatus","QUEUED");
+                        m.put("biasAnalysisQueuedAt",Instant.now().toString());m.remove("biasAnalysisError");
+                    }
                     m.put("stage","WAITING_FOR_FRAMING_ANALYSIS");
                     m.put("detail","Waiting for political framing analysis");
                 }else{
@@ -329,7 +331,10 @@ public final class CommandCenterStore {
                     String.valueOf(m.getOrDefault("biasAnalysisError",""))
             );
             job.put("politicalVisualData",political.toMap());
-            if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE)job.put("framingContentFingerprint",m.getOrDefault("biasAnalysisInputHash",""));
+            if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE){
+                job.put("framingContentFingerprint",m.getOrDefault("biasAnalysisInputHash",""));
+                job.put("framingAnalysis",new LinkedHashMap<>(framing));
+            }
             return job;
         }
 
@@ -340,7 +345,9 @@ public final class CommandCenterStore {
                 .findFirst();
         if(bestBias.isEmpty())return null;
         Map<String,Object>m=bestBias.get();
-        m.put("biasAnalysisStatus","ANALYZING");m.put("biasAssignedWorker",workerId);m.put("biasAnalysisStartedAt",Instant.now().toString());
+        m.put("biasAnalysisStatus","ANALYZING");m.put("biasAssignedWorker",workerId);
+        m.put("biasClaimInputHash",m.getOrDefault("biasAnalysisInputHash",""));
+        m.put("biasAnalysisStartedAt",Instant.now().toString());
         m.put("biasAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());m.remove("biasAnalysisError");
         persistQuiet();emit("story",publicStory(m));
         Map<String,Object>job=new LinkedHashMap<>();
@@ -393,8 +400,10 @@ public final class CommandCenterStore {
     public synchronized void politicalAnalysisComplete(String storyId,Map<String,Object>result,String workerId){
         Map<String,Object>m=requireStory(storyId);
         m.put("framingAnalysis",deepCopyMap(result));
-        m.put("framingInputHash",String.valueOf(m.getOrDefault("biasAnalysisInputHash","")));
-        m.put("biasAnalysisStatus","COMPLETE");m.put("biasAnalyzedAt",Instant.now().toString());m.put("biasAnalyzedBy",workerId);
+        m.put("framingInputHash",String.valueOf(m.getOrDefault("biasClaimInputHash",m.getOrDefault("biasAnalysisInputHash",""))));
+        m.remove("biasClaimInputHash");
+        m.put("biasAnalysisStatus",String.valueOf(m.getOrDefault("framingInputHash",""))
+                .equals(String.valueOf(m.getOrDefault("biasAnalysisInputHash","")))?"COMPLETE":"QUEUED");m.put("biasAnalyzedAt",Instant.now().toString());m.put("biasAnalyzedBy",workerId);
         m.remove("biasAnalysisError");m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
         persistQuiet();emit("story",publicStory(m));
     }
@@ -403,7 +412,7 @@ public final class CommandCenterStore {
         Map<String,Object>m=requireStory(storyId);
         m.put("biasAnalysisStatus","FAILED");m.put("biasAnalysisError",safe(error));m.put("biasAnalysisFailedAt",Instant.now().toString());
         if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE&&"QUEUED".equals(m.get("status"))){m.put("stage","WAITING_FOR_FRAMING_ANALYSIS");m.put("detail","Analysis failed. Retry analysis to continue.");}
-        m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
+        m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");m.remove("biasClaimInputHash");
         persistQuiet();emit("story",publicStory(m));
     }
 
