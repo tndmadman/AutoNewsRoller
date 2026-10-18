@@ -155,24 +155,26 @@ public final class RemoteWorker {
             Map<String,Object> settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
             int requestedDuration=settings.get("duration") instanceof Number n?n.intValue():cfg.duration();
             int duration=Math.max(cfg.getInt("commandCenterMinimumTargetSeconds",70),requestedDuration);
+            if(productionMode==ProductionMode.FRAMING_EXPOSURE)
+                duration=Math.max(duration,cfg.getInt("politicalExposureDefaultDurationSeconds",75));
             String encoder=String.valueOf(settings.getOrDefault("encoder",cfg.get("videoEncoder","auto")));
             boolean controllerComfy=settings.containsKey("useComfy")?bool(settings.get("useComfy")):true;
             boolean useComfy=cfg.getBool("commandCenterUseComfy",true)||controllerComfy;
             boolean requireComfy=cfg.getBool("commandCenterRequireComfy",true)||(settings.containsKey("requireComfy")&&bool(settings.get("requireComfy")));
             int comfyImages=settings.get("comfyImages") instanceof Number n?Math.max(1,n.intValue()):cfg.getInt("commandCenterComfyImages",3);
             boolean dryRun=bool(settings.get("dryRun"));
-            event("progress",Map.of("stage","CLAIMED","detail","durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy));
+            if(productionMode==ProductionMode.FRAMING_EXPOSURE){
+                useComfy=cfg.getBool("politicalExposureRequireComfy",false);
+                requireComfy=useComfy;
+            }
+            event("progress",Map.of("stage","CLAIMED","detail","mode="+productionMode.name()+
+                    "; durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy));
             String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
             Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+stamp);
             event("job-dir",Map.of("dir",batch.toString()));
             final String claimId=currentClaimId;
             NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,e->progressSafe(jobId,claimId,e));
             PoliticalVisualData political=job.get("politicalVisualData") instanceof Map<?,?>?PoliticalVisualData.fromMap(Json.object(job.get("politicalVisualData"))):null;
-            if(productionMode==ProductionMode.FRAMING_EXPOSURE){
-                useComfy=cfg.getBool("politicalExposureRequireComfy",false);
-                requireComfy=useComfy;
-                duration=Math.max(duration,cfg.getInt("politicalExposureDefaultDurationSeconds",75));
-            }
             Map<String,Object>framingAnalysis=job.get("framingAnalysis") instanceof Map<?,?>?Json.object(job.get("framingAnalysis")):Map.of();
             Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,framingAnalysis,dryRun);
             stage="UPLOAD";detail="Local output ready; awaiting controller acknowledgement";
