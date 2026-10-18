@@ -4,64 +4,101 @@ import autonewsroller.model.*;
 import autonewsroller.util.Hashing;
 import java.time.Instant;
 import java.util.*;
-import java.util.regex.Pattern;
 
-/** Evidence is drawn from actual supplied articles, not free-form model quotations. */
+/**
+ * Exposes the framing of ONE attributable article. Other articles may corroborate
+ * facts upstream but must not become a publisher-comparison video.
+ */
 public final class PoliticalFramingEvidenceBuilder {
-    public static final String VERSION="framing-evidence-v1";
-    public record Evidence(String storyId,String contentFingerprint,List<Map<String,Object>> articles,Map<String,Object> politicalAnalysis) {
+    public static final String VERSION="framing-evidence-v2-single-article";
+
+    public record Evidence(String storyId,String contentFingerprint,List<Map<String,Object>> articles,Map<String,Object> politicalAnalysis){
         public Map<String,Object> toMap(){
             Map<String,Object>out=new LinkedHashMap<>();
-            out.put("schemaVersion",VERSION);out.put("storyId",storyId);
-            out.put("builtAt",Instant.now().toString());out.put("contentFingerprint",contentFingerprint);
-            out.put("articles",articles);out.put("politicalAnalysis",politicalAnalysis);
-            out.put("independentSourceCount",articles.size());return out;
+            out.put("schemaVersion",VERSION);
+            out.put("analysisScope","SINGLE_ARTICLE");
+            out.put("storyId",storyId);
+            out.put("builtAt",Instant.now().toString());
+            out.put("contentFingerprint",contentFingerprint);
+            out.put("articles",articles);
+            out.put("politicalAnalysis",politicalAnalysis);
+            out.put("articlesAnalyzed",articles.size());
+            return out;
         }
     }
+
     public Evidence build(StoryCluster cluster,FactPackage facts,PoliticalVisualData political){
-        if(facts.independentSourceCount()<2)
-            throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: Two independent sources required.");
         if(political==null||!political.analysisAvailable())
-            throw new IllegalStateException("Current political analysis required for framing exposure.");
-        LinkedHashMap<String,Article> independent=new LinkedHashMap<>();
+            throw new IllegalStateException("FRAMING_ANALYSIS_UNAVAILABLE: Complete textual framing analysis is required.");
+        // Prefer the source headline used for this story. Never demand a second publisher.
+        Article selected=null;
         for(Article article:cluster.articles){
-            if(article.publisher().isBlank()||article.title().isBlank()||article.url().isBlank())continue;
-            String key=article.publisher().strip().toLowerCase(Locale.ROOT);
-            independent.putIfAbsent(key,article);
+            if(!valid(article))continue;
+            if(selected==null)selected=article;
+            if(article.title().equalsIgnoreCase(cluster.topic)){selected=article;break;}
         }
-        if(independent.size()<2)throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: No two attributable independent headlines.");
-        List<Article>selected=new ArrayList<>(independent.values());
-        Article first=selected.get(0),second=null;
-        for(int i=1;i<selected.size();i++)
-            if(!first.title().equalsIgnoreCase(selected.get(i).title())&&sameEvent(first.title(),selected.get(i).title())){second=selected.get(i);break;}
-        if(second==null)throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: Headlines do not provide a verifiable same-event comparison.");
-        List<Map<String,Object>>out=new ArrayList<>();
-        for(Article a:List.of(first,second)){
-            Map<String,Object>x=new LinkedHashMap<>();
-            x.put("articleId",a.id());x.put("publisher",a.publisher());x.put("url",a.url());
-            x.put("publishedAt",a.publishedAt()==null?"":a.publishedAt().toString());
-            x.put("headline",a.title());x.put("verifiedExcerpt",a.title());
-            x.put("excerptLocation","headline");x.put("description",limit(a.description(),1200));
-            x.put("bodyText",limit(a.bodyText(),3600));x.put("framingMechanism","headline wording and emphasis");
-            x.put("confidence","observable text only; no inference of publisher motives");
-            x.put("articleContentFingerprint",Hashing.sha256(a.id()+"|"+a.title()+"|"+a.description()+"|"+a.bodyText()));
-            out.add(x);
+        if(selected==null)
+            throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: An attributable source headline and URL are required.");
+        Map<String,Object>source=new LinkedHashMap<>();
+        source.put("articleId",selected.id());
+        source.put("publisher",selected.publisher());
+        source.put("url",selected.url());
+        source.put("publishedAt",selected.publishedAt()==null?"":selected.publishedAt().toString());
+        source.put("headline",selected.title());
+        source.put("verifiedExcerpt",selected.title());
+        source.put("excerptLocation","headline");
+        source.put("description",limit(selected.description(),1800));
+        source.put("bodyText",limit(selected.bodyText(),3600));
+        source.put("availableTextScope",!selected.bodyText().isBlank()?"HEADLINE_DESCRIPTION_BODY":
+                !selected.description().isBlank()?"HEADLINE_AND_DESCRIPTION":"HEADLINE_ONLY");
+        source.put("framingMechanism","Examine observable wording, emphasis, attribution, and implications in this one article.");
+        source.put("articleContentFingerprint",Hashing.sha256(selected.id()+"|"+selected.title()+"|"+selected.description()+"|"+selected.bodyText()));
+        List<Map<String,Object>>excerpts=new ArrayList<>();
+        excerpts.add(Map.of("location","headline","text",selected.title()));
+        addExactExcerpt(excerpts,"description",selected.description());
+        addExactExcerpt(excerpts,"body",selected.bodyText());
+        source.put("attributedExcerpts",List.copyOf(excerpts));
+        String fingerprint=Hashing.sha256(cluster.articles.stream()
+                .map(a->a.id()+"|"+a.title()+"|"+a.description()+"|"+a.bodyText())
+                .sorted().reduce("",(a,b)->a+"|"+b));
+        return new Evidence(cluster.id,fingerprint,List.of(source),political.toMap());
+    }
+
+    /** Retain only the chosen article's model classification; never add a source comparison. */
+    public Evidence withArticleAnalysis(Evidence evidence,Map<String,Object>rawAnalysis){
+        if(rawAnalysis==null||rawAnalysis.isEmpty())return evidence;
+        String id=String.valueOf(evidence.articles().get(0).get("articleId"));
+        Map<String,Object>filtered=new LinkedHashMap<>();
+        filtered.put("analysisScope","SINGLE_ARTICLE");
+        filtered.put("primaryArticleId",id);
+        filtered.put("textBasis",rawAnalysis.getOrDefault("textBasis","Available source headline/description/body"));
+        filtered.put("model",rawAnalysis.getOrDefault("model",""));
+        Object list=rawAnalysis.get("articles");
+        if(list instanceof List<?>articles){
+            for(Object raw:articles)if(raw instanceof Map<?,?>item&&id.equals(String.valueOf(item.get("id")))){
+                Map<String,Object>selected=new LinkedHashMap<>();
+                for(var entry:item.entrySet())selected.put(String.valueOf(entry.getKey()),entry.getValue());
+                filtered.put("primaryArticleAnalysis",selected);
+                break;
+            }
         }
-        Map<String,Object>analysis=political.toMap();
-        return new Evidence(cluster.id,Hashing.sha256(cluster.articles.stream()
-            .map(a->a.id()+"|"+a.title()+"|"+a.description()+"|"+a.bodyText()).sorted()
-            .reduce("",(a,b)->a+"|"+b)),List.copyOf(out),analysis);
+        if(!filtered.containsKey("primaryArticleAnalysis"))
+            filtered.put("primaryArticleAnalysis",Map.of("classification","uncertain",
+                "rationale","No article-specific classification returned; use observable source text only."));
+        return new Evidence(evidence.storyId(),evidence.contentFingerprint(),evidence.articles(),filtered);
     }
-    private static boolean sameEvent(String a,String b){
-        Set<String>left=tokens(a),right=tokens(b);left.retainAll(right);
-        return left.size()>=2;
+
+    private static void addExactExcerpt(List<Map<String,Object>>out,String location,String original){
+        if(original==null||original.isBlank())return;
+        String compact=original.replaceAll("\\s+"," ").strip();
+        if(compact.length()>240){
+            int boundary=compact.lastIndexOf(' ',240);
+            compact=compact.substring(0,boundary>=80?boundary:240).strip();
+        }
+        if(!compact.isBlank())out.add(Map.of("location",location,"text",compact));
     }
-    private static Set<String> tokens(String s){
-        Set<String>ignore=Set.of("about","after","before","against","their","there","these","those","would","could","should","reports","report","news","says","said","amid","under","with","from","into","over","this","that");
-        Set<String>words=new HashSet<>();
-        for(String word:Pattern.compile("[^a-z0-9]+").split(s.toLowerCase(Locale.ROOT)))
-            if(word.length()>=4&&!ignore.contains(word))words.add(word);
-        return words;
+    private static boolean valid(Article article){
+        return article!=null&&!article.publisher().isBlank()&&!article.title().isBlank()&&!article.url().isBlank();
     }
     private static String limit(String s,int count){return s==null?"":s.substring(0,Math.min(count,s.length()));}
 }
