@@ -760,11 +760,11 @@ public final class SelfTest {
     private void testPairedSequentialVideoProduction()throws Exception{
         Instant now=Instant.now();
         Article article=new Article("paired-a","Fixture News",
-                "City council proposes a change to neighborhood voting rules",
+                "Community market announces its Saturday vendor schedule",
                 "https://fixture.example/vote","https://fixture.example/vote",now,now,"","local",
-                "Council members proposed an adjustment to voting procedures.","","en",1,false);
-        StoryCluster cluster=new StoryCluster("paired-story",article.title(),List.of(article),Set.of("council"),"paired-fingerprint");
-        FactPackage facts=new FactPackage(cluster.id,article.title(),"Council members proposed a voting change.",
+                "Local vendors plan to open their stalls on Saturday.","","en",1,false);
+        StoryCluster cluster=new StoryCluster("paired-story",article.title(),List.of(article),Set.of("market"),"paired-fingerprint");
+        FactPackage facts=new FactPackage(cluster.id,article.title(),"Market organizers released their Saturday schedule.",
                 List.of(),List.of(),List.of(Map.of("publisher",article.publisher())),1,1,.6,false);
         NewsPipeline.DiscoveryResult discovery=new NewsPipeline.DiscoveryResult(
                 List.of(new NewsPipeline.DiscoveryItem(cluster,facts,false,"one attributable report",0.9,false)),
@@ -774,6 +774,8 @@ public final class SelfTest {
         CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),
                 false,.68,12,null,75,.74,.82,0,0,1,true);
         store.applyDiscovery(discovery);
+        ok(!Boolean.TRUE.equals(store.storyDetail(cluster.id).get("politicalCandidate")),
+                "ordinary local story does not begin as an automatic political classification");
         store.action(cluster.id,"MAKE","selected-once");
         ok("STANDARD_QUEUED".equals(store.storyDetail(cluster.id).get("pairedVideoState")),
                 "chosen MAKE job records a two-video sequence before rendering");
@@ -835,6 +837,26 @@ public final class SelfTest {
                 "both versions retain independent publication status");
         ok(reloaded.claim("updated-worker",Map.of())==null,
                 "a completed pair does not silently create a third video");
+
+        // AUTO-selected stories receive the same pair as manually queued ones.
+        Path autoState=dir.resolve("auto-queue.json");
+        NewsPipeline.DiscoveryResult autoDiscovery=new NewsPipeline.DiscoveryResult(
+                List.of(new NewsPipeline.DiscoveryItem(cluster,facts,true,"fixture verified",0.95,false)),
+                1,1,0,1,1,1,1,now);
+        CommandCenterStore automatic=new CommandCenterStore(autoState,
+                BiasRegistry.load(dir.resolve("bias.json")),true,.68,12,null,75,.74,.82,0,0,1,true);
+        automatic.applyDiscovery(autoDiscovery);
+        ok("STANDARD".equals(String.valueOf(automatic.storyDetail(cluster.id).getOrDefault("productionMode","STANDARD")))
+                &&"QUEUED".equals(automatic.storyDetail(cluster.id).get("status")),
+                "automatic selection queues the standard story first");
+        Map<String,Object>autoJob=automatic.claim("old-worker",Map.of());
+        ok(autoJob!=null&&"STANDARD".equals(autoJob.get("productionMode")),
+                "auto-selected videos begin with original news production");
+        automatic.complete(cluster.id,Map.of("workerId","old-worker","claimId",autoJob.get("claimId"),
+                "sidecar",Map.of("productionMode","STANDARD")));
+        ok("FRAMING_QUEUED".equals(automatic.storyDetail(cluster.id).get("pairedVideoState"))
+                &&"QUEUED".equals(automatic.storyDetail(cluster.id).get("status")),
+                "auto-selected standard video independently triggers its framing companion");
 
         // Explicit exposure action remains a one-video choice, with no standard prelude.
         Path onlyState=dir.resolve("framing-only.json");

@@ -486,6 +486,7 @@ function storyCard(s){
         ${s.manualVerificationOverride?'<span class="statusTag failed">MANUAL VERIFY OVERRIDE</span>':""}
         ${s.softVerificationOverride?'<span class="statusTag">RELAXED 1-SOURCE</span>':""}
         ${s.productionMode==="FRAMING_EXPOSURE"?'<span class="statusTag">FRAMING EXPOSURE</span>':""}
+        ${s.pairedVideoState?'<span class="statusTag">PAIR: '+esc(s.pairedVideoState.replaceAll("_"," "))+"</span>":""}
         ${s.scrapped?'<span class="statusTag scrapped">SCRAPPED</span>':s.uploaded?'<span class="statusTag uploaded">UPLOADED</span>':status==="COMPLETE"?'<span class="statusTag toPost">TO POST</span>':""}
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
       </div>
@@ -496,14 +497,14 @@ function storyCard(s){
     ${uploadState}
     <div class="storyActions">
       ${!completeLike?`
-        <button class="btn good" data-command="WORTH" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
-        <button class="btn primary" data-command="MAKE" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
+        <button class="btn good" data-command="WORTH" title="Select for normal news followed by a framing review" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
+        <button class="btn primary" data-command="MAKE" title="Make normal news video, then queue a separate political-framing review" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
         <button class="btn warn" data-command="HOLD">Ⅱ HOLD</button>
         <button class="btn bad" data-command="SKIP">× NOT WORTH</button>
         <button class="btn ghost" data-command="AUTO">↻ AUTO</button>`:""}
       <button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${["QUEUED","PRODUCING"].includes(status)?"disabled title='Another video is already queued or producing'":""}>◉ EXPOSE POLITICAL FRAMING</button>
       ${status==="COMPLETE"?`
-        <button class="btn primary" data-command="REMAKE">↻ RE-MAKE VIDEO</button>
+        <button class="btn primary" data-command="REMAKE" title="Remake the normal report, then queue another framing review">↻ RE-MAKE VIDEO</button>
         ${s.scrapped
           ?`<button class="btn ghost" data-command="RESTORE">↩ RESTORE VIDEO</button>`
           :`<button class="btn bad" data-command="SCRAP">× SCRAP VIDEO</button>`}
@@ -638,7 +639,7 @@ document.addEventListener("click",e=>{
     return;
   }
   submitOperation(id,button,path+"/action",{action:command},"POST",
-    command==="MAKE_FRAMING_EXPOSURE"?"Political framing experiment queued.":command==="MAKE"?"Queued for video production.":command==="WORTH"?"Marked WORTH IT and queued.":command==="REMAKE"?"Re-make queued; previous version archived.":command+" saved.");
+    command==="MAKE_FRAMING_EXPOSURE"?"Standalone framing review queued.":command==="MAKE"?"Queued original video, then framing review.":command==="WORTH"?"Queued original video, then framing review.":command==="REMAKE"?"Remake queued, followed by a framing review.":command+" saved.");
 });
 // Toolbar actions also acknowledge the initial click and lock while the request runs.
 $("#autoVideoToggle").onclick=async()=>{

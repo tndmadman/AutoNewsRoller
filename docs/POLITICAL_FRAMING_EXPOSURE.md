@@ -1,12 +1,24 @@
 # Political framing exposure — single-article experiment
 
-Status: **experimental**, manual-only, isolated from the standard news production pipeline. Do not merge into main until validated with real local TTS and Ollama.
+Status: **experimental**, isolated from the standard pipeline on `main`. On this branch, the Command Center also pairs new standard video production with a framing review. Do not merge into `main` until validated with real local TTS and Ollama.
 
 ## Goal
 
 **Expose the political framing and narrative construction inside ONE news article. Do not compare publishers.** The video dissects what the article actually says, how its headline selects or emphasizes facts, whether labels or loaded wording appear, what is presented as established versus alleged or implied, and how documented framing *might* shape the audience's interpretation.
 
 One attributable article is sufficient. Additional reporting may substantiate a factual claim in the upstream FactPackage, but is not a subject of narration, a required input, or an excuse to create side-by-side publisher comparisons. Political slant is not presumed: an evidence-based finding of insufficient or no observable political framing is a valid conclusion.
+
+## Automatic sequential two-video production
+
+With `commandCenterPairFramingVideos=true`, every story chosen for normal production by MAKE, WORTH IT, eligible AUTO queue or RE-MAKE gets **two separately archived video versions**: first `STANDARD`, then `FRAMING_EXPOSURE`.
+
+The controller queues the framing review **only after** the normal job succeeds and its video version is archived. The normal MP4 is never overwritten and retains its own version ID, story ID, upload/scrap state and metadata. The review receives another unique video version under the same story; it waits for article analysis and a compatible worker when necessary. A failed normal job cannot spawn a review. If the framing review fails after its retry budget, the original version remains archived. The handoff is stored across controller restarts. Re-making a completed story starts another two-video cycle, leaving old versions untouched.
+
+Stories with insufficient evidence of political slant still receive a careful framing assessment, which must say so rather than manufacture bias. The independent **EXPOSE POLITICAL FRAMING** button still produces *only* a review, without creating a normal video first. Set `commandCenterPairFramingVideos=false` to disable automatic pairing without removing the standalone review option.
+
+## News intro sound in both formats
+
+Both the standard report and the review now use the original two-tone breaking-news sting at the start, beneath narration. Both default to `-4.46 dB`, rather than the previous experimental `-14.00 dB`: a difference of +9.54 dB, or approximately **three times the input waveform amplitude** before FFmpeg's limiter. Speech is not amplified. Audio limiting can reduce the exact perceived/peak increase to avoid clipping. The sidecar identifies the sting and gain for either video.
 
 ## Command Center workflow
 
@@ -53,13 +65,16 @@ The sting uses FFmpeg-generated 784 Hz and 1046 Hz tones, faded and mixed undern
 
 ## Settings
 
-- politicalExposureEnabled=true: controller/worker capability switch; never schedules experimental videos automatically
+- politicalExposureEnabled=true: controller/worker capability switch; paired reviews can be automatically queued after normal videos
+- commandCenterPairFramingVideos=true: complete normal video then queue framing review
+- newsIntroSoundEnabled=true: add the original sting to the standard pipeline
+- newsIntroSoundGainDb=-4.46: standard sting input gain
 - politicalExposureDefaultDurationSeconds=75: minimum experimental duration target
 - politicalExposureMaxDurationSeconds=180: automatic script duration may expand up to three minutes when meaningful, source-backed analysis requires it; only experimental videos use this setting
 - politicalExposureMinimumIndependentSources=1: informational setting; evidence eligibility is based on one article, not an independent-source threshold
 - politicalExposureRequireEvidence=true: reserved; original source attribution is always required
 - politicalExposureIntroSoundEnabled=true: mandatory sting
-- politicalExposureIntroSoundGainDb=-14: primary tone volume
+- politicalExposureIntroSoundGainDb=-4.46: louder sting for the experimental framing pipeline
 - politicalExposureRequiredAnalysisFraction=0.65: minimum actual analytical runtime share
 - politicalExposureAllowSingleSource=true: informational setting; v2 requires no cross-publisher corroboration
 - politicalExposureRequireComfy=false: keep false for v2's deterministic text evidence cards
