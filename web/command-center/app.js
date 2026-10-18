@@ -513,7 +513,7 @@ function storyCard(s){
         <button class="btn bad" data-command="SKIP" ${working?"disabled":""}>× NOT WORTH</button>
         <button class="btn ghost" data-command="AUTO" ${working?"disabled":""}>↻ AUTO</button>`:""}
       ${review&&!completeLike?`<button class="btn primary" data-command="MAKE_FRAMING_EXPOSURE"
-        ${working?"disabled":""}>${status==="FAILED"?"↻ RETRY NARRATIVE REVIEW":status==="WAITING"?"WAITING FOR ORIGINAL VIDEO":working?"NARRATIVE REVIEW QUEUED":"◉ MAKE NARRATIVE REVIEW"}</button>`:""}
+        ${working||status==="SKIPPED"||status==="HOLD"?"disabled":""}>${status==="FAILED"?"↻ RETRY NARRATIVE REVIEW":status==="SKIPPED"?"REVIEW UNAVAILABLE":status==="HOLD"?"WAITING FOR ORIGINAL RETRY":status==="WAITING"?"WAITING FOR ORIGINAL VIDEO":working?"NARRATIVE REVIEW QUEUED":"◉ MAKE NARRATIVE REVIEW"}</button>`:""}
       ${!review&&!completeLike&&status!=="WAITING"?`<button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${working?"disabled":""}>◉ EXPOSE POLITICAL FRAMING</button>`:""}
       ${completeLike&&canRemake?`<button class="btn primary" data-command="${review?"REMAKE_FRAMING_EXPOSURE":"REMAKE"}" title="${review?"Regenerate only the narrative review":"Remake news followed by its review"}">↻ ${review?"RE-MAKE REVIEW":"RE-MAKE NEWS"}</button>`:""}
       ${completeLike&&hasVideo?`
