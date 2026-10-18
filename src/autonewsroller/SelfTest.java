@@ -807,11 +807,37 @@ public final class SelfTest {
                 PoliticalFramingScriptGenerator.TEASER,70).changed(),
                 "short drafts are never fabricated or padded with unsupported claims");
 
+        // Different, substantive observations should be allowed to occupy additional
+        // runtime rather than mechanically losing complete explanatory paragraphs.
+        List<String>longDraft=List.of(
+                "The article reports a debate about a proposed change to voting procedures. A discussion of a proposal is not the same as an enacted policy. The available description identifies a deliberative process without claiming final adoption. That distinction controls how confidently any outcome may be stated.",
+                "The headline uses the active verb debates, keeping lawmakers and their deliberation at the center. The phrase election proposal identifies a plan under discussion instead of a completed result. Naming voting procedures foregrounds administration rather than an individual voter. This selection of emphasis could influence expectations about the story.",
+                "The headline does not use an obvious alarm word or explicit partisan attack. Its reference to new procedures suggests change while leaving the impact unspecified. The short description contains no separate emotionally charged label. These observable choices leave the audience to infer possible effects without the article spelling them out.",
+                "A reported debate is supported by the attributed description available here. Any assertion about legal consequences would need additional information that was not supplied. The word proposal is important because it restricts the reported development to consideration. Treating a contemplated measure as settled law would go beyond the evidence.",
+                "Readers may focus first on the prospect of administrative change because the headline foregrounds procedures. A different reader may instead notice the ongoing debate and understand the outcome as open. Neither interpretation establishes intentional persuasion by the publisher. The text supports analysis of emphasis, not a judgment about concealed motives.",
+                "The clearest framing observation is the contrast between an active debate and an unresolved proposal. The available wording supports scrutiny of what is presented as established. The short supplied source does not prove partisan manipulation or describe the full underlying policy. That limitation should remain clear in the final assessment."
+        );
+        int longWords=autonewsroller.util.Text.words(article.title())
+                +autonewsroller.util.Text.words(PoliticalFramingScriptGenerator.TEASER)
+                +longDraft.stream().mapToInt(autonewsroller.util.Text::words).sum();
+        ok(longWords>ScriptValidator.maxWords(75),
+                "a substantive six-part framing draft can exceed the short 75-second format");
+        ok(!PoliticalFramingDurationPolicy.excessiveRepetition(longDraft),
+                "distinct framing paragraphs are not mistaken for repetitive padding");
+        ok(PoliticalFramingDurationPolicy.excessiveRepetition(oversized),
+                "repeated sentences cannot justify an extended video");
+        ok(PoliticalFramingDurationPolicy.chooseSeconds(320,75,180)==128
+                &&PoliticalFramingDurationPolicy.chooseSeconds(400,75,180)==160,
+                "nominal runtime expands to reflect meaningful word count");
+        ok(PoliticalFramingDurationPolicy.chooseSeconds(600,75,180)==180
+                &&PoliticalFramingDurationPolicy.chooseSeconds(120,75,180)==75,
+                "automatic framing runtime remains capped and retains the minimum");
+
         AtomicInteger calls=new AtomicInteger();
         HttpServer mock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         mock.createContext("/generate",exchange->{
             calls.incrementAndGet();
-            byte[]response=Json.stringify(Map.of("response",Json.stringify(Map.of("segments",oversized)),
+            byte[]response=Json.stringify(Map.of("response",Json.stringify(Map.of("segments",longDraft)),
                     "done_reason","stop")).getBytes(java.nio.charset.StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type","application/json");
             exchange.sendResponseHeaders(200,response.length);
@@ -822,14 +848,20 @@ public final class SelfTest {
             Path scratch=Files.createTempDirectory("framing-length-recovery-");
             OllamaClient client=new OllamaClient("http://127.0.0.1:"+mock.getAddress().getPort()+"/generate",
                     "mock-framing","5m",scratch.resolve("ollama.lock"));
-            NewsScript repaired=new PoliticalFramingScriptGenerator(client,5).generate(facts,evidence,70,false);
-            ok(calls.get()==1,"an overlong Ollama response repairs locally, without five remote regenerations");
-            ok(autonewsroller.util.Text.words(repaired.narration())>=ScriptValidator.minWords(70)
-                    &&autonewsroller.util.Text.words(repaired.narration())<=ScriptValidator.maxWords(70),
-                    "repaired script passes strict 70-second word budget");
-            ok(repaired.narration().startsWith(article.title()+" "+PoliticalFramingScriptGenerator.TEASER)
-                    &&repaired.sourceLabels().equals(List.of(article.publisher())),
-                    "repair preserves exact intro, attribution and one-article analysis");
+            NewsScript expanded=new PoliticalFramingScriptGenerator(client,5,180).generate(facts,evidence,70,false);
+            int expectedSeconds=PoliticalFramingDurationPolicy.chooseSeconds(longWords,70,180);
+            ok(calls.get()==1,"a lengthy useful Ollama response does not trigger five regeneration attempts");
+            ok(expanded.estimatedDuration()==expectedSeconds&&expanded.estimatedDuration()>70,
+                    "substantive framing analysis automatically increases script duration");
+            ok(autonewsroller.util.Text.words(expanded.narration())>=ScriptValidator.minWords(expectedSeconds)
+                    &&autonewsroller.util.Text.words(expanded.narration())<=ScriptValidator.maxWords(expectedSeconds),
+                    "expanded script remains inside its dynamically chosen narration budget");
+            ok(expanded.narration().startsWith(article.title()+" "+PoliticalFramingScriptGenerator.TEASER)
+                    &&expanded.sourceLabels().equals(List.of(article.publisher())),
+                    "expanded duration preserves exact opening, attribution and one-source inspection");
+            ok(expanded.segments().size()==8
+                    &&expanded.narration().contains("The short supplied source does not prove partisan manipulation"),
+                    "longer framing mode preserves detailed evidence limitations instead of truncating them");
         }finally{mock.stop(0);}
     }
 
