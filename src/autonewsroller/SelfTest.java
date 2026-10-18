@@ -270,7 +270,19 @@ public final class SelfTest {
                     &&((List<?>)smallPage.get("stories")).size()==Math.min(25,size),
                     "pagination boundaries for "+size+" stories");
         }
-        Json.write(state,Map.of("stories",records,"feeds",Map.of(),"videos",Map.of()));
+        Map<String,Object>archive=new LinkedHashMap<>();
+        for(Map<String,Object>item:records.values()){
+            if(!"COMPLETE".equals(item.get("status")))continue;
+            String storyId=String.valueOf(item.get("id"));
+            Map<String,Object>video=new LinkedHashMap<>();
+            video.put("storyId",storyId);video.put("jobId",storyId);
+            video.put("versionId",storyId+"#v1");video.put("version",1);
+            video.put("topic",item.get("topic"));video.put("productionMode","STANDARD");
+            video.put("uploaded",Boolean.TRUE.equals(item.get("uploaded")));
+            video.put("scrapped",false);
+            archive.put(storyId+"#v1",video);
+        }
+        Json.write(state,Map.of("stories",records,"feeds",Map.of(),"videos",archive));
         CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
         Map<String,Object>tiny=store.snapshot(false);
         ok(((List<?>)tiny.get("stories")).isEmpty()
@@ -779,6 +791,19 @@ public final class SelfTest {
         store.action(cluster.id,"MAKE","selected-once");
         ok("STANDARD_QUEUED".equals(store.storyDetail(cluster.id).get("pairedVideoState")),
                 "chosen MAKE job records a two-video sequence before rendering");
+        Map<String,Object>initialBoard=store.boardStories(1,25,"ALL","",0);
+        List<?>initialEntries=(List<?>)initialBoard.get("stories");
+        ok(initialEntries.size()==2
+                &&"paired-story::STANDARD".equals(Json.object(initialEntries.get(0)).get("boardEntryId"))
+                &&"paired-story::FRAMING_EXPOSURE".equals(Json.object(initialEntries.get(1)).get("boardEntryId")),
+                "selected story immediately appears as two adjacent uniquely keyed board entries");
+        ok("WAITING".equals(Json.object(initialEntries.get(1)).get("status"))
+                &&"WAITING_FOR_NORMAL_VIDEO".equals(Json.object(initialEntries.get(1)).get("stage"))
+                &&String.valueOf(Json.object(initialEntries.get(1)).get("displayTitle"))
+                    .startsWith("Narrative Review: "),
+                "narrative review entry has its own titled waiting state before production");
+        ok(((Number)store.boardStories(1,25,"QUEUED","",0).get("total")).intValue()==2,
+                "queue filter includes standard work and dependent review waiting state");
         store.heartbeat("updated-worker",Map.of("id","updated-worker",
                 "capabilities",List.of("framing_exposure_v1")));
         Map<String,Object>normal=store.claim("updated-worker",Map.of("duration",70));
@@ -796,7 +821,18 @@ public final class SelfTest {
         String firstVersion=String.valueOf(afterFirst.get("pairedStandardVersionId"));
         ok(firstVersion.equals(afterFirst.get("currentVideoVersionId")),
                 "first normal video remains the published current version until the review completes");
+        Map<String,Object>handoffBoard=store.boardStories(1,25,"ALL","",0);
+        List<?>handoffRows=(List<?>)handoffBoard.get("stories");
+        ok("COMPLETE".equals(Json.object(handoffRows.get(0)).get("status"))
+                &&"QUEUED".equals(Json.object(handoffRows.get(1)).get("status"))
+                &&firstVersion.equals(Json.object(handoffRows.get(0)).get("currentVideoVersionId")),
+                "normal card remains completed and version-linked while review queues");
+        ok(((Number)store.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==1,
+                "completed normal report remains independently visible in To Post");
         store.setUploadStatus(cluster.id,firstVersion,true,"TikTok","normal news posted");
+        ok(((Number)store.boardStories(1,25,"UPLOADED","",0).get("total")).intValue()==1
+                &&((Number)store.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==0,
+                "posting original report changes only the original board entry");
         store.applyDiscovery(discovery);
         ok("QUEUED".equals(store.storyDetail(cluster.id).get("status")),
                 "feed rescan cannot discard or duplicate a pending second video");
@@ -804,6 +840,8 @@ public final class SelfTest {
                 false,.68,12,null,75,.74,.82,0,0,1,true);
         ok("FRAMING_QUEUED".equals(reloaded.storyDetail(cluster.id).get("pairedVideoState")),
                 "paired handoff survives a Command Center restart");
+        ok(((Number)reloaded.boardStories(1,10,"ALL","narrative review",0).get("total")).intValue()==1,
+                "narrative review is individually searchable after restart");
         Map<String,Object>analysisJob=reloaded.claim("old-worker",Map.of());
         ok(analysisJob!=null&&"POLITICAL_ANALYSIS".equals(analysisJob.get("jobType")),
                 "second video waits for article framing analysis even for a local category");
@@ -835,6 +873,21 @@ public final class SelfTest {
                 &&versions.stream().anyMatch(v->v instanceof Map<?,?>m
                 &&"FRAMING_EXPOSURE".equals(m.get("productionMode"))&&!Boolean.TRUE.equals(m.get("uploaded"))),
                 "both versions retain independent publication status");
+        Map<String,Object>completedBoard=reloaded.boardStories(1,25,"ALL","",0);
+        List<?>completedRows=(List<?>)completedBoard.get("stories");
+        ok(completedRows.size()==2
+                &&"COMPLETE".equals(Json.object(completedRows.get(0)).get("status"))
+                &&"COMPLETE".equals(Json.object(completedRows.get(1)).get("status"))
+                &&!Json.object(completedRows.get(0)).get("boardEntryId")
+                    .equals(Json.object(completedRows.get(1)).get("boardEntryId")),
+                "successful pair has two separately completed board cards");
+        ok(((Number)reloaded.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==1
+                &&((Number)reloaded.boardStories(1,25,"UPLOADED","",0).get("total")).intValue()==1,
+                "posting filters treat review and original as separate completed entries");
+        ok(((Number)reloaded.boardStories(1,10,"UPLOADED","",0).get("total")).intValue()==1
+                &&"STANDARD".equals(Json.object(((List<?>)reloaded.boardStories(1,10,"UPLOADED","",0)
+                        .get("stories")).get(0)).get("entryMode")),
+                "uploaded filter selects original while review remains ready to post");
         ok(reloaded.claim("updated-worker",Map.of())==null,
                 "a completed pair does not silently create a third video");
 
@@ -873,6 +926,9 @@ public final class SelfTest {
                 &&"FAILED".equals(automatic.storyDetail(cluster.id).get("status"))
                 &&((List<?>)automatic.snapshot().get("videos")).size()==1,
                 "failed framing review keeps completed normal version safe");
+        ok(((Number)automatic.boardStories(1,10,"FAILED","",0).get("total")).intValue()==1
+                &&((Number)automatic.boardStories(1,10,"COMPLETE","",0).get("total")).intValue()==1,
+                "failed review remains individually actionable while original card stays complete");
         automatic.action(cluster.id,"MAKE");
         ok("FRAMING_EXPOSURE".equals(automatic.storyDetail(cluster.id).get("productionMode"))
                 &&"FRAMING_QUEUED".equals(automatic.storyDetail(cluster.id).get("pairedVideoState")),
@@ -913,6 +969,9 @@ public final class SelfTest {
         ok(((List<?>)reloaded.snapshot().get("videos")).size()==3
                 &&"FRAMING_QUEUED".equals(reloaded.storyDetail(cluster.id).get("pairedVideoState")),
                 "remake preserves both original files and queues its own review");
+        Map<String,Object>remakeBoard=reloaded.boardStories(1,25,"ALL","",0);
+        ok(((List<?>)remakeBoard.get("stories")).size()==2,
+                "remakes replace current board state without duplicating cards for older archives");
     }
 
     private void testPoliticalExposureLengthRecovery()throws Exception{
