@@ -34,7 +34,12 @@ public final class PoliticalFramingScriptGenerator {
                 try{
                     Map<String,Object>input=new LinkedHashMap<>();
                     input.put("verifiedFacts",facts.toMap());input.put("evidence",evidence.toMap());
-                    input.put("instructions",Map.of("analyticalParagraphs",6,"targetWords",Math.max(170,(int)(targetSeconds*2.45)),
+                    int lockedWords=Text.words(headline)+Text.words(TEASER)
+                            +Text.words(first+" headlines its coverage: "+String.valueOf(articles.get(0).get("headline")))
+                            +Text.words(second+" headlines its coverage: "+String.valueOf(articles.get(1).get("headline")));
+                    int bodyWords=Math.max(95,
+                            (ScriptValidator.minWords(targetSeconds)+ScriptValidator.maxWords(targetSeconds))/2-lockedWords);
+                    input.put("instructions",Map.of("analyticalParagraphs",6,"targetBodyWords",bodyWords,
                             "attempt",attempt,"lockedSegments","0 and 1 are inserted in Java"));
                     String system="""
 Write six substantive paragraphs of on-air political framing analysis as JSON: {"segments":["... six strings ..."]}.
@@ -48,7 +53,7 @@ Paragraph 5: grounded conclusion and limitations; do not force political bias if
 The first and second headlines will be inserted separately by Java. Do not rewrite the headline or the retention teaser.
 Do not invent quotes or numerical claims. Do not attribute malicious intent or political affiliation to a publisher.
 Do not invent absent reporting or claim an article omits something unless actual full article comparison demonstrates it.
-Write roughly 145-170 words total across six paragraphs, with most analysis in paragraphs 1-5.
+Write approximately the supplied targetBodyWords total across the six paragraphs. This target excludes the locked headline and teaser plus the two attributed headlines separately inserted in Java. Keep paragraph 0 relatively short; concentrate the remaining words on specific source evidence.
 Never include instructions, extra hooks, unverified quotes, policy advocacy, source ratings, or fabricated differences.
 """;
                     String raw=ollama.generateJson(system,Json.stringify(input),"json",0.15,2200);
