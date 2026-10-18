@@ -10,8 +10,13 @@ public final class PoliticalFramingScriptGenerator {
     public static final String TEASER="Stay for the analysis of how this story is being politically framed.";
     private final OllamaClient ollama;
     private final int attempts;
+    private final int maximumSeconds;
     public PoliticalFramingScriptGenerator(OllamaClient ollama,int attempts){
+        this(ollama,attempts,PoliticalFramingDurationPolicy.DEFAULT_MAX_SECONDS);
+    }
+    public PoliticalFramingScriptGenerator(OllamaClient ollama,int attempts,int maximumSeconds){
         this.ollama=ollama;this.attempts=Math.max(1,Math.min(6,attempts));
+        this.maximumSeconds=Math.max(30,Math.min(600,maximumSeconds));
     }
 
     public NewsScript generate(FactPackage facts,PoliticalFramingEvidenceBuilder.Evidence evidence,int targetSeconds,boolean dryRun)throws Exception{
@@ -53,10 +58,12 @@ public final class PoliticalFramingScriptGenerator {
                     grounding.put("authoritativePrimaryAccepted",facts.authoritativePrimaryAccepted());
                     input.put("factualGrounding",grounding);
                     input.put("articleEvidence",evidence.toMap());
+                    int ceiling=Math.max(targetSeconds,maximumSeconds);
                     input.put("control",Map.of("targetBodyWords",targetBodyWords,
                             "targetRecapWords",recapWords,"targetWordsPerAnalysisParagraph",analyticalWords,
-                            "maximumTotalNarrationWords",ScriptValidator.maxWords(targetSeconds),
+                            "maximumTotalNarrationWords",ScriptValidator.maxWords(ceiling),
                             "minimumTotalNarrationWords",ScriptValidator.minWords(targetSeconds),
+                            "maximumExpandedDurationSeconds",ceiling,
                             "attempt",attempt));
                     // Length failures get a targeted rewrite of the SAME analysis, not a fresh
                     // free-form 300-400-word generation.
@@ -83,6 +90,8 @@ retention teaser. Never rewrite or include those two locked lines.
    established, say so directly. Never force a left/right label.
 
 Most of the words and runtime must be spent on paragraphs 1-5, not event recap.
+A detailed evidence-led analysis may run longer than the base target.
+Do not manufacture details or pad for runtime; length should reflect distinct observations.
 Explain the mechanism; do not just repeat the article. Prefer exact short attributed quotations
 from the supplied article when illustrating loaded wording. Any such quotation MUST match the
 supplied article text verbatim; never invent a quote, statistic, omission, motive, slant or cause.
@@ -92,15 +101,15 @@ If only a headline is available, confine claims to headline framing and clearly 
 article-body framing cannot be assessed from available material.
 Political classification is an unverified model interpretation, not a fact or a truth score.
 Maintain measured, punchy broadcast prose, grounded in the article.
-Aim for the supplied targetBodyWords TOTAL across six paragraphs. Keep paragraph 0 short.
-HARD EDITING BUDGET: Paragraph 0 should be approximately targetRecapWords words. Paragraphs 1-5
-should each be approximately targetWordsPerAnalysisParagraph words. Keep each one to
-ONE OR TWO meaningful short sentences. The completed script will be rejected if it is
-outside minimumTotalNarrationWords and maximumTotalNarrationWords, including the fixed
-headline and teaser. Do not pad with generic rhetoric.
-If previousDraftForCondensing exists, REWRITE THAT DRAFT into six concise segments.
-Preserve its specific source-backed framing observations and qualifications,
-remove redundant sentences, and add no new facts, quotes, or numbers.
+Aim for the supplied targetBodyWords TOTAL across six paragraphs when possible.
+The short base target is a preference, not a hard cap: if concrete, non-repetitive
+source analysis warrants it, the runtime may expand up to maximumExpandedDurationSeconds.
+Keep paragraph 0 near targetRecapWords and preserve most narration for paragraphs 1-5.
+Do not exceed maximumTotalNarrationWords INCLUDING the locked headline and teaser.
+Avoid repeated generic statements and filler; make each sentence substantively distinct.
+If previousDraftForCondensing exists, REWRITE THAT DRAFT into concise six segments.
+Preserve specific source-backed observations; eliminate repetition without inventing
+new facts, quotations, statistics, or insinuations.
 """;
                     String raw=ollama.generateJson(system,Json.stringify(input),"json",0.08,1600);
                     Map<String,Object>parsed=Json.object(Json.parse(raw));
@@ -113,27 +122,38 @@ remove redundant sentences, and add no new facts, quotes, or numbers.
                         if(text.isBlank())throw new IllegalArgumentException("Empty analysis segment");
                         candidateBody.add(text);
                     }
+                    int generatedWords=Text.words(headline)+Text.words(TEASER)+
+                            candidateBody.stream().mapToInt(Text::words).sum();
+                    int selectedSeconds=PoliticalFramingDurationPolicy.chooseSeconds(
+                            generatedWords,targetSeconds,maximumSeconds);
+                    boolean repeated=PoliticalFramingDurationPolicy.excessiveRepetition(candidateBody);
+                    // Give substantial, distinct analysis the duration it actually needs.
+                    // Trim only over-ceiling drafts (or repetitive filler), never automatically
+                    // compress a valid two-to-three-minute investigation into 75 seconds.
+                    int editSeconds=repeated?targetSeconds:selectedSeconds;
                     PoliticalFramingLengthEditor.Edit edit=PoliticalFramingLengthEditor.compact(
-                            candidateBody,headline,TEASER,targetSeconds);
-                    // The editor only removes complete existing sentences. No facts, claims
-                    // or quotations are invented. Every edited draft is fully validated.
+                            candidateBody,headline,TEASER,editSeconds);
                     List<String>chosenBody=edit.changed()?edit.paragraphs():candidateBody;
-                    NewsScript candidate=assemble(facts,headline,publisher,chosenBody,targetSeconds);
+                    int finalWords=Text.words(headline)+Text.words(TEASER)+
+                            chosenBody.stream().mapToInt(Text::words).sum();
+                    int finalSeconds=PoliticalFramingDurationPolicy.chooseSeconds(
+                            finalWords,targetSeconds,maximumSeconds);
+                    NewsScript candidate=assemble(facts,headline,publisher,chosenBody,finalSeconds);
                     try{
-                        validate(candidate,facts,evidence,targetSeconds);
+                        if(PoliticalFramingDurationPolicy.excessiveRepetition(chosenBody))
+                            throw new IllegalArgumentException("Repeated filler sentences do not justify a longer video");
+                        validate(candidate,facts,evidence,finalSeconds);
                         return candidate;
                     }catch(IllegalArgumentException validation){
-                        attemptHistory.add("attempt "+attempt+" words="+edit.originalWords()+
-                                " editor="+edit.method()+" finalWords="+Text.words(candidate.narration())+
-                                " reason="+validation.getMessage());
+                        attemptHistory.add("attempt "+attempt+" words="+generatedWords+
+                                " selectedSeconds="+finalSeconds+" editor="+edit.method()+
+                                " finalWords="+finalWords+" reason="+validation.getMessage());
                         last=validation;
-                        // Recoverable length problems should be rewritten from previous draft,
-                        // rather than discard useful article analysis and restart generation.
-                        int total=Text.words(candidate.narration());
-                        boolean budgetIssue=total<ScriptValidator.minWords(targetSeconds)
-                                ||total>ScriptValidator.maxWords(targetSeconds)
-                                ||validation.getMessage().contains("65%");
-                        draftToRewrite=budgetIssue?List.copyOf(candidateBody):null;
+                        boolean repairable=finalWords<ScriptValidator.minWords(finalSeconds)
+                                ||finalWords>ScriptValidator.maxWords(finalSeconds)
+                                ||validation.getMessage().contains("65%")
+                                ||validation.getMessage().contains("Repeated filler");
+                        draftToRewrite=repairable?List.copyOf(candidateBody):null;
                     }
                 }catch(Exception e){
                     last=e;
