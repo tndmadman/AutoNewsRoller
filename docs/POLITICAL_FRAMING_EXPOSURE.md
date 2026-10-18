@@ -1,59 +1,74 @@
-# Political framing exposure — isolated experiment
+# Political framing exposure — single-article experiment
 
-Status: **experimental**. Manually triggered only. Do not merge into main before full production-machine validation.
+Status: **experimental**, manual-only, isolated from the standard news production pipeline. Do not merge into main until validated with real local TTS and Ollama.
 
-## Operator workflow
+## Goal
 
-Start the current Command Center and at least one updated GPU worker. Select a politically relevant story with at least two attributable independent publishers, then click **MAKE POLITICAL FRAMING EXPOSURE VIDEO** on that story card.
+**Expose the political framing and narrative construction inside ONE news article. Do not compare publishers.** The video dissects what the article actually says, how its headline selects or emphasizes facts, whether labels or loaded wording appear, what is presented as established versus alleged or implied, and how documented framing *might* shape the audience's interpretation.
 
-The Command Center persists production mode **FRAMING_EXPOSURE**. Missing or stale political analysis causes a queued wait with the **WAITING_FOR_FRAMING_ANALYSIS** stage. If a compatible worker is unavailable, the video remains queued with **WAITING_FOR_COMPATIBLE_WORKER**. Ordinary videos remain independently claimable.
+One attributable article is sufficient. Additional reporting may substantiate a factual claim in the upstream FactPackage, but is not a subject of narration, a required input, or an excuse to create side-by-side publisher comparisons. Political slant is not presumed: an evidence-based finding of insufficient or no observable political framing is a valid conclusion.
 
-When a capable worker claims an experiment, it reads the server-controlled mode and verifies the analysis content fingerprint. A completed experimental video becomes its own archived video version. Each archived version retains independent upload, scrap, and format information. A later normal MAKE VIDEO, WORTH IT, or ordinary RE-MAKE always uses **STANDARD**.
+## Command Center workflow
 
-## What the video contains
+1. Select a story card, including a story with only one publisher or whose category is not labeled political.
+2. Click **EXPOSE POLITICAL FRAMING**. The controller queues productionMode=FRAMING_EXPOSURE only when there is a source article with a headline, attribution and URL.
+3. If the latest text analysis is missing or stale, the story waits for political-analysis completion. A manual request stays eligible across RSS rescans.
+4. Only workers advertising framing_exposure_v1 claim experimental video jobs. If no updated worker is available, the job stays queued rather than silently falling back to a normal news video.
+5. Successful output remains a distinct archived video version. Normal MAKE, WORTH, AUTO and standard remake paths remain STANDARD.
 
-Narration starts immediately with the source headline, then this exact fixed sentence:
+An analytical classification of not_political or uncertain **does not cancel a manually requested exposure**. Instead, the narrator must acknowledge the lack of substantiated framing or limits of the available article text.
+
+## Spoken format
+
+The first spoken words are the article's **exact original headline**, followed immediately by the unchangeable line:
 
 > Stay for the analysis of how this story is being politically framed.
 
-Both lines are inserted in Java, not entrusted to the language model. The subsequent six beats explain the event, the different source headlines, supported distinctions in wording, how emphasis may influence interpretation, and evidentiary limits. If TTS duration is too short, the generator repairs only the analytical body. A dedicated validator checks word ranges, exact opening, grounded numbers and quotes, publisher attributions, and analytical share. SpeechTiming's measured segment durations must also show the configured analytical fraction.
+The original synthesized two-tone news sting plays at timestamp zero underneath that narration. The remaining six narration segments use this editorial outline:
 
-The intro sound is an original FFmpeg-synthesized two-tone sting (784/1046 Hz, 1.3 seconds) mixed at timestamp zero under the unshifted narration and limited to prevent clipping. The experimental render uses the same existing TTS choices (Kokoro, then Qwen), video encoder, and caption timing sidecar as standard videos, but does not alter normal audio.
+1. Very short event/claim description, attributing single-source claims as reports instead of calling them independently verified.
+2. **Headline framing:** specific terms, emphasis, agency, and what those choices foreground.
+3. **Rhetorical cues:** labels, emotional language, implications and selective emphasis, but only where the supplied source material supports them.
+4. **Facts vs implications:** distinguish a statement or allegation in the article from conjectures, embedded assumptions, or unproven causation.
+5. **Audience effect:** how the observed wording *could* lead readers to a particular interpretation, qualified rather than asserted as fact.
+6. **Evidence-based verdict:** what framing is demonstrable; what cannot be established; do not force a left/right judgment.
 
-Eight procedural news cards display exact attributed source text, not fabricated screenshots or publisher mastheads. The current AWARE header, ticker, caption safe region and opaque 220-pixel TikTok post-text footer are preserved. The visual heading is **NEWS ANALYSIS**; the sting does not assert that older news is genuinely breaking.
+Paragraphs 2–6 must account for at least 65% of narration by the script's word count; the actual TTS-aligned runtime also must meet the configured analytical threshold. Failed scripts regenerate the analytical body only and never rewrite the headline or fixed teaser. The model is explicitly prohibited from cross-publisher comparisons and unsupported assumptions about publisher motives.
 
-## Evidence and limitations
+## Article evidence requirements
 
-The separate evidence schema is framing-evidence-v1. It records article ID, publisher, article URL and time, exact attributed headline, supplied descriptions/body excerpts, content fingerprints, and political-analysis metadata. At least two publishers must describe an apparently shared event using distinct headlines. Same-event matching in v1 uses a conservative lexical overlap heuristic, not a fully independent semantic verification step. Review comparisons before publication.
+The v2 evidence schema is **framing-evidence-v2-single-article**. It contains one selected article's source name, link, publication timestamp, exact headline, available description/body excerpts, document-scope flag, fingerprint, and only that article's analysis details. If article content is unavailable, the tool can inspect its headline but **cannot assert what the absent article body omitted**.
 
-The political classification from Ollama is an uncertain interpretation of supplied text, **not** a publisher truth score or evidence of deliberate manipulation. Baseline publisher classifications remain separate metadata. In this version, the framing inspection emphasizes documented headline language rather than full-text omissions; it must not invent missing context, partisan motives, quotations, numerical claims, or unsupported source ratings. Machine checks cannot establish all subtleties of framing; **editorial review is required**.
+A URL, headline and publisher are required for attribution. Cross-source corroboration is not required to examine framing. Real original phrases can be illustrated verbatim, but the video must not invent quotes, facts, numbers, causal mechanisms, ideological labels or omissions. A newsroom-specific bias label is not a statement of the individual author's political beliefs.
 
-The default experiment uses deterministic text evidence cards rather than ComfyUI generated pictures to avoid suggesting fabricated headlines are real screenshots. A configuration requiring ComfyUI for this version will cause an explicit failure, not produce a fake image.
+Current provenance continues to include audio engine, images, visual timings, source data and the mode, with experimentalFormatVersion=framing-exposure-v2-single-article. The worker checks its source-input fingerprint against the queued job before rendering.
+
+## Visuals and sound
+
+The eight source-attributed editorial cards present the article headline, exact excerpt(s) where available, selected wording and written analysis, without fabricated screenshots or news organization logos. The visual types include FRAMING_HEADLINE, FRAMING_TEASER, LANGUAGE_HIGHLIGHT, RHETORIC_CARD, FACT_CHECK_CARD, FRAMING_CONTEXT and FRAMING_CONCLUSION. The restored header and 220px TikTok footer remain unchanged.
+
+The sting uses FFmpeg-generated 784 Hz and 1046 Hz tones, faded and mixed underneath the original speech, with limiter protection. Kokoro narration and Qwen fallback are unchanged. Procedural evidence cards are used by default; this experiment does not use ComfyUI to impersonate news screenshots.
 
 ## Settings
 
-The following keys are optional in defaults.txt:
+- politicalExposureEnabled=true: controller/worker capability switch; never schedules experimental videos automatically
+- politicalExposureDefaultDurationSeconds=75: experimental duration target
+- politicalExposureMinimumIndependentSources=1: informational setting; evidence eligibility is based on one article, not an independent-source threshold
+- politicalExposureRequireEvidence=true: reserved; original source attribution is always required
+- politicalExposureIntroSoundEnabled=true: mandatory sting
+- politicalExposureIntroSoundGainDb=-14: primary tone volume
+- politicalExposureRequiredAnalysisFraction=0.65: minimum actual analytical runtime share
+- politicalExposureAllowSingleSource=true: informational setting; v2 requires no cross-publisher corroboration
+- politicalExposureRequireComfy=false: keep false for v2's deterministic text evidence cards
 
-| Key | Default | Meaning |
-|---|---|---|
-| politicalExposureEnabled | true | Worker/controller feature switch; does not auto-create experimental jobs |
-| politicalExposureDefaultDurationSeconds | 75 | Minimum experimental target |
-| politicalExposureMinimumIndependentSources | 2 | Minimum for cross-source comparison |
-| politicalExposureRequireEvidence | true | Reserved; evidence is unconditionally required in v1 |
-| politicalExposureIntroSoundEnabled | true | Required sound; disabling it fails experiment |
-| politicalExposureIntroSoundGainDb | -14 | First tone mix gain; second is 5 dB lower |
-| politicalExposureRequiredAnalysisFraction | 0.65 | Minimum TTS-timed analytical share |
-| politicalExposureAllowSingleSource | false | Reserved; single-source mode unsupported in v1 |
-| politicalExposureRequireComfy | false | Keep false; version 1 uses evidence cards |
+To turn the experiment off, set politicalExposureEnabled=false in controller and workers and restart them. Explicitly manage queued experimental jobs if disabling the worker capability.
 
-To disable, set politicalExposureEnabled=false for Command Center and workers and restart them. Standard video production is unaffected. Explicitly handle any existing experimental pending jobs rather than waiting for a capability that has been turned off. Do not modify standard hooks or unrelated production configuration.
+## Validation and release gate
 
-## Recovery and regression validation
+The Java fixture checks one-source enqueue/claim, worker capability protection, state restart, archived versions, safe standard remake, exact headline+teaser ordering, per-article evidence scoping, and nonpolitical single-source requests surviving rescans. Playwright verifies that the new button exists even when a story is not automatically political and has only one source.
 
-Repeated experiment actions share the existing operation ID protection. The store rejects conflicting queued or producing actions. Failed analysis is visible and can be requeued from **ANALYZE FRAMING**. Worker loss, controller restart, and automatic retry preserve the experimental mode. Unknown mode values raise errors instead of silently falling back.
+PoliticalFramingSmoke renders eight v2 framing cards with an actual FFmpeg synthetic-audio MP4 and checks the intro mix, output duration and restored bottom footer. It does **not** test the natural-language model's judgment or real TTS audio. The standard Java, Linux/Windows video, and Playwright regression suites must pass.
 
-Run the existing Windows self-test batch, Java SelfTest, WorkerConsoleSelfTest, the Playwright browser tests and VisualSmoke when FFmpeg is present. A deterministic framing fixture regression and a new guarded-button browser test are also included.
+**Before merging**, generate and inspect an actual 70–80 second narrated experiment on the Windows GPU worker with the real Ollama model, Kokoro or Qwen, FFmpeg and captions. Review factual support, exact headline, teaser, original intro sound, source quotations, actual framing analysis versus generic filler, TikTok footer, and narration duration. A synthetic CI fixture is necessary but insufficient.
 
-**Production rollout gate:** the actual framing MP4 must still be rendered and inspected with the Windows GPU worker, local Ollama, Kokoro/Qwen, and FFmpeg. Check that the headline and fixed teaser are audible, the two-tone sting is mixed beneath the start, source comparisons are legible, captions track speech, the full 220-pixel lower safe area remains intact, video duration exceeds the configured minimum, and the sidecar contains the experimental provenance. Normal FFmpeg smoke tests passing are not proof that this integrated experiment rendered successfully.
-
-This experiment is to remain isolated on feature/political-framing-exposure-video until that validation is complete.
+This implementation is meant to expose *observable framing*, not to assert that every news outlet is biased or that a story contains manipulation when the evidence does not support it.
