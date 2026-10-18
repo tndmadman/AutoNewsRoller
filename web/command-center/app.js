@@ -494,7 +494,7 @@ function storyCard(s){
         <div class="storyMeta"><span class="statusTag ${verified||s.worthy?"verified":status==="FAILED"?"failed":""}">${esc(status)}</span>
         ${s.manualVerificationOverride?'<span class="statusTag failed">MANUAL VERIFY OVERRIDE</span>':""}
         ${s.softVerificationOverride?'<span class="statusTag">RELAXED 1-SOURCE</span>':""}
-        ${review?'<span class="statusTag">NARRATIVE REVIEW</span>':'<span class="statusTag">ORIGINAL NEWS</span>'}
+        ${review?'<span class="statusTag">NARRATIVE REVIEW</span>':s.boardEntryId?'<span class="statusTag">ORIGINAL NEWS</span>':""}
         ${s.pairedVideoState?'<span class="statusTag">PAIR: '+esc(s.pairedVideoState.replaceAll("_"," "))+"</span>":""}
         ${s.scrapped?'<span class="statusTag scrapped">SCRAPPED</span>':s.uploaded?'<span class="statusTag uploaded">UPLOADED</span>':status==="COMPLETE"?'<span class="statusTag toPost">TO POST</span>':""}
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
