@@ -858,6 +858,28 @@ public final class SelfTest {
                 &&"QUEUED".equals(automatic.storyDetail(cluster.id).get("status")),
                 "auto-selected standard video independently triggers its framing companion");
 
+        // Failure of the review must preserve the successful normal video and
+        // the retry action must target only FRAMING_EXPOSURE.
+        Map<String,Object>autoAnalysis=automatic.claim("old-worker",Map.of());
+        ok("POLITICAL_ANALYSIS".equals(autoAnalysis.get("jobType")),
+                "automatic pair queues framing analysis for a single-source nonpolitical story");
+        automatic.politicalAnalysisComplete(cluster.id,framing,"old-worker");
+        automatic.heartbeat("updated-worker",Map.of("id","updated-worker",
+                "capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>autoReview=automatic.claim("updated-worker",Map.of());
+        automatic.fail(cluster.id,"Synthetic review render failure","updated-worker",
+                String.valueOf(autoReview.get("claimId")));
+        ok("FRAMING_FAILED".equals(automatic.storyDetail(cluster.id).get("pairedVideoState"))
+                &&"FAILED".equals(automatic.storyDetail(cluster.id).get("status"))
+                &&((List<?>)automatic.snapshot().get("videos")).size()==1,
+                "failed framing review keeps completed normal version safe");
+        automatic.action(cluster.id,"MAKE");
+        ok("FRAMING_EXPOSURE".equals(automatic.storyDetail(cluster.id).get("productionMode"))
+                &&"FRAMING_QUEUED".equals(automatic.storyDetail(cluster.id).get("pairedVideoState")),
+                "retrying the failed pair resumes the framing review, not the completed news video");
+        ok(((List<?>)automatic.snapshot().get("videos")).size()==1,
+                "framing retry creates no duplicate normal version");
+
         // Explicit exposure action remains a one-video choice, with no standard prelude.
         Path onlyState=dir.resolve("framing-only.json");
         CommandCenterStore only=new CommandCenterStore(onlyState,BiasRegistry.load(dir.resolve("bias.json")),
