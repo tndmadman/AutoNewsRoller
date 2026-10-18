@@ -79,6 +79,13 @@ commandCenterFailureMaxRetries=3
 commandCenterFailureRetryDelaySeconds=20
 commandCenterLeaseRecoveryMaxRetries=3
 commandCenterControllerUrl=http://127.0.0.1:8787
+# Experimental branch: selected STANDARD video is automatically followed by a
+# separate FRAMING_EXPOSURE review; completed versions are retained independently.
+commandCenterPairFramingVideos=true
+# Original two-tone breaking-news intro for both STANDARD and FRAMING_EXPOSURE.
+# Former experimental -14.00 dB, increased by 20*log10(3) = 9.54 dB.
+newsIntroSoundEnabled=true
+newsIntroSoundGainDb=-4.46
 
 politicalAnalysisModel=llama3.1:8b
 politicalAnalysisOllamaUrl=http://127.0.0.1:11434/api/generate
@@ -99,7 +106,7 @@ politicalExposureMaxDurationSeconds=180
 politicalExposureMinimumIndependentSources=1
 politicalExposureRequireEvidence=true
 politicalExposureIntroSoundEnabled=true
-politicalExposureIntroSoundGainDb=-14
+politicalExposureIntroSoundGainDb=-4.46
 politicalExposureRequiredAnalysisFraction=0.65
 politicalExposureAllowSingleSource=true
 politicalExposureRequireComfy=false

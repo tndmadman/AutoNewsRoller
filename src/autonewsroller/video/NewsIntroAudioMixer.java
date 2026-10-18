@@ -8,9 +8,9 @@ public final class NewsIntroAudioMixer {
     public static final String STING_ID="synthetic-two-tone-news-sting-v1";
     public Path mix(Path voice,Path mixed,String ffmpeg,double gainDb)throws Exception{
         // Input 0 starts at timestamp zero. Neither trimming nor delay is applied to speech.
-        String filter="[1:a]volume="+String.format(Locale.ROOT,"%.1fdB",gainDb)
+        String filter="[1:a]volume="+String.format(Locale.ROOT,"%.2fdB",gainDb)
                 +",afade=t=out:st=0.7:d=0.6[a];"
-                +"[2:a]volume="+String.format(Locale.ROOT,"%.1fdB",gainDb-5)
+                +"[2:a]volume="+String.format(Locale.ROOT,"%.2fdB",gainDb-5)
                 +",afade=t=out:st=0.7:d=0.6[b];"
                 +"[0:a][a][b]amix=inputs=3:duration=first:normalize=0,"
                 +"alimiter=limit=0.92:attack=5:release=50[out]";
