@@ -876,6 +876,16 @@ public final class CommandCenterStore {
             row.remove("videoFilename");
             row.remove("lastFailure");row.remove("error");
             row.put("uploaded",false);row.put("scrapped",false);
+            String pair=String.valueOf(story.getOrDefault("pairedVideoState",""));
+            if(mode==ProductionMode.FRAMING_EXPOSURE&&"FRAMING_SKIPPED".equals(pair)){
+                row.put("status","SKIPPED");
+                row.put("stage","SKIPPED");
+                row.put("detail",story.getOrDefault("detail","Narrative review could not be queued"));
+            }else if(mode==ProductionMode.FRAMING_EXPOSURE&&"STANDARD_FAILED".equals(pair)){
+                row.put("status","HOLD");
+                row.put("stage","WAITING_FOR_NORMAL_RETRY");
+                row.put("detail","Original video failed; review cannot start until it succeeds");
+            }
         }else{
             row.remove("currentVideoVersionId");
             row.remove("videoVersion");
