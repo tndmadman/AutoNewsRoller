@@ -123,7 +123,8 @@ public final class CommandCenterStore {
             m.put("latestPublishedAt",item.cluster().articles.stream().map(Article::publishedAt).filter(Objects::nonNull).max(Comparator.naturalOrder()).map(Instant::toString).orElse(""));
             m.put("candidate",item.candidate().toMap());
             m.put("sourceMix",bias.mix(item.cluster().publishers()));
-            boolean politicalCandidate=PoliticalFramingAnalyzer.likelyPolitical(item.cluster());
+            boolean politicalCandidate=PoliticalFramingAnalyzer.likelyPolitical(item.cluster())||
+                    Boolean.TRUE.equals(m.get("manualFramingRequested"));
             m.put("politicalCandidate",politicalCandidate);
             String framingInputHash=Hashing.sha256(item.cluster().articles.stream().map(a->a.id()+"|"+a.title()+"|"+a.description()+"|"+a.bodyText()).sorted().reduce("",(a,b)->a+"|"+b));
             m.put("biasAnalysisInputHash",framingInputHash);
@@ -237,15 +238,18 @@ public final class CommandCenterStore {
             }
             case "MAKE_FRAMING_EXPOSURE","REMAKE_FRAMING_EXPOSURE"->{
                 if("QUEUED".equals(status))throw new IllegalStateException("Another video is already queued.");
-                if(!Boolean.TRUE.equals(m.get("politicalCandidate")))
-                    throw new IllegalStateException("Story is not eligible for political framing analysis.");
-                if(integer(m.get("independentSources"))<2)
-                    throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: Requires two independent sources.");
+                if(!(m.get("candidate") instanceof Map<?,?>))
+                    throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: No source article available.");
+                NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(m.get("candidate")));
+                if(candidate.cluster().articles.stream().noneMatch(article->
+                        !article.title().isBlank()&&!article.publisher().isBlank()&&!article.url().isBlank()))
+                    throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: An attributed article headline and URL are required.");
                 if("REMAKE_FRAMING_EXPOSURE".equals(a)&&!"COMPLETE".equals(status))
                     throw new IllegalStateException("Only completed videos can be remade.");
                 if("COMPLETE".equals(status)&&currentVideo(m)==null)
                     throw new IllegalStateException("Existing version missing; cannot archive.");
                 m.put("manualWorth",true);m.put("worthy",true);m.put("decision",a);
+                m.put("manualFramingRequested",true);m.put("politicalCandidate",true);
                 m.put("productionMode",ProductionMode.FRAMING_EXPOSURE.name());
                 m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("progress",15);
                 m.remove("error");clearLease(m);resetFailureRetryState(m);
@@ -738,10 +742,8 @@ public final class CommandCenterStore {
         }
         if(!(m.get("framingAnalysis") instanceof Map<?,?>))return false;
         Map<String,Object>analysis=Json.object(m.get("framingAnalysis"));
-        if(number(analysis.get("politicalRelevance"))<0.35||"not_political".equals(analysis.get("overallClassification"))){
-            m.put("stage","INSUFFICIENT_FRAMING_EVIDENCE");
-            m.put("detail","Political analysis did not establish meaningful framing.");return false;
-        }
+        // Absence of political slant is a valid finding, not a reason to refuse analysis.
+        // The experimental script must report that conclusion rather than invent a bias.
         return true;
     }
     private static boolean retryReady(Map<String,Object>m){

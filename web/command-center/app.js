@@ -501,7 +501,7 @@ function storyCard(s){
         <button class="btn warn" data-command="HOLD">Ⅱ HOLD</button>
         <button class="btn bad" data-command="SKIP">× NOT WORTH</button>
         <button class="btn ghost" data-command="AUTO">↻ AUTO</button>`:""}
-      ${s.politicalCandidate?`<button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${["QUEUED","PRODUCING"].includes(status)?"disabled title='Another video is already queued or producing'":""}>◉ MAKE POLITICAL FRAMING EXPOSURE VIDEO</button>`:""}
+      <button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${["QUEUED","PRODUCING"].includes(status)?"disabled title='Another video is already queued or producing'":""}>◉ EXPOSE POLITICAL FRAMING</button>
       ${status==="COMPLETE"?`
         <button class="btn primary" data-command="REMAKE">↻ RE-MAKE VIDEO</button>
         ${s.scrapped
@@ -606,7 +606,7 @@ document.addEventListener("click",e=>{
   const versionId=row.dataset.versionId||row.dataset.currentVersionId||"";
   const path="/api/stories/"+encodeURIComponent(id);
   if(command==="REMAKE"&&!confirm("Queue a fresh re-make? The existing completed video will stay in the archive as its own version."))return;
-  if(command==="MAKE_FRAMING_EXPOSURE"&&!confirm("Create a political framing exposure video from source evidence? Completed versions remain archived."))return;
+  if(command==="MAKE_FRAMING_EXPOSURE"&&!confirm("Analyze the political framing within this article? A second news outlet is not required. Completed versions remain archived."))return;
   if(command==="ANALYZE"){
     submitOperation(id,button,path+"/analyze-bias",{},"POST","Political framing analysis queued for an idle worker.");
     return;
