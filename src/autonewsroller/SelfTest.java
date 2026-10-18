@@ -271,7 +271,8 @@ public final class SelfTest {
                     "pagination boundaries for "+size+" stories");
         }
         Map<String,Object>archive=new LinkedHashMap<>();
-        for(Map<String,Object>item:records.values()){
+        for(Object rawRecord:records.values()){
+            Map<String,Object>item=Json.object(rawRecord);
             if(!"COMPLETE".equals(item.get("status")))continue;
             String storyId=String.valueOf(item.get("id"));
             Map<String,Object>video=new LinkedHashMap<>();
