@@ -33,6 +33,8 @@ The original synthesized two-tone news sting plays at timestamp zero underneath 
 5. **Audience effect:** how the observed wording *could* lead readers to a particular interpretation, qualified rather than asserted as fact.
 6. **Evidence-based verdict:** what framing is demonstrable; what cannot be established; do not force a left/right judgment.
 
+The writer initially aims for the minimum 75-second target but will automatically expand its nominal target when a substantive draft exceeds that budget, at approximately 2.5 words per second, capped at 180 seconds by default. A 320-word script is therefore allowed approximately 128 seconds, not forcibly shortened to 75. Duplicated filler sentences do not justify expansion. The configured ceiling is an automatic **script target ceiling**, not an audio time-stretch or cut-off; finished MP4 duration follows measured TTS audio.
+
 Paragraphs 2–6 must account for at least 65% of narration by the script's word count; the actual TTS-aligned runtime also must meet the configured analytical threshold. Failed scripts regenerate the analytical body only and never rewrite the headline or fixed teaser. The model is explicitly prohibited from cross-publisher comparisons and unsupported assumptions about publisher motives.
 
 ## Article evidence requirements
@@ -52,7 +54,8 @@ The sting uses FFmpeg-generated 784 Hz and 1046 Hz tones, faded and mixed undern
 ## Settings
 
 - politicalExposureEnabled=true: controller/worker capability switch; never schedules experimental videos automatically
-- politicalExposureDefaultDurationSeconds=75: experimental duration target
+- politicalExposureDefaultDurationSeconds=75: minimum experimental duration target
+- politicalExposureMaxDurationSeconds=180: automatic script duration may expand up to three minutes when meaningful, source-backed analysis requires it; only experimental videos use this setting
 - politicalExposureMinimumIndependentSources=1: informational setting; evidence eligibility is based on one article, not an independent-source threshold
 - politicalExposureRequireEvidence=true: reserved; original source attribution is always required
 - politicalExposureIntroSoundEnabled=true: mandatory sting

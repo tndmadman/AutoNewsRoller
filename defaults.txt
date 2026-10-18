@@ -93,6 +93,9 @@ politicalGraphicsShowOnUncertain=true
 # Manual-only experimental framing format (standard format unchanged)
 politicalExposureEnabled=true
 politicalExposureDefaultDurationSeconds=75
+# Experimental framing narration may expand when original article analysis needs more time.
+# Nominal automatic target limit (the final runtime follows measured TTS duration).
+politicalExposureMaxDurationSeconds=180
 politicalExposureMinimumIndependentSources=1
 politicalExposureRequireEvidence=true
 politicalExposureIntroSoundEnabled=true
