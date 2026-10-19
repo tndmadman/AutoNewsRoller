@@ -1040,12 +1040,17 @@ public final class CommandCenterStore {
     private static boolean nonTransientFailure(String message){
         String lower=message==null?"":message.toLowerCase(Locale.ROOT);
         return lower.contains("framing_script_validation_failed")
+                ||lower.contains("framing_script_format_failed")
+                ||lower.contains("framing_ollama_output_limit")
                 ||lower.contains("insufficient_framing_evidence")
                 ||lower.contains("stale_framing_evidence")
                 ||lower.contains("locked political framing opening changed");
     }
     private static String failureTypeForStage(String stage,String message){
         String lower=message==null?"":message.toLowerCase(Locale.ROOT);
+        if(lower.contains("framing_ollama_failure"))return "OLLAMA_FAILURE";
+        if(lower.contains("framing_ollama_output_limit"))return "OLLAMA_OUTPUT_LIMIT";
+        if(lower.contains("framing_script_format_failed"))return "OLLAMA_FORMAT_FAILURE";
         if(lower.contains("framing_script_validation_failed")
                 ||lower.contains("script validation failed")
                 ||lower.contains("repair segment ")
