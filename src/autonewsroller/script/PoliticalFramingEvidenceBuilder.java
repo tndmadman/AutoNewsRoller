@@ -47,8 +47,11 @@ public final class PoliticalFramingEvidenceBuilder {
         source.put("headline",selected.title());
         source.put("verifiedExcerpt",selected.title());
         source.put("excerptLocation","headline");
+        // Make evidence truncation explicit; never imply that a partial excerpt is the full article.
         source.put("description",limit(selected.description(),1800));
         source.put("bodyText",limit(selected.bodyText(),3600));
+        source.put("descriptionTruncated",selected.description().length()>1800);
+        source.put("bodyTruncated",selected.bodyText().length()>3600);
         source.put("availableTextScope",!selected.bodyText().isBlank()?"HEADLINE_DESCRIPTION_BODY":
                 !selected.description().isBlank()?"HEADLINE_AND_DESCRIPTION":"HEADLINE_ONLY");
         source.put("framingMechanism","Examine observable wording, emphasis, attribution, and implications in this one article.");
@@ -100,5 +103,10 @@ public final class PoliticalFramingEvidenceBuilder {
     private static boolean valid(Article article){
         return article!=null&&!article.publisher().isBlank()&&!article.title().isBlank()&&!article.url().isBlank();
     }
-    private static String limit(String s,int count){return s==null?"":s.substring(0,Math.min(count,s.length()));}
+    private static String limit(String s,int count){
+        if(s==null||s.length()<=count)return s==null?"":s;
+        // Prefer a whitespace boundary, so the supplied evidence does not end mid-token.
+        int at=s.lastIndexOf(' ',count);
+        return s.substring(0,at>=count/2?at:count).stripTrailing();
+    }
 }
