@@ -1845,22 +1845,31 @@ public final class SelfTest {
         NewsScript s=NewsScriptGenerator.deterministic(fp,60);
         ok(!s.narration().isBlank(),"dry-run script generation");
         ok(new ScriptValidator().validate(s,fp,60).stream().noneMatch(x->x.startsWith("unsupported number")),"script JSON/fact validation");
+        // Deterministic fallback has only two beats; create a third fixture
+        // segment so the repair contract can exercise reported segment index 2.
+        List<NewsScript.Segment>repairSegments=new ArrayList<>(s.segments());
+        NewsScript.Segment source=s.segments().get(1);
+        repairSegments.add(new NewsScript.Segment(2,source.narration(),source.purpose(),
+                source.visualType(),source.visualPrompt(),source.durationTarget()));
+        NewsScript repairBase=new NewsScript(s.storyId(),s.headline(),
+                s.narration()+" "+source.narration(),repairSegments,s.estimatedDuration(),
+                s.sourceLabels(),s.hook());
         NewsScriptGenerator.RepairTarget target=new NewsScriptGenerator.RepairTarget(
-                2,26,30,28,s.segments().get(2).narration());
+                2,26,30,28,repairBase.segments().get(2).narration());
         String tooShort=Json.stringify(Map.of("replacements",List.of(
                 Map.of("segmentIndex",2,"narration","grounded ".repeat(21).strip()))));
         boolean rejected=false;
-        try{NewsScriptGenerator.applyReplacements(s,tooShort,fp,60,List.of(target));}
+        try{NewsScriptGenerator.applyReplacements(repairBase,tooShort,fp,60,List.of(target));}
         catch(IllegalArgumentException lengthError){
             rejected=lengthError.getMessage().contains("Repair segment 2 returned 21 words; required 26-30");
         }
         ok(rejected,"standard repair rejects 21-word segment when 26-30 words are required");
         String corrected=Json.stringify(Map.of("replacements",List.of(
                 Map.of("segmentIndex",2,"narration","grounded ".repeat(28).strip()))));
-        NewsScript fixed=NewsScriptGenerator.applyReplacements(s,corrected,fp,60,List.of(target));
+        NewsScript fixed=NewsScriptGenerator.applyReplacements(repairBase,corrected,fp,60,List.of(target));
         ok(autonewsroller.util.Text.words(fixed.segments().get(2).narration())==28
-                &&fixed.segments().get(0).narration().equals(s.segments().get(0).narration())
-                &&fixed.segments().get(3).narration().equals(s.segments().get(3).narration()),
+                &&fixed.segments().get(0).narration().equals(repairBase.segments().get(0).narration())
+                &&fixed.segments().get(1).narration().equals(repairBase.segments().get(1).narration()),
                 "standard targeted repair accepts corrected length and keeps the hook and unrelated segments");
     }
 
