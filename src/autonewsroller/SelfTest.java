@@ -1153,6 +1153,35 @@ public final class SelfTest {
                     "unsupported zero triggers single-segment factual repair");
         }finally{numberMock.stop(0);}
 
+
+        // Truncated/malformed JSON must not be blindly regenerated five times
+        // when Ollama returns the same invalid content verbatim.
+        for(String broken:List.of("{\"segments\":[\"broken\",]",
+                Json.stringify(Map.of("segments",longDraft.subList(0,5))),
+                Json.stringify(Map.of("segments",List.of("one","two","three","four","five","six","seven"))))){
+            AtomicInteger brokenCalls=new AtomicInteger();
+            HttpServer brokenMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+            brokenMock.createContext("/generate",exchange->{
+                brokenCalls.incrementAndGet();
+                byte[]body=Json.stringify(Map.of("response",broken,"done_reason","stop"))
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200,body.length);
+                try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+            });
+            brokenMock.start();
+            try{
+                Path scratch=Files.createTempDirectory("framing-invalid-json-");
+                OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                        brokenMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+                boolean safelyRejected=false;
+                try{new PoliticalFramingScriptGenerator(client,5,180).generate(facts,evidence,75,false);}
+                catch(IllegalStateException failure){
+                    safelyRejected=failure.getMessage().contains("FRAMING_SCRIPT_VALIDATION_FAILED");
+                }
+                ok(safelyRejected&&brokenCalls.get()==2,
+                        "repeated malformed/five-or-seven segment JSON is rejected after two identical responses");
+            }finally{brokenMock.stop(0);}
+        }
         Article headlineOnly=new Article("only-headline","Fixture Gazette",
                 article.title(),article.url(),article.canonicalUrl(),now,now,"","politics",
                 "","","en",1,false);
