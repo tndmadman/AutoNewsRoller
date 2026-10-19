@@ -1193,6 +1193,68 @@ public final class SelfTest {
                         "repeated malformed/five-or-seven segment JSON is rejected after two identical responses");
             }finally{brokenMock.stop(0);}
         }
+
+        // A percentage is not interchangeable with the same bare number.
+        List<String>unsupportedPercent=new ArrayList<>(longDraft);
+        unsupportedPercent.set(2,longDraft.get(2)+" This change reaches 0% of readers.");
+        AtomicInteger percentCalls=new AtomicInteger();
+        HttpServer percentMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        percentMock.createContext("/generate",exchange->{
+            int call=percentCalls.incrementAndGet();
+            String responseText=call==1?Json.stringify(Map.of("segments",unsupportedPercent))
+                    :Json.stringify(Map.of("replacements",List.of(
+                            Map.of("segmentIndex",2,"narration",longDraft.get(2)))));
+            byte[]body=Json.stringify(Map.of("response",responseText,"done_reason","stop"))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+        });
+        percentMock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-percent-repair-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    percentMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+            NewsScript fixed=new PoliticalFramingScriptGenerator(client,4,180)
+                    .generate(facts,evidence,75,false);
+            ok(percentCalls.get()==2&&!fixed.narration().contains("0%"),
+                    "unsupported percentages are checked and repaired independently of integer evidence");
+        }finally{percentMock.stop(0);}
+
+        List<String>quotedDraft=new ArrayList<>(longDraft);
+        quotedDraft.set(1,longDraft.get(1)+
+                " The actual headline says \"Senate   debates election proposal\".");
+        AtomicInteger quoteCalls=new AtomicInteger();
+        HttpServer quoteMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        quoteMock.createContext("/generate",exchange->{
+            quoteCalls.incrementAndGet();
+            byte[]body=Json.stringify(Map.of("response",Json.stringify(Map.of("segments",quotedDraft)),
+                    "done_reason","stop")).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+        });
+        quoteMock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-source-quote-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    quoteMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+            NewsScript accepted=new PoliticalFramingScriptGenerator(client,2,180)
+                    .generate(facts,evidence,75,false);
+            ok(quoteCalls.get()==1&&accepted.narration().contains("Senate   debates election proposal"),
+                    "attributed real headline quotation tolerates benign whitespace differences");
+        }finally{quoteMock.stop(0);}
+
+        Article bodyLimited=new Article("excerpt-limit","Fixture Gazette",article.title(),
+                article.url(),article.canonicalUrl(),now,now,"","politics",
+                "description ".repeat(200),"article paragraph ".repeat(300),"en",1,false);
+        var clippedEvidence=new PoliticalFramingEvidenceBuilder().build(new StoryCluster(
+                "excerpt-limit-test",article.title(),List.of(bodyLimited),Set.of(),"source-limit"),facts,political);
+        Map<String,Object>clipped=clippedEvidence.articles().get(0);
+        ok(Boolean.TRUE.equals(clipped.get("bodyTruncated"))
+                &&Boolean.TRUE.equals(clipped.get("descriptionTruncated"))
+                &&String.valueOf(clipped.get("bodyText")).length()<=3600
+                &&clippedEvidence.contentFingerprint()!=null,
+                "evidence truncation remains explicit and fingerprints preserve full source integrity");
+
         Article headlineOnly=new Article("only-headline","Fixture Gazette",
                 article.title(),article.url(),article.canonicalUrl(),now,now,"","politics",
                 "","","en",1,false);
