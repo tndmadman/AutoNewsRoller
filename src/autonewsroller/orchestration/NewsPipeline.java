@@ -179,6 +179,9 @@ public final class NewsPipeline {
             exposureGenerator=new PoliticalFramingScriptGenerator(oc,cfg.getInt("ollamaRetries",5),
                     cfg.getInt("politicalExposureMaxDurationSeconds",180));
         }
+        // Report the stage BEFORE invoking Ollama. Failed generation is not source verification.
+        events.emit(worker,slot,PipelineStage.SCRIPT,
+                "Generating "+(mode==ProductionMode.FRAMING_EXPOSURE?"narrative review":"standard news")+" narration");
         NewsScript script=mode==ProductionMode.FRAMING_EXPOSURE
                 ?exposureGenerator.generate(fp,evidence,targetSeconds,dryRun)
                 :scriptGenerator.generate(fp,targetSeconds,dryRun);
