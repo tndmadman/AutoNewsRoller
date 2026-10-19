@@ -72,7 +72,8 @@ public final class PoliticalFramingScriptGenerator {
                             "attempt",attempt));
                     // Preserve the six accepted beats and repair only the failed passages.
                     boolean repairing=draftToRewrite!=null;
-                    List<Integer>repairIndices=repairing?repairTargets(draftToRewrite,repairFailure):List.of();
+                    List<Integer>repairIndices=repairing?repairTargets(draftToRewrite,repairFailure,
+                            headline,targetSeconds,maximumSeconds):List.of();
                     if(repairing){
                         input.put("previousDraft",draftToRewrite);
                         input.put("repairReason",repairFailure);
@@ -219,7 +220,7 @@ Return no other prose or edits. The first headline and teaser remain locked by J
                         break;
                 }
             }
-            throw new IllegalStateException("FRAMING_SCRIPT_VALIDATION_FAILED after "+attempts+
+            throw new IllegalStateException("FRAMING_SCRIPT_VALIDATION_FAILED after "+attemptHistory.size()+
                     " attempts; "+String.join(" | ",attemptHistory)+
                     (last==null?"":"; last="+last.getMessage()),last);
         }
@@ -249,21 +250,25 @@ Return no other prose or edits. The first headline and teaser remain locked by J
                 "required",List.of("replacements"),"additionalProperties",false);
     }
 
-    private static List<Integer> repairTargets(List<String>draft,String problem){
+    private static List<Integer> repairTargets(List<String>draft,String problem,String headline,
+            int targetSeconds,int maximumSeconds){
         String lower=problem==null?"":problem.toLowerCase(Locale.ROOT);
         Matcher indexed=Pattern.compile("segment (\\d+)").matcher(lower);
         if(indexed.find()){
             int segment=Integer.parseInt(indexed.group(1))-2;
             if(segment>=0&&segment<6)return List.of(segment);
         }
-        if(lower.contains("too short")||lower.contains("out of range")
-                ||lower.contains("65%")||lower.contains("repeated filler"))
-            return List.of(1,2,3,4,5);
-        if(lower.contains("too long")){
+        int total=Text.words(headline)+Text.words(TEASER)+draft.stream().mapToInt(Text::words).sum();
+        int selected=PoliticalFramingDurationPolicy.chooseSeconds(total,targetSeconds,maximumSeconds);
+        if(total>ScriptValidator.maxWords(selected)||lower.contains("too long")){
             List<Integer>order=new ArrayList<>(List.of(1,2,3,4,5));
             order.sort(Comparator.comparingInt((Integer i)->Text.words(draft.get(i))).reversed());
             return List.copyOf(order.subList(0,3));
         }
+        if(total<ScriptValidator.minWords(selected)||lower.contains("65%")
+                ||lower.contains("repeated filler"))return List.of(1,2,3,4,5);
+        // For less local editorial errors rewrite the analytical paragraphs,
+        // never the source-event recap unless its own span was identified.
         return List.of(1,2,3,4,5);
     }
 
