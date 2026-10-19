@@ -286,6 +286,14 @@ Return no other prose or edits. The first headline and teaser remain locked by J
                 List.of(publisher),hook);
     }
 
+    private static String normalizeQuote(String value){
+        if(value==null)return "";
+        return java.text.Normalizer.normalize(value,java.text.Normalizer.Form.NFKC)
+                .replace('\u2019','\'').replace('\u2018','\'')
+                .replaceAll("\\s+"," ").replaceAll("\\s+([,.;:!?])","$1")
+                .strip().toLowerCase(Locale.ROOT);
+    }
+
     public static void validate(NewsScript script,FactPackage facts,
             PoliticalFramingEvidenceBuilder.Evidence evidence,int targetSeconds)throws Exception{
         validate(script,facts,evidence,targetSeconds,false);
@@ -313,17 +321,29 @@ Return no other prose or edits. The first headline and teaser remain locked by J
                 .append(' ').append(facts.headline()).append(' ').append(facts.summary());
         for(FactClaim fact:facts.facts())supportedNumbers.append(' ').append(fact.statement());
         for(FactClaim fact:facts.disputedClaims())supportedNumbers.append(' ').append(fact.statement());
-        Matcher allowed=Pattern.compile("\\b\\d+(?:[.,]\\d+)?%?\\b").matcher(supportedNumbers);
+        // Include a trailing percent sign in the token. The old word-boundary regex
+        // silently dropped '%' and could conflate a percentage with a raw count.
+        Pattern numeric=Pattern.compile("(?<![\\p{L}\\p{N}_])\\d+(?:[.,]\\d+)?%?(?![\\p{L}\\p{N}_])");
+        Matcher allowed=numeric.matcher(supportedNumbers);
         Set<String>numbers=new HashSet<>();
         while(allowed.find())numbers.add(allowed.group());
-        Matcher used=Pattern.compile("\\b\\d+(?:[.,]\\d+)?%?\\b").matcher(script.narration());
-        while(used.find())if(!numbers.contains(used.group()))
-            throw new IllegalArgumentException("Unsupported numerical claim: "+used.group());
+        for(int i=0;i<script.segments().size();i++){
+            String narration=script.segments().get(i).narration();
+            Matcher used=numeric.matcher(narration);
+            while(used.find())if(!numbers.contains(used.group())){
+                String excerpt=narration.substring(Math.max(0,used.start()-36),
+                        Math.min(narration.length(),used.end()+36));
+                throw new IllegalArgumentException("Unsupported numerical claim: "+used.group()+
+                        " in segment "+i+" near: "+excerpt);
+            }
+        }
+        String canonicalArticle=normalizeQuote(supportedArticle);
         for(int i=2;i<script.segments().size();i++){
-            Matcher quotes=Pattern.compile("[\\\"“]([^\\\"”]{4,})[\\\"”]")
+            Matcher quotes=Pattern.compile("[\"“]([^\"”]{4,})[\"”]")
                     .matcher(script.segments().get(i).narration());
-            while(quotes.find())if(!supportedArticle.contains(quotes.group(1)))
-                throw new IllegalArgumentException("Quote not found in article: "+quotes.group(1));
+            while(quotes.find())if(!canonicalArticle.contains(normalizeQuote(quotes.group(1))))
+                throw new IllegalArgumentException("Quote not found in article in segment "+i+
+                        ": "+quotes.group(1));
         }
         if(script.sourceLabels().size()!=1||
                 !script.sourceLabels().contains(String.valueOf(article.get("publisher"))))
