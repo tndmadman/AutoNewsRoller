@@ -220,13 +220,28 @@ Return no other prose or edits. The first headline and teaser remain locked by J
                         break;
                 }
             }
-            throw new IllegalStateException("FRAMING_SCRIPT_VALIDATION_FAILED after "+attemptHistory.size()+
+            String terminal=classifyTerminalFailure(last);
+            throw new IllegalStateException(terminal+" after "+attemptHistory.size()+
                     " attempts; "+String.join(" | ",attemptHistory)+
                     (last==null?"":"; last="+last.getMessage()),last);
         }
         NewsScript script=assemble(facts,headline,publisher,body,targetSeconds);
         validate(script,facts,evidence,targetSeconds,true);
         return script;
+    }
+
+    private static String classifyTerminalFailure(Exception last){
+        String reason=last==null?"":String.valueOf(last.getMessage()).toLowerCase(Locale.ROOT);
+        if(last instanceof java.net.ConnectException||last instanceof java.net.http.HttpTimeoutException
+                ||reason.contains("ollama http")||reason.contains("ollama returned an empty response"))
+            return "FRAMING_OLLAMA_FAILURE";
+        if(reason.contains("ollama output hit its token limit"))
+            return "FRAMING_OLLAMA_OUTPUT_LIMIT";
+        if(reason.contains("identical malformed")||reason.contains("expected exactly six")
+                ||reason.contains("expected targeted")||reason.contains(" at offset ")
+                ||reason.contains("non-string or empty")||reason.contains("invalid targeted"))
+            return "FRAMING_SCRIPT_FORMAT_FAILED";
+        return "FRAMING_SCRIPT_VALIDATION_FAILED";
     }
 
     private static Map<String,Object> generationSchema(){
