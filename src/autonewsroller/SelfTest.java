@@ -1082,6 +1082,89 @@ public final class SelfTest {
                     &&expanded.narration().contains("The short supplied source does not prove partisan manipulation"),
                     "longer framing mode preserves detailed evidence limitations instead of truncating them");
         }finally{mock.stop(0);}
+
+        // Repro: the 30-word first draft must be EXPANDED by targeted edits,
+        // not condensed or blindly discarded. The mocked Ollama validates schema usage.
+        AtomicInteger shortCalls=new AtomicInteger();
+        AtomicInteger schemaChecks=new AtomicInteger();
+        HttpServer shortMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        shortMock.createContext("/generate",exchange->{
+            Map<String,Object>request=Json.object(Json.parse(new String(
+                    exchange.getRequestBody().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8)));
+            if(request.get("format") instanceof Map<?,?>)schemaChecks.incrementAndGet();
+            int call=shortCalls.incrementAndGet();
+            String responseText;
+            if(call==1){
+                responseText=Json.stringify(Map.of("segments",shortDraft));
+            }else{
+                Map<String,Object>controls=Json.object(Json.parse(
+                        String.valueOf(request.get("prompt")).substring(
+                                String.valueOf(request.get("prompt")).indexOf('{'))));
+                List<?>indices=(List<?>)controls.get("repairIndices");
+                List<Map<String,Object>>fixes=new ArrayList<>();
+                for(Object index:indices)fixes.add(Map.of("segmentIndex",index,
+                        "narration",longDraft.get(((Number)index).intValue())));
+                responseText=Json.stringify(Map.of("replacements",fixes));
+            }
+            byte[]body=Json.stringify(Map.of("response",responseText,"done_reason","stop"))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+        });
+        shortMock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-short-repair-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    shortMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+            NewsScript recovered=new PoliticalFramingScriptGenerator(client,4,180)
+                    .generate(facts,evidence,75,false);
+            ok(shortCalls.get()==2&&schemaChecks.get()==2,
+                    "short framing draft receives one schema-validated targeted repair");
+            ok(recovered.segments().get(2).narration().equals(shortDraft.get(0))
+                    &&recovered.segments().get(3).narration().equals(longDraft.get(1)),
+                    "short-draft repair preserves unaffected recap and expands analytical beats");
+        }finally{shortMock.stop(0);}
+
+        // Repro: the stray unsupported number zero is corrected only in its
+        // offending paragraph; other source-grounded analysis must survive.
+        List<String>numericDraft=new ArrayList<>(longDraft);
+        numericDraft.set(2,numericDraft.get(2)+" 0.");
+        AtomicInteger numericCalls=new AtomicInteger();
+        HttpServer numberMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        numberMock.createContext("/generate",exchange->{
+            int call=numericCalls.incrementAndGet();
+            String responseText=call==1?Json.stringify(Map.of("segments",numericDraft))
+                    :Json.stringify(Map.of("replacements",List.of(
+                            Map.of("segmentIndex",2,"narration",longDraft.get(2)))));
+            byte[]body=Json.stringify(Map.of("response",responseText,"done_reason","stop"))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+        });
+        numberMock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-number-repair-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    numberMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+            NewsScript fixed=new PoliticalFramingScriptGenerator(client,4,180)
+                    .generate(facts,evidence,75,false);
+            ok(numericCalls.get()==2&&fixed.segments().get(4).narration().equals(longDraft.get(2))
+                    &&fixed.segments().get(3).narration().equals(longDraft.get(1)),
+                    "unsupported zero triggers single-segment factual repair");
+        }finally{numberMock.stop(0);}
+
+        Article headlineOnly=new Article("only-headline","Fixture Gazette",
+                article.title(),article.url(),article.canonicalUrl(),now,now,"","politics",
+                "","","en",1,false);
+        StoryCluster limitedCluster=new StoryCluster("limited-framing",article.title(),
+                List.of(headlineOnly),Set.of(),"limited-framing-test");
+        var limitedEvidence=new PoliticalFramingEvidenceBuilder().build(limitedCluster,facts,political);
+        boolean limitedRejected=false;
+        try{new PoliticalFramingScriptGenerator(null,1).generate(facts,limitedEvidence,75,false);}
+        catch(IllegalStateException insufficient){
+            limitedRejected=insufficient.getMessage().contains("INSUFFICIENT_FRAMING_EVIDENCE");
+        }
+        ok(limitedRejected,"headline-only evidence reports an explicit insufficient-evidence result");
     }
 
     private void testPoliticalAnalysisQueue(List<Article>a)throws Exception{
