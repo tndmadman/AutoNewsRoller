@@ -170,7 +170,31 @@ Return one JSON object matching the repair schema and nothing else.
                             temperature,
                             repairTokenBudget(plan)
                     );
-                    current=applyReplacements(current,raw,fp,targetSeconds,plan);
+                    try{
+                        current=applyReplacements(current,raw,fp,targetSeconds,plan);
+                    }catch(IllegalArgumentException outOfRange){
+                        // A nearly correct response (for example 21 rather than 26-30
+                        // words) deserves one constrained correction IN THE SAME job.
+                        // Keep previously accepted segments untouched and reject a
+                        // second invalid replacement rather than silently accepting it.
+                        if(!String.valueOf(outOfRange.getMessage()).startsWith("Repair segment "))
+                            throw outOfRange;
+                        Map<String,Object>correction=new LinkedHashMap<>(input);
+                        correction.put("previousInvalidRepair",raw);
+                        correction.put("exactRepairError",outOfRange.getMessage());
+                        String corrected=ollama.generateJson(
+                                repairPrompt+"\nIMPORTANT: The previous repair was rejected for the precise word-count error in exactRepairError. "
+                                        +"Recount the COMPLETE replacement narration using whitespace-separated words. "
+                                        +"Keep every replacement strictly inside its requested minWords and maxWords. "
+                                        +"Do not modify any non-target segment.",
+                                Json.stringify(correction),
+                                repairSchema(plan.size()),
+                                0.08,
+                                repairTokenBudget(plan)
+                        );
+                        current=applyReplacements(current,corrected,fp,targetSeconds,plan);
+                        raw=corrected;
+                    }
                 }
 
                 String rawHash=Hashing.sha256(raw).substring(0,12);
