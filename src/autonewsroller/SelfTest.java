@@ -936,6 +936,17 @@ public final class SelfTest {
                 "retrying the failed pair resumes the framing review, not the completed news video");
         ok(((List<?>)automatic.snapshot().get("videos")).size()==1,
                 "framing retry creates no duplicate normal version");
+        Map<String,Object>retryReview=automatic.claim("updated-worker",Map.of());
+        ok(retryReview!=null&&"FRAMING_EXPOSURE".equals(retryReview.get("productionMode")),
+                "manual retry claims only the failed narrative review");
+        automatic.progress(cluster.id,new WorkerState(1,1,PipelineStage.SCRIPT,
+                "Generating narrative review narration",Instant.now()),"updated-worker",
+                String.valueOf(retryReview.get("claimId")));
+        automatic.fail(cluster.id,"FRAMING_SCRIPT_VALIDATION_FAILED after 5 attempts",
+                "updated-worker",String.valueOf(retryReview.get("claimId")));
+        ok("SCRIPT_FAILURE".equals(automatic.storyDetail(cluster.id).get("failureType"))
+                &&((List<?>)automatic.snapshot().get("videos")).size()==1,
+                "script-generation failure is correctly labeled and the normal video stays archived");
 
         // Explicit exposure action remains a one-video choice, with no standard prelude.
         Path onlyState=dir.resolve("framing-only.json");
