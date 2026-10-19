@@ -675,14 +675,19 @@ public final class CommandCenterStore {
         ));
         m.remove("assignedWorker");m.remove("jobStartedAt");clearLease(m);
 
-        if(failures<=failureMaxRetries){
+        // Deterministic evidence, JSON/validation exhaustion and stale snapshots cannot
+        // be repaired by starting the entire video job repeatedly. Manual retry remains available.
+        boolean nonTransient=nonTransientFailure(message);
+        if(!nonTransient&&failures<=failureMaxRetries){
             Instant retryAt=now.plusSeconds(failureRetryDelaySeconds);
             m.put("status","QUEUED");m.put("stage","QUEUED");m.put("progress",15);m.put("queuedAt",now.toString());
             m.put("retryNotBefore",retryAt.toString());
             m.put("detail","Production failed; automatic retry "+failures+"/"+failureMaxRetries+" queued"+(failureRetryDelaySeconds>0?" in "+failureRetryDelaySeconds+"s":""));
         }else{
             m.put("status","FAILED");m.put("stage","FAILED");m.put("progress",0);m.remove("retryNotBefore");
-            m.put("detail","Production failed after "+failureMaxRetries+" automatic retries; manual action required");
+            m.put("detail",nonTransient
+                    ?"Non-transient production error; manual retry or new source evidence required"
+                    :"Production failed after "+failureMaxRetries+" automatic retries; manual action required");
             if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE&&
                     String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("FRAMING_"))
                 m.put("pairedVideoState","FRAMING_FAILED");
@@ -1032,8 +1037,24 @@ public final class CommandCenterStore {
         Object raw=target.get("productionAttempts");
         if(raw instanceof List<?> list&&list.size()>20)target.put("productionAttempts",new ArrayList<>(list.subList(list.size()-20,list.size())));
     }
+    private static boolean nonTransientFailure(String message){
+        String lower=message==null?"":message.toLowerCase(Locale.ROOT);
+        return lower.contains("framing_script_validation_failed")
+                ||lower.contains("insufficient_framing_evidence")
+                ||lower.contains("stale_framing_evidence")
+                ||lower.contains("locked political framing opening changed");
+    }
     private static String failureTypeForStage(String stage,String message){
         String lower=message==null?"":message.toLowerCase(Locale.ROOT);
+        if(lower.contains("framing_script_validation_failed")
+                ||lower.contains("script validation failed")
+                ||lower.contains("repair segment ")
+                ||lower.contains("unsupported numerical claim")
+                ||lower.contains("expected exactly six analysis segments"))return "SCRIPT_FAILURE";
+        if(lower.contains("insufficient_framing_evidence"))return "EVIDENCE_FAILURE";
+        if(lower.contains("stale_framing_evidence"))return "STALE_EVIDENCE_FAILURE";
+        if(lower.contains("ollama http")||lower.contains("ollama output hit")
+                ||lower.contains("ollama returned an empty response"))return "OLLAMA_FAILURE";
         if(lower.contains("upload")||lower.contains("/video"))return "UPLOAD_FAILURE";
         return switch(stage==null?"":stage.toUpperCase(Locale.ROOT)){
             case "VERIFY"->"VERIFICATION_FAILURE";
