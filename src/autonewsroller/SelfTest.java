@@ -1187,7 +1187,7 @@ public final class SelfTest {
                 boolean safelyRejected=false;
                 try{new PoliticalFramingScriptGenerator(client,5,180).generate(facts,evidence,75,false);}
                 catch(IllegalStateException failure){
-                    safelyRejected=failure.getMessage().contains("FRAMING_SCRIPT_VALIDATION_FAILED");
+                    safelyRejected=failure.getMessage().contains("FRAMING_SCRIPT_FORMAT_FAILED");
                 }
                 ok(safelyRejected&&brokenCalls.get()==2,
                         "repeated malformed/five-or-seven segment JSON is rejected after two identical responses");
