@@ -53,14 +53,13 @@ public final class PoliticalFramingScriptGenerator {
                     int analyticalWords=Math.max(10,(targetBodyWords-recapWords)/5);
                     Map<String,Object>input=new LinkedHashMap<>();
                     Map<String,Object>grounding=new LinkedHashMap<>();
-                    grounding.put("headline",facts.headline());
-                    grounding.put("summary",facts.summary());
-                    // Avoid flooding a one-article framing task with dozens of extracted event claims.
-                    // Full evidence is retained in the fact package and checked during validation.
-                    grounding.put("facts",facts.facts().stream().limit(12).map(FactClaim::toMap).toList());
-                    grounding.put("disputedClaims",facts.disputedClaims().stream().limit(8).map(FactClaim::toMap).toList());
-                    grounding.put("independentSourceCount",facts.independentSourceCount());
-                    grounding.put("authoritativePrimaryAccepted",facts.authoritativePrimaryAccepted());
+                    // Factual scope is precisely the selected article. Claims extracted
+                    // from other members of the cluster must not leak into an analysis
+                    // presented as a review of this single article.
+                    grounding.put("headline",headline);
+                    grounding.put("publisher",publisher);
+                    grounding.put("articleContentFingerprint",article.get("articleContentFingerprint"));
+                    grounding.put("availableTextScope",article.get("availableTextScope"));
                     input.put("factualGrounding",grounding);
                     input.put("articleEvidence",evidence.toMap());
                     int ceiling=Math.max(targetSeconds,maximumSeconds);
@@ -337,10 +336,9 @@ Return no other prose or edits. The first headline and teaser remain locked by J
         Map<String,Object>article=evidence.articles().get(0);
         String supportedArticle=String.valueOf(article.get("headline"))+" "+
                 article.get("description")+" "+article.get("bodyText");
-        StringBuilder supportedNumbers=new StringBuilder(supportedArticle)
-                .append(' ').append(facts.headline()).append(' ').append(facts.summary());
-        for(FactClaim fact:facts.facts())supportedNumbers.append(' ').append(fact.statement());
-        for(FactClaim fact:facts.disputedClaims())supportedNumbers.append(' ').append(fact.statement());
+        // Numeric or causal support must come from the article being reviewed;
+        // corroborating publishers are NOT the framing evidence for this video.
+        StringBuilder supportedNumbers=new StringBuilder(supportedArticle);
         // Include a trailing percent sign in the token. The old word-boundary regex
         // silently dropped '%' and could conflate a percentage with a raw count.
         Pattern numeric=Pattern.compile("(?<![\\p{L}\\p{N}_])\\d+(?:[.,]\\d+)?%?(?![\\p{L}\\p{N}_])");
