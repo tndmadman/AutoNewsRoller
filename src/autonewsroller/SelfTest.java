@@ -43,6 +43,7 @@ public final class SelfTest {
         testCommandCenterLeaseRecovery(a);
         testPublisherBiasRegistry(root);
         testPoliticalAnalysisQueue(a);
+        testEnrichedFramingSnapshot();
         testPoliticalExposureMode();
         testPairedSequentialVideoProduction();
         testPoliticalExposureLengthRecovery();
@@ -1298,6 +1299,83 @@ public final class SelfTest {
         store.politicalAnalysisComplete(cluster.id,analysis,"analysis-worker");
         Map<String,Object>done=store.storyDetail(cluster.id);
         ok("COMPLETE".equals(done.get("biasAnalysisStatus"))&&Json.object(done.get("framingAnalysis")).get("overallClassification").equals("center"),"political framing result persists in command center state");
+    }
+
+    private void testEnrichedFramingSnapshot()throws Exception{
+        Instant now=Instant.now();
+        Article rss=new Article("enriched-article","Fixture Politics",
+                "Senate debates new election proposal",
+                "https://fixture.example/election","https://fixture.example/election",
+                now,now,"","politics","Lawmakers debated a proposal.","","en",1,false);
+        StoryCluster cluster=new StoryCluster("enriched-story",rss.title(),List.of(rss),
+                Set.of("Senate"),"unchanged-identity");
+        FactPackage facts=new SourceVerifier().verify(cluster,2).factPackage();
+        NewsPipeline.Candidate initial=new NewsPipeline.Candidate(cluster,facts,.8);
+        var discoveryItem=new NewsPipeline.DiscoveryItem(cluster,facts,false,"test",.8,false);
+        var scan=new NewsPipeline.DiscoveryResult(List.of(discoveryItem),1,1,0,1,1,1,1,now);
+        Path dir=Files.createTempDirectory("framing-atomic-evidence-");
+        CommandCenterStore store=new CommandCenterStore(dir.resolve("state.json"),
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82);
+        store.applyDiscovery(scan);
+        Map<String,Object>job=store.claim("analysis-worker",Map.of());
+        ok("POLITICAL_ANALYSIS".equals(job.get("jobType")),
+                "enrichment fixture claims a political-analysis job");
+        String originalHash=String.valueOf(job.get("analysisInputFingerprint"));
+        Article fetched=new Article(rss.id(),rss.publisher(),rss.title(),rss.url(),rss.canonicalUrl(),
+                rss.publishedAt(),rss.discoveredAt(),rss.author(),rss.category(),rss.description(),
+                "The full source discusses the proposal and describes proposed changes to voting procedures.",
+                rss.language(),rss.sourceTrustTier(),rss.authoritativePrimary());
+        StoryCluster enrichedCluster=new StoryCluster(cluster.id,cluster.topic,List.of(fetched),
+                cluster.entities,cluster.fingerprint);
+        NewsPipeline.Candidate enriched=new NewsPipeline.Candidate(enrichedCluster,facts,.8);
+        Map<String,Object>analysis=Map.of("model","fixture","overallClassification","uncertain",
+                "summary","Insufficient textual basis for a partisan verdict",
+                "articles",List.of(Map.of("id",rss.id(),"classification","uncertain")));
+        store.politicalAnalysisComplete(cluster.id,analysis,"analysis-worker",enriched,originalHash);
+        Map<String,Object>saved=store.storyDetail(cluster.id);
+        String updatedHash=String.valueOf(saved.get("biasAnalysisInputHash"));
+        NewsPipeline.Candidate persisted=NewsPipeline.Candidate.fromMap(Json.object(saved.get("candidate")));
+        ok(!originalHash.equals(updatedHash)
+                &&updatedHash.equals(saved.get("framingInputHash"))
+                &&"COMPLETE".equals(saved.get("biasAnalysisStatus"))
+                &&persisted.cluster().articles.get(0).bodyText().equals(fetched.bodyText()),
+                "enriched source, political analysis, and matching fingerprints commit together");
+
+        store.applyDiscovery(scan);
+        Map<String,Object>rescan=store.storyDetail(cluster.id);
+        ok(updatedHash.equals(rescan.get("biasAnalysisInputHash"))
+                &&"COMPLETE".equals(rescan.get("biasAnalysisStatus"))
+                &&NewsPipeline.Candidate.fromMap(Json.object(rescan.get("candidate")))
+                    .cluster().articles.get(0).bodyText().equals(fetched.bodyText()),
+                "repeated RSS scans retain unchanged enriched article evidence and prior analysis");
+
+        Article revised=new Article(rss.id(),rss.publisher(),rss.title(),rss.url(),rss.canonicalUrl(),
+                now,now,"",rss.category(),"Source issued a revised description.","","en",1,false);
+        StoryCluster changed=new StoryCluster(cluster.id,cluster.topic,List.of(revised),
+                cluster.entities,cluster.fingerprint);
+        FactPackage changedFacts=new SourceVerifier().verify(changed,2).factPackage();
+        var newItem=new NewsPipeline.DiscoveryItem(changed,changedFacts,false,"test",.8,false);
+        store.applyDiscovery(new NewsPipeline.DiscoveryResult(List.of(newItem),1,1,0,1,1,1,1,now));
+        Map<String,Object>invalidated=store.storyDetail(cluster.id);
+        ok(!updatedHash.equals(invalidated.get("biasAnalysisInputHash"))
+                &&"QUEUED".equals(invalidated.get("biasAnalysisStatus"))
+                &&NewsPipeline.Candidate.fromMap(Json.object(invalidated.get("candidate")))
+                    .cluster().articles.get(0).bodyText().isBlank(),
+                "changed article description invalidates old analysis and cannot retain stale body");
+
+        Map<String,Object>newJob=store.claim("analysis-worker",Map.of());
+        ok("POLITICAL_ANALYSIS".equals(newJob.get("jobType")),
+                "updated article can be re-analyzed against its new fingerprint");
+        boolean staleRejected=false;
+        try{store.politicalAnalysisComplete(cluster.id,analysis,"analysis-worker",enriched,originalHash);}
+        catch(IllegalStateException stale){staleRejected=stale.getMessage().contains("STALE_FRAMING_EVIDENCE");}
+        ok(staleRejected,"outdated worker results cannot overwrite a newer article version");
+
+        NewsPipeline.Candidate replacement=NewsPipeline.Candidate.fromMap(Json.object(newJob.get("candidate")));
+        store.politicalAnalysisComplete(cluster.id,analysis,"analysis-worker",replacement,
+                String.valueOf(newJob.get("analysisInputFingerprint")));
+        ok("COMPLETE".equals(store.storyDetail(cluster.id).get("biasAnalysisStatus")),
+                "newly verified snapshot can finish analysis after a source-content change");
     }
 
     private void testPoliticalVisualGraphics(Path root,List<Article>a)throws Exception{
