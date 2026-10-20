@@ -127,12 +127,13 @@ public final class CommandCenterStore {
             m.put("category",item.cluster().articles.isEmpty()?"general":item.cluster().articles.get(0).category());
             m.put("sourceUrls",item.cluster().articles.stream().map(Article::url).distinct().toList());
             m.put("latestPublishedAt",item.cluster().articles.stream().map(Article::publishedAt).filter(Objects::nonNull).max(Comparator.naturalOrder()).map(Instant::toString).orElse(""));
-            m.put("candidate",item.candidate().toMap());
+            NewsPipeline.Candidate stable=retainEnrichedEvidence(item.candidate(),m.get("candidate"));
+            m.put("candidate",stable.toMap());
             m.put("sourceMix",bias.mix(item.cluster().publishers()));
             boolean politicalCandidate=PoliticalFramingAnalyzer.likelyPolitical(item.cluster())||
                     Boolean.TRUE.equals(m.get("manualFramingRequested"));
             m.put("politicalCandidate",politicalCandidate);
-            String framingInputHash=Hashing.sha256(item.cluster().articles.stream().map(a->a.id()+"|"+a.title()+"|"+a.description()+"|"+a.bodyText()).sorted().reduce("",(a,b)->a+"|"+b));
+            String framingInputHash=framingFingerprint(stable.cluster());
             m.put("biasAnalysisInputHash",framingInputHash);
             String analyzedInputHash=String.valueOf(m.getOrDefault("framingInputHash",""));
             if(politicalCandidate&&!framingInputHash.equals(analyzedInputHash)){
@@ -382,6 +383,7 @@ public final class CommandCenterStore {
         persistQuiet();emit("story",publicStory(m));
         Map<String,Object>job=new LinkedHashMap<>();
         job.put("jobType","POLITICAL_ANALYSIS");job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
+        job.put("analysisInputFingerprint",m.get("biasClaimInputHash"));
         return job;
     }
 
@@ -436,6 +438,56 @@ public final class CommandCenterStore {
                 .equals(String.valueOf(m.getOrDefault("biasAnalysisInputHash","")))?"COMPLETE":"QUEUED");m.put("biasAnalyzedAt",Instant.now().toString());m.put("biasAnalyzedBy",workerId);
         m.remove("biasAnalysisError");m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
         persistQuiet();emit("story",publicStory(m));
+    }
+
+    /**
+     * Commit analysis and its exact article snapshot together. A stale worker must
+     * never overwrite the controller's newer candidate or invalidate its fingerprint.
+     */
+    public synchronized void politicalAnalysisComplete(String storyId,Map<String,Object>result,
+            String workerId,NewsPipeline.Candidate prepared,String claimedFingerprint){
+        Map<String,Object>m=requireStory(storyId);
+        if(!"ANALYZING".equals(m.get("biasAnalysisStatus"))
+                ||!workerId.equals(String.valueOf(m.getOrDefault("biasAssignedWorker","")))
+                ||claimedFingerprint.isBlank()
+                ||!claimedFingerprint.equals(String.valueOf(m.getOrDefault("biasClaimInputHash","")))
+                ||!claimedFingerprint.equals(String.valueOf(m.getOrDefault("biasAnalysisInputHash",""))))
+            throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Political analysis claim superseded");
+        if(!(m.get("candidate") instanceof Map<?,?>))
+            throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Missing original analysis candidate");
+        NewsPipeline.Candidate original=NewsPipeline.Candidate.fromMap(Json.object(m.get("candidate")));
+        StoryCluster before=original.cluster(),after=prepared.cluster();
+        if(!before.id.equals(after.id)||!before.topic.equals(after.topic)
+                ||!before.fingerprint.equals(after.fingerprint)
+                ||before.articles.size()!=after.articles.size())
+            throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Analysis changed story identity");
+        for(int i=0;i<before.articles.size();i++){
+            Article prior=before.articles.get(i),next=after.articles.get(i);
+            Map<String,Object>oldFields=new LinkedHashMap<>(prior.toMap());
+            Map<String,Object>newFields=new LinkedHashMap<>(next.toMap());
+            oldFields.remove("bodyText");newFields.remove("bodyText");
+            if(!oldFields.equals(newFields)
+                    ||(!prior.bodyText().isBlank()&&!prior.bodyText().equals(next.bodyText())))
+                throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Analysis substituted article content");
+        }
+        String revised=framingFingerprint(after);
+        m.put("candidate",prepared.toMap());
+        m.put("biasAnalysisInputHash",revised);
+        m.put("framingInputHash",revised);
+        m.put("framingAnalysis",deepCopyMap(result));
+        m.put("biasAnalysisStatus","COMPLETE");
+        m.put("biasAnalyzedAt",Instant.now().toString());
+        m.put("biasAnalyzedBy",workerId);
+        m.remove("biasClaimInputHash");m.remove("biasAnalysisError");
+        m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
+        persistQuiet();emit("story",publicStory(m));
+    }
+
+    public synchronized void politicalAnalysisFail(String storyId,String error,String workerId){
+        Map<String,Object>m=stories.get(storyId);
+        if(m==null||!"ANALYZING".equals(m.get("biasAnalysisStatus"))
+                ||!workerId.equals(String.valueOf(m.getOrDefault("biasAssignedWorker",""))))return;
+        politicalAnalysisFail(storyId,error);
     }
 
     public synchronized void politicalAnalysisFail(String storyId,String error){
@@ -1037,6 +1089,41 @@ public final class CommandCenterStore {
         Object raw=target.get("productionAttempts");
         if(raw instanceof List<?> list&&list.size()>20)target.put("productionAttempts",new ArrayList<>(list.subList(list.size()-20,list.size())));
     }
+    private static String framingFingerprint(StoryCluster cluster){
+        return Hashing.sha256(cluster.articles.stream().map(a->
+                a.id()+"|"+a.title()+"|"+a.description()+"|"+a.bodyText())
+                .sorted().reduce("",(a,b)->a+"|"+b));
+    }
+
+    /** Preserve previously fetched article bodies across routine RSS rescans,
+     * but invalidate them when the publisher, headline, URL, or description changes. */
+    private static NewsPipeline.Candidate retainEnrichedEvidence(NewsPipeline.Candidate current,Object saved){
+        if(!(saved instanceof Map<?,?>))return current;
+        NewsPipeline.Candidate previous;
+        try{previous=NewsPipeline.Candidate.fromMap(Json.object(saved));}
+        catch(RuntimeException e){return current;}
+        Map<String,Article>byId=new HashMap<>();
+        for(Article a:previous.cluster().articles)byId.put(a.id(),a);
+        List<Article>retained=new ArrayList<>();
+        boolean changed=false;
+        for(Article a:current.cluster().articles){
+            Article old=byId.get(a.id());
+            if(old!=null&&a.bodyText().isBlank()&&!old.bodyText().isBlank()
+                    &&a.publisher().equals(old.publisher())&&a.title().equals(old.title())
+                    &&a.description().equals(old.description())&&a.url().equals(old.url())
+                    &&a.canonicalUrl().equals(old.canonicalUrl())){
+                retained.add(new Article(a.id(),a.publisher(),a.title(),a.url(),a.canonicalUrl(),
+                        a.publishedAt(),a.discoveredAt(),a.author(),a.category(),a.description(),
+                        old.bodyText(),a.language(),a.sourceTrustTier(),a.authoritativePrimary()));
+                changed=true;
+            }else retained.add(a);
+        }
+        if(!changed)return current;
+        StoryCluster cluster=current.cluster();
+        return new NewsPipeline.Candidate(new StoryCluster(cluster.id,cluster.topic,retained,
+                cluster.entities,cluster.fingerprint),current.factPackage(),current.score());
+    }
+
     private static boolean nonTransientFailure(String message){
         String lower=message==null?"":message.toLowerCase(Locale.ROOT);
         return lower.contains("framing_script_validation_failed")
