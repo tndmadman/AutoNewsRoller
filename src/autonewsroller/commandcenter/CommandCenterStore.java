@@ -2,6 +2,7 @@ package autonewsroller.commandcenter;
 
 import autonewsroller.config.SourceConfig;
 import autonewsroller.model.Article;
+import autonewsroller.model.StoryCluster;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.NewsPipeline;
 import autonewsroller.orchestration.ProductionMode;
