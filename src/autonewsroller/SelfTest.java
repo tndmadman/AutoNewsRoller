@@ -1288,6 +1288,37 @@ public final class SelfTest {
             }finally{groundingMock.stop(0);}
         }
 
+        // Numbers from corroborating outlets are not source evidence for a review
+        // of ONE article, even if the upstream fact package contains them.
+        FactPackage crossOutletFacts=new FactPackage(facts.storyId(),facts.headline(),
+                "A separate publisher reports 47 votes.",facts.facts(),facts.disputedClaims(),
+                facts.sources(),facts.sourceCount(),facts.independentSourceCount(),
+                facts.confidence(),facts.authoritativePrimaryAccepted());
+        List<String>foreignNumeric=new ArrayList<>(longDraft);
+        foreignNumeric.set(2,longDraft.get(2)+" The measure received 47 votes.");
+        AtomicInteger foreignCalls=new AtomicInteger();
+        HttpServer sourceMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        sourceMock.createContext("/generate",exchange->{
+            int call=foreignCalls.incrementAndGet();
+            String responseText=call==1?Json.stringify(Map.of("segments",foreignNumeric))
+                    :Json.stringify(Map.of("replacements",List.of(
+                            Map.of("segmentIndex",2,"narration",longDraft.get(2)))));
+            byte[]body=Json.stringify(Map.of("response",responseText,"done_reason","stop"))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+        });
+        sourceMock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-source-boundary-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    sourceMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+            NewsScript fixed=new PoliticalFramingScriptGenerator(client,4,180)
+                    .generate(crossOutletFacts,evidence,75,false);
+            ok(foreignCalls.get()==2&&!fixed.narration().contains("47 votes"),
+                    "numerical facts from another publisher cannot license claims about the selected article");
+        }finally{sourceMock.stop(0);}
+
         Article headlineOnly=new Article("only-headline","Fixture Gazette",
                 article.title(),article.url(),article.canonicalUrl(),now,now,"","politics",
                 "","","en",1,false);
