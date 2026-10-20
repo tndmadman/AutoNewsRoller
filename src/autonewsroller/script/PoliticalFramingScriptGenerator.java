@@ -365,6 +365,37 @@ Return no other prose or edits. The first headline and teaser remain locked by J
                 throw new IllegalArgumentException("Quote not found in article in segment "+i+
                         ": "+quotes.group(1));
         }
+        // Categorical claims that a publisher intentionally excluded facts are
+        // not demonstrable from a fetched excerpt or from an LLM interpretation.
+        // Inspect just the six analysis beats, never the verbatim locked headline.
+        Pattern unsubstantiatedOmission=Pattern.compile(
+                "\\b(?:the (?:article|report|publisher|writer|outlet|source)\\s+"+
+                "(?:deliberately |intentionally )?(?:omits?|hides?|conceals?|suppresses?|"+
+                "excludes?|ignores?|leaves? out|fails? to mention)|"+
+                "(?:key|crucial) (?:facts?|context) (?:were|was) (?:omitted|hidden))\\b",
+                Pattern.CASE_INSENSITIVE);
+        Pattern strongCausal=Pattern.compile(
+                "\\b(?:caused|triggered|led to|resulted in|was due to|is due to|sparked)\\b",
+                Pattern.CASE_INSENSITIVE);
+        Pattern qualifiedCausal=Pattern.compile(
+                "\\b(?:could|might|may|possibly|potentially|if|alleged|allegedly|claimed|"+
+                "claims|appears|suggests|not|never|without|unproven|unsupported|would)\\b",
+                Pattern.CASE_INSENSITIVE);
+        String causalEvidence=normalizeQuote(supportedNumbers.toString());
+        for(int i=2;i<script.segments().size();i++){
+            String paragraph=script.segments().get(i).narration();
+            if(unsubstantiatedOmission.matcher(paragraph).find())
+                throw new IllegalArgumentException("Unsupported article-omission assertion in segment "+i+
+                        "; do not claim intentionally hidden or omitted content without source proof");
+            for(String sentence:Text.sentences(paragraph)){
+                Matcher causal=strongCausal.matcher(sentence);
+                if(causal.find()&&!qualifiedCausal.matcher(sentence).find()
+                        &&!causalEvidence.contains(normalizeQuote(sentence))){
+                    throw new IllegalArgumentException("Unsupported causal claim in segment "+i+
+                            ": "+sentence.substring(0,Math.min(140,sentence.length())));
+                }
+            }
+        }
         if(script.sourceLabels().size()!=1||
                 !script.sourceLabels().contains(String.valueOf(article.get("publisher"))))
             throw new IllegalArgumentException("One attributed article required; cross-publisher narration forbidden");
