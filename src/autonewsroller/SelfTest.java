@@ -44,6 +44,7 @@ public final class SelfTest {
         testPublisherBiasRegistry(root);
         testPoliticalAnalysisQueue(a);
         testEnrichedFramingSnapshot();
+        testSelectedArticleEnrichment();
         testPoliticalExposureMode();
         testPairedSequentialVideoProduction();
         testPoliticalExposureLengthRecovery();
@@ -1407,6 +1408,50 @@ public final class SelfTest {
                 String.valueOf(newJob.get("analysisInputFingerprint")));
         ok("COMPLETE".equals(store.storyDetail(cluster.id).get("biasAnalysisStatus")),
                 "newly verified snapshot can finish analysis after a source-content change");
+    }
+
+    private void testSelectedArticleEnrichment()throws Exception{
+        HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        AtomicInteger fetches=new AtomicInteger();
+        server.createContext("/article",exchange->{
+            fetches.incrementAndGet();
+            byte[]html=("<html><body><main><p>"+
+                    "The original article describes the proposed voting procedure and the lawmakers who discussed it."+
+                    "</p><p>The reporting distinguishes committee debate from an enacted law.</p>"+
+                    "</main></body></html>").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type","text/html; charset=UTF-8");
+            exchange.sendResponseHeaders(200,html.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(html);}
+        });
+        server.start();
+        try{
+            Instant now=Instant.now();
+            String url="http://127.0.0.1:"+server.getAddress().getPort()+"/article";
+            Article unselected=new Article("alternate","Another Publisher","Different angle",
+                    url,url,now,now,"","politics","Unrelated article text.","","en",2,false);
+            Article primary=new Article("selected","Fixture Publisher","Senate debates new procedures",
+                    url,url,now,now,"","politics","Senate discusses procedural reform.","","en",1,false);
+            StoryCluster cluster=new StoryCluster("enrich-selection",primary.title(),
+                    List.of(unselected,primary),Set.of(),"fixed");
+            Path scratch=Files.createTempDirectory("framing-select-fetch-");
+            NewsConfig cfg=NewsConfig.load(scratch);
+            NewsPipeline pipeline=new NewsPipeline(scratch,cfg,scratch.resolve("batch"));
+            StoryCluster enriched=pipeline.enrichForFraming(cluster);
+            ok(fetches.get()==1&&enriched.articles.get(0).bodyText().isBlank()
+                    &&enriched.articles.get(1).bodyText().contains("The original article"),
+                    "political analysis fetches only the selected article, not unrelated outlets");
+            StoryCluster unchanged=pipeline.enrichForFraming(enriched);
+            ok(fetches.get()==1&&unchanged.articles.get(1).bodyText().equals(
+                    enriched.articles.get(1).bodyText()),
+                    "already enriched article evidence is not fetched a second time");
+            Article unavailable=new Article(primary.id(),primary.publisher(),primary.title(),
+                    "invalid://article","invalid://article",now,now,"","politics",
+                    primary.description(),"","en",1,false);
+            StoryCluster fallback=new StoryCluster("enrich-fallback",unavailable.title(),
+                    List.of(unavailable),Set.of(),"fixed");
+            ok(pipeline.enrichForFraming(fallback).articles.get(0).bodyText().isBlank(),
+                    "inaccessible article returns unchanged headline/description evidence without inventing text");
+        }finally{server.stop(0);}
     }
 
     private void testPoliticalVisualGraphics(Path root,List<Article>a)throws Exception{
