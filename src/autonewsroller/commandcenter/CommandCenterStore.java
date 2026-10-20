@@ -488,6 +488,17 @@ public final class CommandCenterStore {
         Map<String,Object>m=stories.get(storyId);
         if(m==null||!"ANALYZING".equals(m.get("biasAnalysisStatus"))
                 ||!workerId.equals(String.valueOf(m.getOrDefault("biasAssignedWorker",""))))return;
+        // A scan can update RSS content while the worker is fetching or analyzing.
+        // The stale worker's eventual failure must not suppress analysis of that newer text.
+        if(!Objects.equals(m.get("biasClaimInputHash"),m.get("biasAnalysisInputHash"))){
+            m.put("biasAnalysisStatus","QUEUED");
+            m.put("biasAnalysisQueuedAt",Instant.now().toString());
+            m.put("biasAnalysisError","Old analysis superseded by updated article content");
+            m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
+            m.remove("biasClaimInputHash");
+            persistQuiet();emit("story",publicStory(m));
+            return;
+        }
         politicalAnalysisFail(storyId,error);
     }
 
