@@ -211,10 +211,21 @@ public final class RemoteWorker {
     }
     private void runPoliticalAnalysis(Map<String,Object>job)throws Exception{
         NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
+        String jobId=String.valueOf(job.get("jobId"));
+        String claimedHash=String.valueOf(job.getOrDefault("analysisInputFingerprint",""));
+        if(claimedHash.isBlank())throw new IllegalStateException("Missing political analysis input fingerprint");
+        // Fetch the selected article once, BEFORE computing the analysis.
+        // Submit the enriched candidate and analysis in one controller transaction,
+        // so the later video worker sees precisely the version being analyzed.
+        NewsPipeline preparation=new NewsPipeline(root,cfg,
+                root.resolve("output/remote_worker/analysis_"+safeName(jobId)));
+        NewsPipeline.Candidate prepared=new NewsPipeline.Candidate(
+                preparation.enrichForFraming(candidate.cluster()),candidate.factPackage(),candidate.score());
         PoliticalFramingAnalyzer analyzer=new PoliticalFramingAnalyzer(root,cfg);
-        Map<String,Object> result=analyzer.analyze(candidate.cluster());
-        post("/api/jobs/"+enc(String.valueOf(job.get("jobId")))+"/bias-complete",
-                Map.of("workerId",workerId,"result",result));
+        Map<String,Object> result=analyzer.analyze(prepared.cluster());
+        post("/api/jobs/"+enc(jobId)+"/bias-complete",
+                Map.of("workerId",workerId,"result",result,
+                        "candidate",prepared.toMap(),"analysisInputFingerprint",claimedHash));
         event("job-finish",Map.of("jobId",String.valueOf(job.get("jobId")),"result","COMPLETE","stage","POLITICAL_ANALYSIS"));
     }
     private Map<String,Object> uploadVideo(String jobId,String claimId,Path file)throws Exception{
