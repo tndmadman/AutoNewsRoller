@@ -566,6 +566,31 @@ public final class NewsPipeline {
 
     public void rejected(int worker,int slot,String detail){events.emit(worker,slot,PipelineStage.REJECTED,detail);logs.worker(worker,"slot="+slot+" rejected "+detail);}
 
+    /**
+     * Enrich the attributed article before political analysis is computed.
+     * Only the selected article can be fetched: other outlets must not replace
+     * the text whose framing will be reviewed. The controller atomically stores
+     * this revised cluster and its source-content fingerprint on completion.
+     */
+    public StoryCluster enrichForFraming(StoryCluster original){
+        int selected=-1;
+        for(int i=0;i<original.articles.size();i++){
+            Article a=original.articles.get(i);
+            if(a.title().isBlank()||a.publisher().isBlank()||a.url().isBlank())continue;
+            if(selected<0)selected=i;
+            if(a.title().equalsIgnoreCase(original.topic)){selected=i;break;}
+        }
+        if(selected<0)return original;
+        Article current=original.articles.get(selected);
+        StoryCluster single=new StoryCluster(original.id,original.topic,List.of(current),
+                original.entities,original.fingerprint);
+        Article enriched=enrichForProduction(single).articles.get(0);
+        if(enriched.equals(current))return original;
+        List<Article>revised=new ArrayList<>(original.articles);
+        revised.set(selected,enriched);
+        return new StoryCluster(original.id,original.topic,revised,original.entities,original.fingerprint);
+    }
+
     private StoryCluster enrichForProduction(StoryCluster original){
         if(!cfg.getBool("articleEnrichmentEnabled",true))return original;
 
