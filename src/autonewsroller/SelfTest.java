@@ -1256,6 +1256,37 @@ public final class SelfTest {
                 &&clippedEvidence.contentFingerprint()!=null,
                 "evidence truncation remains explicit and fingerprints preserve full source integrity");
 
+
+        for(String unsupported:List.of(
+                "The publisher deliberately hides crucial context from readers.",
+                "The debate triggered an election crisis.")){
+            List<String>unsafe=new ArrayList<>(longDraft);
+            unsafe.set(2,longDraft.get(2)+" "+unsupported);
+            AtomicInteger repairs=new AtomicInteger();
+            HttpServer groundingMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+            groundingMock.createContext("/generate",exchange->{
+                int call=repairs.incrementAndGet();
+                String responseText=call==1?Json.stringify(Map.of("segments",unsafe))
+                        :Json.stringify(Map.of("replacements",List.of(
+                                Map.of("segmentIndex",2,"narration",longDraft.get(2)))));
+                byte[]body=Json.stringify(Map.of("response",responseText,"done_reason","stop"))
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200,body.length);
+                try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+            });
+            groundingMock.start();
+            try{
+                Path scratch=Files.createTempDirectory("framing-causal-omission-");
+                OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                        groundingMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+                NewsScript result=new PoliticalFramingScriptGenerator(client,4,180)
+                        .generate(facts,evidence,75,false);
+                ok(repairs.get()==2&&!result.narration().contains(unsupported)
+                        &&result.segments().get(4).narration().equals(longDraft.get(2)),
+                        "fabricated omission or unsupported causal claim receives a targeted repair");
+            }finally{groundingMock.stop(0);}
+        }
+
         Article headlineOnly=new Article("only-headline","Fixture Gazette",
                 article.title(),article.url(),article.canonicalUrl(),now,now,"","politics",
                 "","","en",1,false);
