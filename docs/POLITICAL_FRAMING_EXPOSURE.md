@@ -71,6 +71,16 @@ A URL, headline and publisher are required for attribution. Cross-source corrobo
 
 Current provenance continues to include audio engine, images, visual timings, source data and the mode, with experimentalFormatVersion=framing-exposure-v2-single-article. The worker checks its source-input fingerprint against the queued job before rendering.
 
+## Evidence consistency and bounded production repair
+
+The political-analysis worker fetches the **one selected attributable article** before the model evaluates its wording. Other publishers' articles are not substituted. The worker submits the source snapshot, its original claim fingerprint and analysis together. The Command Center validates the analysis lease and immutable article metadata, then commits the enriched text and matching evidence fingerprint **atomically**. A routine RSS rescan preserves this body only if the original headline, description, publisher and URL remain unchanged; edited source metadata invalidates the snapshot and queues new analysis. Superseded workers cannot overwrite newer article evidence.
+
+Narrative review generation uses a six-string Ollama JSON Schema, preserves the original headline and fixed teaser, and attempts targeted segment repair when length, number, quotation, repetitive wording, unsupported omission or unqualified causal assertions fail validation. Numerical claims are grounded in the reviewed article, **not numbers from another article's FactPackage**. The validator is conservative but not a full fact-checker: an LLM-assisted source review still requires editorial verification for nuanced implications and selective quotations.
+
+The final voice minimum is measured from actual Kokoro/Qwen audio rather than solely an approximate script word count; framing repairs can expand toward the experimental duration ceiling without affecting the standard video limits. Transient Ollama errors can retry; deterministic script and evidence failures remain available for manual retry without repeatedly triggering full renders. Worker leases, paired versions and history remain independent.
+
+Regression coverage includes local-HTTP article enrichment, unchanged-source reuse, updated RSS invalidation, snapshot/fingerprint handoff, stalled worker rejection, JSON structural errors, script expansion, unsupported numbers/percentages, unattributed quotations, omission/causal repairs and original-news repair length. CI success does **not** confirm an actual GPU-worker/Ollama/TTS production run.
+
 ## Visuals and sound
 
 The eight source-attributed editorial cards present the article headline, exact excerpt(s) where available, selected wording and written analysis, without fabricated screenshots or news organization logos. The visual types include FRAMING_HEADLINE, FRAMING_TEASER, LANGUAGE_HIGHLIGHT, RHETORIC_CARD, FACT_CHECK_CARD, FRAMING_CONTEXT and FRAMING_CONCLUSION. The restored header and 220px TikTok footer remain unchanged.
