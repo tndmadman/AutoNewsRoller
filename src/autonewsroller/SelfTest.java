@@ -1408,6 +1408,14 @@ public final class SelfTest {
                 String.valueOf(newJob.get("analysisInputFingerprint")));
         ok("COMPLETE".equals(store.storyDetail(cluster.id).get("biasAnalysisStatus")),
                 "newly verified snapshot can finish analysis after a source-content change");
+        store.action(cluster.id,"MAKE_FRAMING_EXPOSURE");
+        store.heartbeat("video-worker",Map.of("id","video-worker",
+                "capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>videoJob=store.claim("video-worker",Map.of());
+        ok(videoJob!=null&&"FRAMING_EXPOSURE".equals(videoJob.get("productionMode"))
+                &&Objects.equals(store.storyDetail(cluster.id).get("biasAnalysisInputHash"),
+                        videoJob.get("framingContentFingerprint")),
+                "the framing video job receives the exact analyzed article fingerprint");
     }
 
     private void testSelectedArticleEnrichment()throws Exception{
