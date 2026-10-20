@@ -224,12 +224,21 @@ public final class NewsPipeline {
         Path wav=slotDir.resolve("narration/narration.wav");
         NarrationResult nr=narrate(c,script,wav,worker,slot);
         double narrationSeconds=audioDuration(nr.wav());
+        // Standard videos retain their established floor. Narrative reviews must
+        // actually meet the requested minimum in measured TTS audio, not just
+        // the nominal 2.5-words/second writing estimate.
         double minimumFinalSeconds=cfg.getDouble("minimumFinalVideoSeconds",61.0);
+        if(mode==ProductionMode.FRAMING_EXPOSURE)
+            minimumFinalSeconds=Math.max(minimumFinalSeconds,targetSeconds);
         logs.worker(worker,String.format(Locale.ROOT,"slot=%d narration duration=%.2fs words=%d",slot,narrationSeconds,Text.words(script.narration())));
 
         if(narrationSeconds<minimumFinalSeconds){
             double desiredAudio=Math.max(minimumFinalSeconds+4.0,65.0);
-            int adjustedTarget=Math.min(95,Math.max(targetSeconds+5,(int)Math.ceil(targetSeconds*desiredAudio/Math.max(1.0,narrationSeconds))));
+            int durationCeiling=mode==ProductionMode.FRAMING_EXPOSURE
+                    ?Math.max(targetSeconds,cfg.getInt("politicalExposureMaxDurationSeconds",180))
+                    :95;
+            int adjustedTarget=Math.min(durationCeiling,Math.max(targetSeconds+5,
+                    (int)Math.ceil(targetSeconds*desiredAudio/Math.max(1.0,narrationSeconds))));
             String retry=String.format(Locale.ROOT,"TTS duration %.2fs is below %.2fs; regenerating narration for %ds target before images",narrationSeconds,minimumFinalSeconds,adjustedTarget);
             System.err.println(retry);
             events.emit(worker,slot,PipelineStage.SCRIPT,retry);
