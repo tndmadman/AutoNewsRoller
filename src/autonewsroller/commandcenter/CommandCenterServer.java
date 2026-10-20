@@ -254,12 +254,18 @@ public final class CommandCenterServer {
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
                     Map<String,Object>b=bodyObject(x);
                     Map<String,Object>result=b.get("result") instanceof Map<?,?>?Json.object(b.get("result")):b;
-                    store.politicalAnalysisComplete(id,result,String.valueOf(b.getOrDefault("workerId","")));
+                    if(!(b.get("candidate") instanceof Map<?,?>))
+                        throw new IllegalStateException("Missing enriched analysis candidate");
+                    NewsPipeline.Candidate prepared=NewsPipeline.Candidate.fromMap(Json.object(b.get("candidate")));
+                    store.politicalAnalysisComplete(id,result,
+                            String.valueOf(b.getOrDefault("workerId","")),prepared,
+                            String.valueOf(b.getOrDefault("analysisInputFingerprint","")));
                     json(x,200,Map.of("ok",true));
                 }
                 case "bias-fail"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    Map<String,Object>b=bodyObject(x);store.politicalAnalysisFail(id,String.valueOf(b.getOrDefault("error","analysis failure")));json(x,200,Map.of("ok",true));
+                    Map<String,Object>b=bodyObject(x);store.politicalAnalysisFail(id,String.valueOf(b.getOrDefault("error","analysis failure")),
+                            String.valueOf(b.getOrDefault("workerId","")));json(x,200,Map.of("ok",true));
                 }
                 default->json(x,404,Map.of("error","unknown job operation"));
             }
