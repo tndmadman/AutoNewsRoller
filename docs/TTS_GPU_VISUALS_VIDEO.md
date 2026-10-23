@@ -308,20 +308,30 @@ The programmatically assembled graph contains:
 - VAEDecode
 - SaveImage
 
-KSampler defaults in code:
+KSampler defaults shared by **STANDARD** and **MEME_RAGEBAIT**:
 
-- random-ish positive seed based on prompt/time;
-- configured step count;
-- configured CFG;
-- sampler_name=dpmpp_2m_sde;
-- scheduler=karras;
-- denoise=1.0.
+- full-step RealVisXL V5.0 checkpoint by default (selected with `imageCheckpoint`);
+- 832 × 1472 portrait, 32 sampling steps, CFG 5.5 (overridable in `defaults.txt`);
+- `sampler_name=dpmpp_sde`, `scheduler=karras`, `denoise=1.0`;
+- deterministic per-story/scene/attempt seed, recorded in the final video sidecar.
 
-The generated prompt adds:
+The sampling baseline follows the published RealVisXL V5.0 non-Lightning guidance
+(DPM++ SDE Karras, 30+ steps). Lightning/Turbo/distilled checkpoints need their
+own lower-step/CFG tuning; do not silently substitute one while keeping this
+full-step preset.
 
-    editorial news illustration, no text, no logos, vertical composition
+Prompt conditioning is mode-specific and assembled by `ComfyPromptProfiles`.
+STANDARD adds source-grounded documentary-photography language and applies
+validated scene `mustNotShow` restrictions to the **negative** conditioning.
+MEME_RAGEBAIT adds expressive satirical illustration instructions and uses
+`memeImageNegative` instead of the news photography exclusions. Both keep the
+positive suffix free of "no text" / "not evidence" commands and reserve the
+lower quarter for the Java-rendered overlay.
 
-Default negative prompt is configurable and includes text, watermark, logo, captions, low quality, distorted, and deformed.
+The meme pipeline can opt into a different compatible standard SDXL
+illustration checkpoint via `memeImageCheckpoint`. Leave it blank to inherit
+the shared `imageCheckpoint`. No ComfyUI image prompt is sent by
+FRAMING_EXPOSURE: it uses verified, deterministic quotation/evidence cards.
 
 ## Qwen/Comfy handoff
 
@@ -333,7 +343,7 @@ Before ComfyUI generation:
 
 This is meant to reduce the chance that a resident Qwen model plus an image checkpoint exhausts VRAM.
 
-After image retrieval, AutoNewsRoller attempts a ComfyUI /free request with unload_models and free_memory.
+A successful generation intentionally keeps the selected checkpoint, CLIP and VAE warm. Only a detected CUDA out-of-memory error triggers a ComfyUI /free unload-and-retry recovery.
 
 ## Procedural cards
 

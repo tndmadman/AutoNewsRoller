@@ -13,7 +13,8 @@ public final class ComfyImageGenerator {
     // Recommended RTX 3090 + SDXL defaults; callers may override via defaults.txt.
     public static final int DEFAULT_WIDTH=832, DEFAULT_HEIGHT=1472, DEFAULT_STEPS=32;
     public static final double DEFAULT_CFG=5.5;
-    public static final String SAMPLER="dpmpp_2m_sde", SCHEDULER="karras";
+    // RealVisXL V5 standard model card: DPM++ SDE Karras at 30+ steps.
+    public static final String SAMPLER="dpmpp_sde", SCHEDULER="karras";
     private final Path root;private final String baseUrl,qwenUrl;private final HttpClient client;
     public ComfyImageGenerator(Path root,String baseUrl,String qwenUrl){this.root=root;this.baseUrl=baseUrl.replaceAll("/+$","");this.qwenUrl=qwenUrl.replaceAll("/+$","");this.client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();}
     public boolean reachable(){try{return get("/system_stats",3).statusCode()/100==2;}catch(Exception e){return false;}}

@@ -346,7 +346,9 @@ public final class NewsPipeline {
                 ComfyRuntime.ensureRunning(root,cfg);
                 if(!comfy.reachable())throw new IllegalStateException("ComfyUI is not reachable at "+cfg.get("comfyUrl","http://127.0.0.1:8188"));
                 List<String>available=comfy.checkpoints();
-                String configured=cfg.get("imageCheckpoint","");
+                String memeCheckpoint=mode==ProductionMode.MEME_RAGEBAIT?cfg.get("memeImageCheckpoint",""):"";
+                final String configured=memeCheckpoint.isBlank()
+                        ?cfg.get("imageCheckpoint",""):memeCheckpoint;
                 if(!configured.isBlank()){
                     usedCheckpoint=available.stream().filter(x->checkpointMatches(x,configured)).findFirst().orElse("");
                     if(usedCheckpoint.isBlank())throw new IllegalStateException("configured checkpoint is unavailable: "+configured+"; available="+available);
@@ -383,22 +385,10 @@ public final class NewsPipeline {
                 for(int replace:eligible){
                     if(comfyGenerated>=limit)break;
                     VisualPlan.Item chosen=plan.items().get(replace);
-                    String basePrompt=chosen.prompt()==null||chosen.prompt().isBlank()
-                            ?chosen.title()+". "+chosen.body():chosen.prompt();
-                    String visualSuffix="HOOK".equalsIgnoreCase(chosen.type())
-                            ?", thumbnail-safe opening frame for a vertical news video, realistic wire-service news photography, strongest concrete focal subject visible immediately on a phone screen, main subject in the upper-middle of the frame, lower quarter visually clean for a broadcast lower-third, believable real-world colors and skin tones, neutral white balance, moderate documentary contrast, restrained saturation, newsroom realism"
-                            :", realistic wire-service editorial documentary photograph for a vertical broadcast news package, clear central subject, natural scene depth, portrait composition, believable real-world colors and skin tones, neutral white balance, moderate documentary contrast, restrained saturation, lower quarter reasonably uncluttered for a news lower-third";
-                    String negativePrompt=mode==ProductionMode.MEME_RAGEBAIT
-                            ?"text, letters, watermark, logo, ugly, blurry, unintentional photorealistic evidence, gore"
-                            :sceneNegativePrompt(chosen);
+                    boolean memeImage=mode==ProductionMode.MEME_RAGEBAIT;
+                    String negativePrompt=ComfyPromptProfiles.negative(cfg,chosen,memeImage);
                     for(int attempt=0;attempt<=maxRetries;attempt++){
-                        String correction=attempt==0?"":mode==ProductionMode.MEME_RAGEBAIT
-                                ?", clear cartoon focal subject, comic punchline visible, mobile friendly"
-                                :", centered subject, uncluttered factual editorial composition, no unsupported secondary subjects";
-                        String prompt=(basePrompt+(mode==ProductionMode.MEME_RAGEBAIT
-                                ?", absurd satirical comic illustration, expressive characters, strong single visual gag, 9:16 portrait, no text, not documentary evidence"
-                                :visualSuffix)+correction).replaceAll("\\s+"," ").trim();
-                        if(mode!=ProductionMode.MEME_RAGEBAIT)assertNoExcludedConceptInPositive(chosen,prompt);
+                        String prompt=ComfyPromptProfiles.positive(chosen,memeImage,attempt);
                         long seed=Integer.toUnsignedLong(Objects.hash(c.id,replace,usedCheckpoint,attempt));
                         Path generated=visuals.resolve(String.format("%02d_comfy_attempt_%02d.png",replace,attempt+1));
                         String generating="COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" attempt="+(attempt+1)+" checkpoint="+usedCheckpoint;
@@ -771,28 +761,6 @@ public final class NewsPipeline {
 
     private static boolean categoryMatches(String requested,String articleCategory){
         return requested==null||requested.isBlank()||"general".equalsIgnoreCase(requested)||requested.equalsIgnoreCase(articleCategory);
-    }
-
-    private String sceneNegativePrompt(VisualPlan.Item item){
-        LinkedHashSet<String>terms=new LinkedHashSet<>();
-        for(String term:cfg.get("imageNegative","text, watermark, logo, captions, low quality, distorted").split(",")){
-            String clean=Text.clean(term);if(!clean.isBlank())terms.add(clean);
-        }
-        terms.addAll(List.of("text","logos","watermark","captions","artificial UI","generic newsroom graphics","blue wash","cyan cast","teal cast","electric blue lighting","cinematic teal-orange grade","neon lighting","sci-fi colors","glowing edges"));
-        Object raw=item.data().get("mustNotShow");
-        if(raw instanceof Collection<?>xs)for(Object x:xs){String clean=Text.clean(String.valueOf(x));if(!clean.isBlank())terms.add(clean);}
-        return String.join(", ",terms);
-    }
-
-    private static void assertNoExcludedConceptInPositive(VisualPlan.Item item,String prompt){
-        Object raw=item.data().get("mustNotShow");if(!(raw instanceof Collection<?>xs))return;
-        String lower=prompt.toLowerCase(Locale.ROOT);
-        for(Object x:xs){
-            String term=Text.clean(String.valueOf(x)).toLowerCase(Locale.ROOT);
-            if(term.length()<3)continue;
-            if(lower.matches("(?s).*\\b"+java.util.regex.Pattern.quote(term)+"\\b.*"))
-                throw new IllegalStateException("positive visual prompt contains excluded concept '"+term+"' for scene "+item.index());
-        }
     }
 
     private String commitSha(){String env=System.getenv("GITHUB_SHA");if(env!=null&&!env.isBlank())return env;try{Process p=new ProcessBuilder("git","rev-parse","HEAD").directory(root.toFile()).redirectErrorStream(true).start();if(p.waitFor(5,TimeUnit.SECONDS)&&p.exitValue()==0)return new String(p.getInputStream().readAllBytes(),StandardCharsets.UTF_8).trim();}catch(Exception ignored){}return "unknown";}

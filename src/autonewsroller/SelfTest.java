@@ -55,6 +55,7 @@ public final class SelfTest {
         testScriptValidation(a);
         testProductionVideoContract(root,a);
         testVisualV5();
+        testComfyPromptProfiles();
         testComfyMock();
         testWorthyHourFilterContract(root);
         testFeedCardIdentityContract(root);
@@ -1930,12 +1931,16 @@ public final class SelfTest {
                         videoRendererSource.contains("overlay=0:0"),
                 "video renderer adds restrained photo motion beneath fixed broadcast overlays");
         String pipelineSource=Files.readString(root.resolve("src/autonewsroller/orchestration/NewsPipeline.java"));
+        String profilesSource=Files.readString(root.resolve("src/autonewsroller/visuals/ComfyPromptProfiles.java"));
         ok(pipelineSource.contains("audit.put(\"hook\",script.hook())")&&
-                        pipelineSource.contains("openingVisualType")&&pipelineSource.contains("HOOK\".equalsIgnoreCase(chosen.type())")&&
-                        pipelineSource.contains("BroadcastTheme.PACKAGE_ID")&&pipelineSource.contains("sceneNegativePrompt(chosen)")&&
-                        pipelineSource.contains("assertNoExcludedConceptInPositive(chosen,prompt)")&&
+                        pipelineSource.contains("openingVisualType")&&
+                        pipelineSource.contains("BroadcastTheme.PACKAGE_ID")&&
+                        pipelineSource.contains("ComfyPromptProfiles.positive(chosen,memeImage,attempt)")&&
+                        pipelineSource.contains("ComfyPromptProfiles.negative(cfg,chosen,memeImage)")&&
+                        profilesSource.contains("assertNoExcludedConceptInPositive(item,prompt)")&&
+                        profilesSource.contains("neutral white balance")&&
                         pipelineSource.contains("imageSource.put(\"negativePrompt\",negativePrompt)")&&
-                        pipelineSource.contains("neutral white balance")&&!pipelineSource.contains("no blue wash"),
+                        !profilesSource.contains("no blue wash"),
                 "pipeline separates positive and negative image conditioning and records the negative prompt");
         String commandCenterHtml=Files.readString(root.resolve("web/command-center/index.html"));
         String commandCenterJs=Files.readString(root.resolve("web/command-center/app.js"));
@@ -2138,6 +2143,44 @@ public final class SelfTest {
         CaptionWriter.write(hostile,"This contains {\\rInjected} formatting.",3,"sentence",null,540,960);
         ok(!Files.readString(hostile).contains("{\\rInjected}"),
                 "caption generation escapes script-authored ASS overrides");
+    }
+
+    private void testComfyPromptProfiles()throws Exception{
+        NewsConfig config=NewsConfig.load(Files.createTempDirectory("autonews-image-config-"));
+        config.set("imageNegative","photographic watermark");
+        config.set("memeImageNegative","caption letters");
+        VisualPlan.Item news=new VisualPlan.Item(0,"HOOK","Verified event",
+                "The city opened a new bridge",4,"city bridge during opening",
+                Map.of("mustNotShow",List.of("hologram")));
+        String newsPositive=ComfyPromptProfiles.positive(news,false,0);
+        String newsNegative=ComfyPromptProfiles.negative(config,news,false);
+        ok(newsPositive.contains("wire-service documentary photograph")
+                        &&newsPositive.contains("lower quarter")
+                        &&newsNegative.contains("photographic watermark")
+                        &&newsNegative.contains("hologram"),
+                "standard news SDXL profile is realistic and preserves scene-specific exclusions");
+        VisualPlan.Item meme=new VisualPlan.Item(0,"MEME_HOOK","Comedic hook",
+                "The city bought silly traffic signs",4,"goofy traffic-sign scene",Map.of());
+        String memePositive=ComfyPromptProfiles.positive(meme,true,0);
+        String memeNegative=ComfyPromptProfiles.negative(config,meme,true);
+        ok(memePositive.contains("satirical editorial comic illustration")
+                        &&memePositive.contains("upper-middle")
+                        &&!memePositive.contains("no text")
+                        &&memeNegative.contains("caption letters")
+                        &&!memeNegative.contains("photographic watermark"),
+                "meme image profile keeps caption exclusions in configurable negative conditioning");
+        ok(ComfyPromptProfiles.positive(meme,true,1).contains("stronger visual punchline")
+                        &&ComfyPromptProfiles.positive(news,false,1).contains("clear subject separation"),
+                "retry guidance is specialized for both image-producing modes");
+        try{
+            ComfyPromptProfiles.positive(new VisualPlan.Item(0,"HOOK","x","x",2,
+                    "hologram floating above the bridge",
+                    Map.of("mustNotShow",List.of("hologram"))),false,0);
+            throw new AssertionError("News prompt included forbidden visual detail");
+        }catch(IllegalStateException expected){
+            ok(expected.getMessage().contains("excluded concept"),
+                    "grounded news prompts reject excluded details in positive conditioning");
+        }
     }
 
     private void testComfyMock()throws Exception{
