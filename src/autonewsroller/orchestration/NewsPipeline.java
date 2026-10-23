@@ -346,8 +346,9 @@ public final class NewsPipeline {
                 ComfyRuntime.ensureRunning(root,cfg);
                 if(!comfy.reachable())throw new IllegalStateException("ComfyUI is not reachable at "+cfg.get("comfyUrl","http://127.0.0.1:8188"));
                 List<String>available=comfy.checkpoints();
-                String configured=mode==ProductionMode.MEME_RAGEBAIT?cfg.get("memeImageCheckpoint",""):"";
-                if(configured.isBlank())configured=cfg.get("imageCheckpoint","");
+                String memeCheckpoint=mode==ProductionMode.MEME_RAGEBAIT?cfg.get("memeImageCheckpoint",""):"";
+                final String configured=memeCheckpoint.isBlank()
+                        ?cfg.get("imageCheckpoint",""):memeCheckpoint;
                 if(!configured.isBlank()){
                     usedCheckpoint=available.stream().filter(x->checkpointMatches(x,configured)).findFirst().orElse("");
                     if(usedCheckpoint.isBlank())throw new IllegalStateException("configured checkpoint is unavailable: "+configured+"; available="+available);
