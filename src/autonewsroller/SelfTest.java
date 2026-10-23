@@ -1770,6 +1770,10 @@ public final class SelfTest {
                 "production duration defaults require one-minute-plus output");
         ok(cfg.getInt("commandCenterComfyImages",0)>=6&&cfg.getBool("comfyDisableDynamicVram",false),
                 "production defaults request six Comfy images with dynamic VRAM disabled");
+        ok(cfg.getInt("imageWidth",0)==ComfyImageGenerator.DEFAULT_WIDTH&&cfg.getInt("imageHeight",0)==ComfyImageGenerator.DEFAULT_HEIGHT
+                        &&cfg.getInt("imageSteps",0)==ComfyImageGenerator.DEFAULT_STEPS
+                        &&Math.abs(cfg.getDouble("imageCfg",0)-ComfyImageGenerator.DEFAULT_CFG)<0.000001,
+                "all ComfyUI production modes use the higher-resolution SDXL quality defaults");
         ok(cfg.getInt("ollamaContextTokens",0)>=8192&&cfg.getInt("ollamaMaxOutputTokens",0)>=1600&&cfg.getInt("ollamaRetries",0)>=5,
                 "script Ollama budget reserves enough context, output tokens, and surgical retries");
         ok(cfg.getBool("articleEnrichmentEnabled",false),
@@ -2148,6 +2152,7 @@ public final class SelfTest {
         byte[]imageBytes=buf.toByteArray();
         AtomicInteger submitted=new AtomicInteger(),freed=new AtomicInteger(),released=new AtomicInteger();
         java.util.concurrent.atomic.AtomicLong capturedSeed=new java.util.concurrent.atomic.AtomicLong(-1);
+        java.util.concurrent.atomic.AtomicReference<Map<String,Object>> capturedSampler=new java.util.concurrent.atomic.AtomicReference<>();
         HttpServer mock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         mock.createContext("/system_stats",exchange->{
             byte[]response="{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -2166,7 +2171,9 @@ public final class SelfTest {
         mock.createContext("/prompt",exchange->{
             Map<String,Object>request=Json.object(Json.parse(new String(exchange.getRequestBody().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8)));
             Map<String,Object>ksampler=Json.object(Json.object(request.get("prompt")).get("5"));
-            capturedSeed.set(((Number)Json.object(ksampler.get("inputs")).get("seed")).longValue());
+            Map<String,Object>inputs=Json.object(ksampler.get("inputs"));
+            capturedSeed.set(((Number)inputs.get("seed")).longValue());
+            capturedSampler.set(inputs);
             submitted.incrementAndGet();
             byte[]response="{\"prompt_id\":\"fixture-id\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200,response.length);
@@ -2196,6 +2203,12 @@ public final class SelfTest {
                     "ComfyUI mock generation saves a decodable output image");
             ok(capturedSeed.get()==876543210L&&submitted.get()==1&&released.get()==1&&freed.get()==0,
                     "ComfyUI preserves caller seed, releases Qwen and does not unload warm checkpoints on success");
+            Map<String,Object>params=capturedSampler.get();
+            ok(params!=null&&((Number)params.get("steps")).intValue()==20
+                            &&Math.abs(((Number)params.get("cfg")).doubleValue()-5.0)<0.000001
+                            &&ComfyImageGenerator.SAMPLER.equals(params.get("sampler_name"))
+                            &&ComfyImageGenerator.SCHEDULER.equals(params.get("scheduler")),
+                    "ComfyUI submitted workflow uses caller settings and recommended sampler/scheduler");
         }finally{mock.stop(0);}
     }
 

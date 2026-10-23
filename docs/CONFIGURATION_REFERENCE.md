@@ -28,7 +28,7 @@ Current defaults:
     qwenVoices=Ryan,Aiden,Ono_Anna,Sohee
     qwenUrl=http://127.0.0.1:8765
     comfyUrl=http://127.0.0.1:8188
-    imageCheckpoint=
+    imageCheckpoint=RealVisXL_V5.0_fp32.safetensors
     comfyAutoPickCheckpoint=true
     videoEncoder=auto
     videoWidth=1080
@@ -44,11 +44,11 @@ Current defaults:
     ffprobeCommand=ffprobe
     userAgent=AutoNewsRoller/0.1 (+https://github.com/tndmadman/AutoNewsRoller)
     httpRetries=2
-    imageWidth=768
-    imageHeight=1344
-    imageSteps=24
-    imageCfg=5.0
-    imageNegative=text, watermark, logo, captions, low quality, distorted, deformed
+    imageWidth=832
+    imageHeight=1472
+    imageSteps=32
+    imageCfg=5.5
+    imageNegative=text, watermark, logo, captions, low quality, distorted, deformed, plastic skin, waxy face, overly smooth skin, synthetic skin texture, crossed eyes, bad anatomy, extra fingers, malformed hands, duplicate faces, CGI, 3d render, illustration, cartoon, painting
     commandCenterHost=127.0.0.1
     commandCenterPort=8787
     commandCenterScanMinutes=10
@@ -178,7 +178,7 @@ Default:
 
 ### imageCheckpoint
 
-Default: blank
+Default: `RealVisXL_V5.0_fp32.safetensors` (must be installed locally)
 
 Set this to the exact checkpoint name returned by ComfyUI's CheckpointLoaderSimple object info.
 
@@ -202,26 +202,28 @@ For predictable production, explicit imageCheckpoint is preferable.
 
 Defaults:
 
-- width 768
-- height 1344
+- width 832
+- height 1472
 
 These are the optional ComfyUI generation dimensions, not the final video dimensions.
 
 ### imageSteps
 
-Default: 24
+Default: 32
 
 ### imageCfg
 
-Default: 5.0
+Default: 5.5
 
 ### imageNegative
 
 Default negative-prompt text:
 
-    text, watermark, logo, captions, low quality, distorted, deformed
+    text, watermark, logo, captions, low quality, distorted, deformed, plastic skin, waxy face, overly smooth skin, synthetic skin texture, crossed eyes, bad anatomy, extra fingers, malformed hands, duplicate faces, CGI, 3d render, illustration, cartoon, painting
 
-The ComfyUI code adds an editorial-news prompt qualifier and explicitly asks for no text or logos.
+The shared ComfyUI request graph uses DPM++ 2M SDE + Karras. All ComfyUI-enabled formats inherit the same resolution, step and CFG settings unless `defaults.txt` is overridden. Standard news adds realistic editorial-photography prompting. Meme mode retains its separate cartoon/satire prompts and negative list; changing quality settings does not turn satirical images into fake evidence photographs. Framing review continues using procedural evidence graphics, not ComfyUI photographs. These are generation dimensions only; the final video remains 1080x1920.
+
+The default RealVisXL checkpoint must exist in the worker's local ComfyUI models. The startup log alone does not show which model ran; inspect the `COMFYUI USED checkpoint=...` event or the video sidecar. High-res SDXL generation uses more memory and takes longer; reduce resolution or steps if CUDA OOM occurs.
 
 ## Video settings
 
