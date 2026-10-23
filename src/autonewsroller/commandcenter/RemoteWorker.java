@@ -4,6 +4,7 @@ import autonewsroller.config.NewsConfig;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.*;
 import autonewsroller.util.Json;
+import autonewsroller.util.Hashing;
 import java.io.IOException;
 import java.net.*;
 import java.net.http.*;
@@ -139,24 +140,43 @@ public final class RemoteWorker {
         event("job-start",Map.of("jobId",jobId,"jobType",type,"topic",currentTopic,"stage",stage,"workerId",workerId));
         try{
             if("POLITICAL_ANALYSIS".equals(type)){runPoliticalAnalysis(job);return;}
+            ProductionMode productionMode=ProductionMode.fromPersisted(job.get("productionMode"));
+            if(productionMode==ProductionMode.FRAMING_EXPOSURE&&!cfg.getBool("politicalExposureEnabled",true))
+                throw new IllegalStateException("Worker does not support framing exposure v1.");
             NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
+            if(productionMode==ProductionMode.FRAMING_EXPOSURE){
+                String expected=String.valueOf(job.getOrDefault("framingContentFingerprint",""));
+                String current=Hashing.sha256(candidate.cluster().articles.stream()
+                        .map(a->a.id()+"|"+a.title()+"|"+a.description()+"|"+a.bodyText()).sorted()
+                        .reduce("",(a,b)->a+"|"+b));
+                if(expected.isBlank()||!expected.equals(current))
+                    throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Article text changed since analysis.");
+            }
             Map<String,Object> settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
             int requestedDuration=settings.get("duration") instanceof Number n?n.intValue():cfg.duration();
             int duration=Math.max(cfg.getInt("commandCenterMinimumTargetSeconds",70),requestedDuration);
+            if(productionMode==ProductionMode.FRAMING_EXPOSURE)
+                duration=Math.max(duration,cfg.getInt("politicalExposureDefaultDurationSeconds",75));
             String encoder=String.valueOf(settings.getOrDefault("encoder",cfg.get("videoEncoder","auto")));
             boolean controllerComfy=settings.containsKey("useComfy")?bool(settings.get("useComfy")):true;
             boolean useComfy=cfg.getBool("commandCenterUseComfy",true)||controllerComfy;
             boolean requireComfy=cfg.getBool("commandCenterRequireComfy",true)||(settings.containsKey("requireComfy")&&bool(settings.get("requireComfy")));
             int comfyImages=settings.get("comfyImages") instanceof Number n?Math.max(1,n.intValue()):cfg.getInt("commandCenterComfyImages",3);
             boolean dryRun=bool(settings.get("dryRun"));
-            event("progress",Map.of("stage","CLAIMED","detail","durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy));
+            if(productionMode==ProductionMode.FRAMING_EXPOSURE){
+                useComfy=cfg.getBool("politicalExposureRequireComfy",false);
+                requireComfy=useComfy;
+            }
+            event("progress",Map.of("stage","CLAIMED","detail","mode="+productionMode.name()+
+                    "; durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy));
             String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
             Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+stamp);
             event("job-dir",Map.of("dir",batch.toString()));
             final String claimId=currentClaimId;
             NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,e->progressSafe(jobId,claimId,e));
             PoliticalVisualData political=job.get("politicalVisualData") instanceof Map<?,?>?PoliticalVisualData.fromMap(Json.object(job.get("politicalVisualData"))):null;
-            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,dryRun);
+            Map<String,Object>framingAnalysis=job.get("framingAnalysis") instanceof Map<?,?>?Json.object(job.get("framingAnalysis")):Map.of();
+            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,framingAnalysis,dryRun);
             stage="UPLOAD";detail="Local output ready; awaiting controller acknowledgement";
             event("progress",Map.of("stage",stage,"detail",detail));
             if(!dryRun&&output.toString().toLowerCase(Locale.ROOT).endsWith(".mp4")){
@@ -191,10 +211,21 @@ public final class RemoteWorker {
     }
     private void runPoliticalAnalysis(Map<String,Object>job)throws Exception{
         NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
+        String jobId=String.valueOf(job.get("jobId"));
+        String claimedHash=String.valueOf(job.getOrDefault("analysisInputFingerprint",""));
+        if(claimedHash.isBlank())throw new IllegalStateException("Missing political analysis input fingerprint");
+        // Fetch the selected article once, BEFORE computing the analysis.
+        // Submit the enriched candidate and analysis in one controller transaction,
+        // so the later video worker sees precisely the version being analyzed.
+        NewsPipeline preparation=new NewsPipeline(root,cfg,
+                root.resolve("output/remote_worker/analysis_"+safeName(jobId)));
+        NewsPipeline.Candidate prepared=new NewsPipeline.Candidate(
+                preparation.enrichForFraming(candidate.cluster()),candidate.factPackage(),candidate.score());
         PoliticalFramingAnalyzer analyzer=new PoliticalFramingAnalyzer(root,cfg);
-        Map<String,Object> result=analyzer.analyze(candidate.cluster());
-        post("/api/jobs/"+enc(String.valueOf(job.get("jobId")))+"/bias-complete",
-                Map.of("workerId",workerId,"result",result));
+        Map<String,Object> result=analyzer.analyze(prepared.cluster());
+        post("/api/jobs/"+enc(jobId)+"/bias-complete",
+                Map.of("workerId",workerId,"result",result,
+                        "candidate",prepared.toMap(),"analysisInputFingerprint",claimedHash));
         event("job-finish",Map.of("jobId",String.valueOf(job.get("jobId")),"result","COMPLETE","stage","POLITICAL_ANALYSIS"));
     }
     private Map<String,Object> uploadVideo(String jobId,String claimId,Path file)throws Exception{
@@ -219,7 +250,9 @@ public final class RemoteWorker {
         try{
             Map<String,Object> m=new LinkedHashMap<>();
             m.put("id",workerId);m.put("state",state);m.put("currentJob",currentJob);m.put("currentTopic",currentTopic);
-            m.put("claimId",currentClaimId);m.put("metrics",metrics.get());m.put("timestamp",Instant.now().toString());
+            m.put("claimId",currentClaimId);
+            m.put("capabilities",cfg.getBool("politicalExposureEnabled",true)?List.of("framing_exposure_v1"):List.of());
+            m.put("metrics",metrics.get());m.put("timestamp",Instant.now().toString());
             post("/api/workers/heartbeat",m);lastHeartbeat=Instant.now();
         }catch(Exception e){error("heartbeat",e);}
     }

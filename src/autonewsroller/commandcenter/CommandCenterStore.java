@@ -2,8 +2,10 @@ package autonewsroller.commandcenter;
 
 import autonewsroller.config.SourceConfig;
 import autonewsroller.model.Article;
+import autonewsroller.model.StoryCluster;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.NewsPipeline;
+import autonewsroller.orchestration.ProductionMode;
 import autonewsroller.orchestration.WorkerState;
 import autonewsroller.util.Json;
 import autonewsroller.util.Hashing;
@@ -25,6 +27,7 @@ public final class CommandCenterStore {
     private final int failureMaxRetries;
     private final int failureRetryDelaySeconds;
     private final int leaseRecoveryMaxRetries;
+    private final boolean pairFramingAfterStandard;
     private final Consumer<Map<String,Object>>eventSink;
     private final Map<String,Map<String,Object>>stories=new LinkedHashMap<>();
     private final Map<String,Map<String,Object>>feeds=new LinkedHashMap<>();
@@ -49,6 +52,11 @@ public final class CommandCenterStore {
         this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,leaseSeconds,softWorthThreshold,singleSourceAutoQueueThreshold,failureMaxRetries,failureRetryDelaySeconds,3);
     }
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink,int leaseSeconds,double softWorthThreshold,double singleSourceAutoQueueThreshold,int failureMaxRetries,int failureRetryDelaySeconds,int leaseRecoveryMaxRetries){
+        this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,leaseSeconds,softWorthThreshold,
+                singleSourceAutoQueueThreshold,failureMaxRetries,failureRetryDelaySeconds,leaseRecoveryMaxRetries,false);
+    }
+    public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink,int leaseSeconds,double softWorthThreshold,double singleSourceAutoQueueThreshold,int failureMaxRetries,int failureRetryDelaySeconds,int leaseRecoveryMaxRetries,boolean pairFramingAfterStandard){
+        this.pairFramingAfterStandard=pairFramingAfterStandard;
         this.statePath=statePath;this.bias=bias;this.autoQueue=autoQueue;this.autoThreshold=autoThreshold;this.maxQueued=Math.max(1,maxQueued);this.eventSink=eventSink;this.leaseSeconds=Math.max(30,leaseSeconds);
         this.softWorthThreshold=Math.max(0.0,Math.min(1.0,softWorthThreshold));
         this.singleSourceAutoQueueThreshold=Math.max(this.softWorthThreshold,Math.min(1.0,singleSourceAutoQueueThreshold));
@@ -120,11 +128,13 @@ public final class CommandCenterStore {
             m.put("category",item.cluster().articles.isEmpty()?"general":item.cluster().articles.get(0).category());
             m.put("sourceUrls",item.cluster().articles.stream().map(Article::url).distinct().toList());
             m.put("latestPublishedAt",item.cluster().articles.stream().map(Article::publishedAt).filter(Objects::nonNull).max(Comparator.naturalOrder()).map(Instant::toString).orElse(""));
-            m.put("candidate",item.candidate().toMap());
+            NewsPipeline.Candidate stable=retainEnrichedEvidence(item.candidate(),m.get("candidate"));
+            m.put("candidate",stable.toMap());
             m.put("sourceMix",bias.mix(item.cluster().publishers()));
-            boolean politicalCandidate=PoliticalFramingAnalyzer.likelyPolitical(item.cluster());
+            boolean politicalCandidate=PoliticalFramingAnalyzer.likelyPolitical(item.cluster())||
+                    Boolean.TRUE.equals(m.get("manualFramingRequested"));
             m.put("politicalCandidate",politicalCandidate);
-            String framingInputHash=Hashing.sha256(item.cluster().articles.stream().map(Article::id).sorted().reduce("",(a,b)->a+"|"+b));
+            String framingInputHash=framingFingerprint(stable.cluster());
             m.put("biasAnalysisInputHash",framingInputHash);
             String analyzedInputHash=String.valueOf(m.getOrDefault("framingInputHash",""));
             if(politicalCandidate&&!framingInputHash.equals(analyzedInputHash)){
@@ -173,6 +183,7 @@ public final class CommandCenterStore {
                 if(depth>=maxQueued)break;
                 boolean verified=Boolean.TRUE.equals(m.get("verified"));
                 m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);
+                markStandardPairQueued(m);
                 if(!verified){
                     m.put("softVerificationOverride",true);
                     m.put("verificationOverrideReason","High-scoring single-source story auto-queued under the relaxed Command Center rule.");
@@ -190,6 +201,11 @@ public final class CommandCenterStore {
     public synchronized Map<String,Object> action(String storyId,String action,String operationId){
         Map<String,Object>m=requireStory(storyId);
         String a=action==null?"":action.trim().toUpperCase(Locale.ROOT);
+        // The retry button on a failed SECOND video should retry ONLY the framing
+        // review. Never overwrite/re-render an already successful first video.
+        if("FAILED".equals(m.get("status"))&&"FRAMING_FAILED".equals(m.get("pairedVideoState"))
+                &&Set.of("MAKE","QUEUE","WORTH","WORTH_IT","WORTH-IT").contains(a))
+            return action(storyId,"MAKE_FRAMING_EXPOSURE",operationId);
         String identity="action:"+storyId+":"+a;
         if(alreadyHandled(operationId,identity))return publicStory(m);
         String status=String.valueOf(m.getOrDefault("status",""));
@@ -203,7 +219,7 @@ public final class CommandCenterStore {
         switch(a){
             case "MAKE","QUEUE"->{
                 boolean verified=Boolean.TRUE.equals(m.get("verified"));
-                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","MAKE");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);resetFailureRetryState(m);
+                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","MAKE");m.put("status","QUEUED");m.put("productionMode","STANDARD");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);resetFailureRetryState(m);markStandardPairQueued(m);
                 m.remove("softVerificationOverride");
                 if(!verified){
                     m.put("manualVerificationOverride",true);
@@ -214,7 +230,7 @@ public final class CommandCenterStore {
             }
             case "WORTH","WORTH_IT","WORTH-IT"->{
                 boolean verified=Boolean.TRUE.equals(m.get("verified"));
-                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","WORTH");m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);resetFailureRetryState(m);
+                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","WORTH");m.put("status","QUEUED");m.put("productionMode","STANDARD");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);resetFailureRetryState(m);markStandardPairQueued(m);
                 m.remove("softVerificationOverride");
                 if(!verified){
                     m.put("manualVerificationOverride",true);
@@ -228,22 +244,64 @@ public final class CommandCenterStore {
                     throw new IllegalStateException("Only a completed video can be re-made.");
                 if(currentVideo(m)==null)
                     throw new IllegalStateException("No completed local video version is available to re-make.");
-                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","REMAKE");
+                m.put("manualWorth",true);m.put("worthy",true);m.put("decision","REMAKE");m.put("productionMode","STANDARD");
                 m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);
                 m.put("remakeCount",integer(m.get("remakeCount"))+1);m.put("remakeQueuedAt",Instant.now().toString());
                 m.put("detail","Re-make queued; previous completed video retained in archive");
                 m.remove("error");clearLease(m);resetFailureRetryState(m);clearCurrentPublicationState(m);clearCurrentMediaResult(m);
+                markStandardPairQueued(m);
+            }
+            case "MAKE_FRAMING_EXPOSURE","REMAKE_FRAMING_EXPOSURE"->{
+                if("QUEUED".equals(status))throw new IllegalStateException("Another video is already queued.");
+                if(!(m.get("candidate") instanceof Map<?,?>))
+                    throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: No source article available.");
+                NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(m.get("candidate")));
+                if(candidate.cluster().articles.stream().noneMatch(article->
+                        !article.title().isBlank()&&!article.publisher().isBlank()&&!article.url().isBlank()))
+                    throw new IllegalStateException("INSUFFICIENT_FRAMING_EVIDENCE: An attributed article headline and URL are required.");
+                if("REMAKE_FRAMING_EXPOSURE".equals(a)&&!"COMPLETE".equals(status))
+                    throw new IllegalStateException("Only completed videos can be remade.");
+                if("COMPLETE".equals(status)&&currentVideo(m)==null)
+                    throw new IllegalStateException("Existing version missing; cannot archive.");
+                m.put("manualWorth",true);m.put("worthy",true);m.put("decision",a);
+                m.put("manualFramingRequested",true);m.put("politicalCandidate",true);
+                if("FRAMING_FAILED".equals(m.get("pairedVideoState")))
+                    m.put("pairedVideoState","FRAMING_QUEUED");
+                m.put("productionMode",ProductionMode.FRAMING_EXPOSURE.name());
+                m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("progress",15);
+                m.remove("error");clearLease(m);resetFailureRetryState(m);
+                m.remove("manualVerificationOverride");m.remove("softVerificationOverride");
+                if("COMPLETE".equals(status)){
+                    m.put("remakeCount",integer(m.get("remakeCount"))+1);
+                    clearCurrentPublicationState(m);clearCurrentMediaResult(m);
+                }
+                String inputHash=String.valueOf(m.getOrDefault("biasAnalysisInputHash",""));
+                String analyzedHash=String.valueOf(m.getOrDefault("framingInputHash",""));
+                if(!"COMPLETE".equals(String.valueOf(m.get("biasAnalysisStatus")))||!inputHash.equals(analyzedHash)){
+                    if(!"ANALYZING".equals(String.valueOf(m.get("biasAnalysisStatus")))){
+                        m.put("biasAnalysisStatus","QUEUED");
+                        m.put("biasAnalysisQueuedAt",Instant.now().toString());m.remove("biasAnalysisError");
+                    }
+                    m.put("stage","WAITING_FOR_FRAMING_ANALYSIS");
+                    m.put("detail","Waiting for political framing analysis");
+                }else{
+                    m.put("stage","QUEUED");m.put("detail","Waiting for compatible framing worker");
+                }
             }
             case "HOLD"->{
+                if("FRAMING_QUEUED".equals(m.get("pairedVideoState")))
+                    m.put("pairedVideoState","FRAMING_HELD");
                 m.put("decision","HOLD");m.put("status","HOLD");m.put("stage","HOLD");m.put("progress",10);
                 m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
             }
             case "SKIP","NOT_WORTH","NOT-WORTH"->{
+                if("FRAMING_QUEUED".equals(m.get("pairedVideoState")))
+                    m.put("pairedVideoState","FRAMING_SKIPPED");
                 m.put("manualWorth",false);m.put("worthy",false);m.put("decision","SKIP");m.put("status","SKIPPED");m.put("stage","SKIPPED");m.put("progress",0);
                 m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
             }
             case "AUTO"->{
-                m.put("manualWorth",false);m.put("decision","AUTO");m.remove("error");resetFailureRetryState(m);m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
+                m.put("manualWorth",false);m.put("decision","AUTO");m.put("productionMode","STANDARD");m.remove("error");resetFailureRetryState(m);m.remove("manualVerificationOverride");m.remove("softVerificationOverride");m.remove("verificationOverrideReason");
                 boolean verified=Boolean.TRUE.equals(m.get("verified"));
                 boolean soft=Boolean.TRUE.equals(m.get("softWorthy"));
                 boolean worthy=verified||soft;
@@ -251,6 +309,7 @@ public final class CommandCenterStore {
                 if(Boolean.TRUE.equals(m.get("previouslyGenerated")))m.put("status","COMPLETE_HISTORY");
                 else if(autoQueue&&queueDepth()<maxQueued&&((verified&&number(m.get("score"))>=autoThreshold)||(soft&&number(m.get("score"))>=singleSourceAutoQueueThreshold))){
                     m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);
+                    markStandardPairQueued(m);
                     if(!verified){
                         m.put("softVerificationOverride",true);
                         m.put("verificationOverrideReason","High-scoring single-source story auto-queued under the relaxed Command Center rule.");
@@ -271,6 +330,7 @@ public final class CommandCenterStore {
         Optional<Map<String,Object>>bestVideo=stories.values().stream()
                 .filter(x->"QUEUED".equals(String.valueOf(x.get("status"))))
                 .filter(CommandCenterStore::retryReady)
+                .filter(x->claimEligible(x,workerId))
                 .sorted((a,b)->{
                     int retryCmp=Integer.compare(integer(a.get("failureCount")),integer(b.get("failureCount")));
                     return retryCmp!=0?retryCmp:Double.compare(number(b.get("score")),number(a.get("score")));
@@ -279,13 +339,19 @@ public final class CommandCenterStore {
         if(bestVideo.isPresent()){
             Map<String,Object>m=bestVideo.get();
             Instant claimedAt=Instant.now();
+            if("STANDARD_QUEUED".equals(m.get("pairedVideoState"))
+                    &&ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.STANDARD)
+                m.put("pairedVideoState","STANDARD_PRODUCING");
+            if("FRAMING_QUEUED".equals(m.get("pairedVideoState"))
+                    &&ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE)
+                m.put("pairedVideoState","FRAMING_PRODUCING");
             m.put("claimId",UUID.randomUUID().toString());m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
             int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
             appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY"));
             renewLease(m);
             persistQuiet();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
-            job.put("jobType","VIDEO");job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
+            job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
             job.put("claimId",m.get("claimId"));job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
             Map<String,Object>sourceMix=m.get("sourceMix") instanceof Map<?,?>?Json.object(m.get("sourceMix")):Map.of();
             Map<String,Object>framing=m.get("framingAnalysis") instanceof Map<?,?>?Json.object(m.get("framingAnalysis")):Map.of();
@@ -297,6 +363,10 @@ public final class CommandCenterStore {
                     String.valueOf(m.getOrDefault("biasAnalysisError",""))
             );
             job.put("politicalVisualData",political.toMap());
+            if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE){
+                job.put("framingContentFingerprint",m.getOrDefault("biasAnalysisInputHash",""));
+                job.put("framingAnalysis",new LinkedHashMap<>(framing));
+            }
             return job;
         }
 
@@ -307,11 +377,14 @@ public final class CommandCenterStore {
                 .findFirst();
         if(bestBias.isEmpty())return null;
         Map<String,Object>m=bestBias.get();
-        m.put("biasAnalysisStatus","ANALYZING");m.put("biasAssignedWorker",workerId);m.put("biasAnalysisStartedAt",Instant.now().toString());
+        m.put("biasAnalysisStatus","ANALYZING");m.put("biasAssignedWorker",workerId);
+        m.put("biasClaimInputHash",m.getOrDefault("biasAnalysisInputHash",""));
+        m.put("biasAnalysisStartedAt",Instant.now().toString());
         m.put("biasAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());m.remove("biasAnalysisError");
         persistQuiet();emit("story",publicStory(m));
         Map<String,Object>job=new LinkedHashMap<>();
         job.put("jobType","POLITICAL_ANALYSIS");job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
+        job.put("analysisInputFingerprint",m.get("biasClaimInputHash"));
         return job;
     }
 
@@ -360,16 +433,80 @@ public final class CommandCenterStore {
     public synchronized void politicalAnalysisComplete(String storyId,Map<String,Object>result,String workerId){
         Map<String,Object>m=requireStory(storyId);
         m.put("framingAnalysis",deepCopyMap(result));
-        m.put("framingInputHash",String.valueOf(m.getOrDefault("biasAnalysisInputHash","")));
-        m.put("biasAnalysisStatus","COMPLETE");m.put("biasAnalyzedAt",Instant.now().toString());m.put("biasAnalyzedBy",workerId);
+        m.put("framingInputHash",String.valueOf(m.getOrDefault("biasClaimInputHash",m.getOrDefault("biasAnalysisInputHash",""))));
+        m.remove("biasClaimInputHash");
+        m.put("biasAnalysisStatus",String.valueOf(m.getOrDefault("framingInputHash",""))
+                .equals(String.valueOf(m.getOrDefault("biasAnalysisInputHash","")))?"COMPLETE":"QUEUED");m.put("biasAnalyzedAt",Instant.now().toString());m.put("biasAnalyzedBy",workerId);
         m.remove("biasAnalysisError");m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
         persistQuiet();emit("story",publicStory(m));
+    }
+
+    /**
+     * Commit analysis and its exact article snapshot together. A stale worker must
+     * never overwrite the controller's newer candidate or invalidate its fingerprint.
+     */
+    public synchronized void politicalAnalysisComplete(String storyId,Map<String,Object>result,
+            String workerId,NewsPipeline.Candidate prepared,String claimedFingerprint){
+        Map<String,Object>m=requireStory(storyId);
+        if(!"ANALYZING".equals(m.get("biasAnalysisStatus"))
+                ||!workerId.equals(String.valueOf(m.getOrDefault("biasAssignedWorker","")))
+                ||claimedFingerprint.isBlank()
+                ||!claimedFingerprint.equals(String.valueOf(m.getOrDefault("biasClaimInputHash","")))
+                ||!claimedFingerprint.equals(String.valueOf(m.getOrDefault("biasAnalysisInputHash",""))))
+            throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Political analysis claim superseded");
+        if(!(m.get("candidate") instanceof Map<?,?>))
+            throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Missing original analysis candidate");
+        NewsPipeline.Candidate original=NewsPipeline.Candidate.fromMap(Json.object(m.get("candidate")));
+        StoryCluster before=original.cluster(),after=prepared.cluster();
+        if(!before.id.equals(after.id)||!before.topic.equals(after.topic)
+                ||!before.fingerprint.equals(after.fingerprint)
+                ||before.articles.size()!=after.articles.size())
+            throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Analysis changed story identity");
+        for(int i=0;i<before.articles.size();i++){
+            Article prior=before.articles.get(i),next=after.articles.get(i);
+            Map<String,Object>oldFields=new LinkedHashMap<>(prior.toMap());
+            Map<String,Object>newFields=new LinkedHashMap<>(next.toMap());
+            oldFields.remove("bodyText");newFields.remove("bodyText");
+            if(!oldFields.equals(newFields)
+                    ||(!prior.bodyText().isBlank()&&!prior.bodyText().equals(next.bodyText())))
+                throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Analysis substituted article content");
+        }
+        String revised=framingFingerprint(after);
+        m.put("candidate",prepared.toMap());
+        m.put("biasAnalysisInputHash",revised);
+        m.put("framingInputHash",revised);
+        m.put("framingAnalysis",deepCopyMap(result));
+        m.put("biasAnalysisStatus","COMPLETE");
+        m.put("biasAnalyzedAt",Instant.now().toString());
+        m.put("biasAnalyzedBy",workerId);
+        m.remove("biasClaimInputHash");m.remove("biasAnalysisError");
+        m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
+        persistQuiet();emit("story",publicStory(m));
+    }
+
+    public synchronized void politicalAnalysisFail(String storyId,String error,String workerId){
+        Map<String,Object>m=stories.get(storyId);
+        if(m==null||!"ANALYZING".equals(m.get("biasAnalysisStatus"))
+                ||!workerId.equals(String.valueOf(m.getOrDefault("biasAssignedWorker",""))))return;
+        // A scan can update RSS content while the worker is fetching or analyzing.
+        // The stale worker's eventual failure must not suppress analysis of that newer text.
+        if(!Objects.equals(m.get("biasClaimInputHash"),m.get("biasAnalysisInputHash"))){
+            m.put("biasAnalysisStatus","QUEUED");
+            m.put("biasAnalysisQueuedAt",Instant.now().toString());
+            m.put("biasAnalysisError","Old analysis superseded by updated article content");
+            m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
+            m.remove("biasClaimInputHash");
+            persistQuiet();emit("story",publicStory(m));
+            return;
+        }
+        politicalAnalysisFail(storyId,error);
     }
 
     public synchronized void politicalAnalysisFail(String storyId,String error){
         Map<String,Object>m=requireStory(storyId);
         m.put("biasAnalysisStatus","FAILED");m.put("biasAnalysisError",safe(error));m.put("biasAnalysisFailedAt",Instant.now().toString());
-        m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");
+        if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE&&"QUEUED".equals(m.get("status"))){m.put("stage","WAITING_FOR_FRAMING_ANALYSIS");m.put("detail","Analysis failed. Retry analysis to continue.");}
+        m.remove("biasAssignedWorker");m.remove("biasAnalysisLeaseUntil");m.remove("biasClaimInputHash");
         persistQuiet();emit("story",publicStory(m));
     }
 
@@ -392,6 +529,12 @@ public final class CommandCenterStore {
         if(!workerOwnsActiveJob(m,String.valueOf(metadata.getOrDefault("workerId","")),
                 String.valueOf(metadata.getOrDefault("claimId",""))))
             throw new IllegalStateException("Completion rejected: inactive or superseded worker claim.");
+        ProductionMode completedMode=ProductionMode.fromPersisted(m.get("productionMode"));
+        if(metadata.get("sidecar") instanceof Map<?,?> sidecarMode){
+            String declared=String.valueOf(Json.object(sidecarMode).getOrDefault("productionMode","STANDARD"));
+            if(!completedMode.name().equals(declared))throw new IllegalStateException("Completion mode mismatch: "+declared);
+        }else if(completedMode==ProductionMode.FRAMING_EXPOSURE)
+            throw new IllegalStateException("Experimental video requires a provenance sidecar.");
         int version=nextVideoVersion(jobId);
         String versionId=videoVersionId(jobId,version);
         m.put("status","COMPLETE");m.put("stage","COMPLETE");m.put("progress",100);clearLease(m);m.put("completedAt",Instant.now().toString());m.put("result",new LinkedHashMap<>(metadata));m.remove("error");
@@ -418,8 +561,73 @@ public final class CommandCenterStore {
             m.put("visualMode",comfyImages>0?"ComfyUI + procedural cards":"Procedural cards");
         }
         for(Map<String,Object>existing:videos.values())if(jobId.equals(String.valueOf(existing.get("storyId"))))existing.put("current",false);
-        Map<String,Object>v=new LinkedHashMap<>();v.put("versionId",versionId);v.put("storyId",jobId);v.put("jobId",jobId);v.put("version",version);v.put("current",true);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));copyPublicationState(m,v);videos.put(versionId,v);
+        Map<String,Object>v=new LinkedHashMap<>();v.put("versionId",versionId);v.put("productionMode",completedMode.name());v.put("storyId",jobId);v.put("jobId",jobId);v.put("version",version);v.put("current",true);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));copyPublicationState(m,v);videos.put(versionId,v);
+        // Create the second job only AFTER the normal video has been fully recorded.
+        // The standard version keeps its own id, path, metadata and uploaded flag.
+        if(completedMode==ProductionMode.STANDARD&&pairFramingAfterStandard){
+            queueFollowupFraming(m,versionId);
+        }else if(completedMode==ProductionMode.FRAMING_EXPOSURE&&
+                ("FRAMING_QUEUED".equals(m.get("pairedVideoState"))||
+                 "FRAMING_PRODUCING".equals(m.get("pairedVideoState")))){
+            m.put("pairedFramingVersionId",versionId);
+            m.put("pairedVideoState","COMPLETE");
+            m.put("detail","Both videos complete: original report and political framing review");
+        }
         persistQuiet();emit("story",publicStory(m));emit("video",publicCopy(v));
+    }
+
+    /**
+     * Durable sequential pair: never queue a review from an unsuccessful normal
+     * render. Store the first version before clearing its current-media fields.
+     */
+    private void queueFollowupFraming(Map<String,Object>m,String standardVersionId){
+        m.put("pairedStandardVersionId",standardVersionId);
+        m.remove("pairedFramingVersionId");
+        m.put("manualFramingRequested",true);
+        m.put("politicalCandidate",true); // user/auto request applies even to nonpolitical stories
+        if(!(m.get("candidate") instanceof Map<?,?>)){
+            m.put("pairedVideoState","FRAMING_SKIPPED");
+            m.put("detail","Normal video complete; missing article evidence for follow-up");
+            return;
+        }
+        NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(m.get("candidate")));
+        if(candidate.cluster().articles.stream().noneMatch(a->
+                !a.title().isBlank()&&!a.publisher().isBlank()&&!a.url().isBlank())){
+            m.put("pairedVideoState","FRAMING_SKIPPED");
+            m.put("detail","Normal video complete; source attribution is unavailable for follow-up");
+            return;
+        }
+        m.put("pairedVideoState","FRAMING_QUEUED");
+        m.put("productionMode",ProductionMode.FRAMING_EXPOSURE.name());
+        m.put("status","QUEUED");
+        m.put("progress",15);
+        m.put("queuedAt",Instant.now().toString());
+        m.put("updatedAt",Instant.now().toString());
+        clearLease(m);resetFailureRetryState(m);
+        // Reset the story's in-flight media result, never the archived version.
+        clearCurrentMediaResult(m);clearCurrentPublicationState(m);
+        String requested=String.valueOf(m.getOrDefault("biasAnalysisInputHash",""));
+        String analyzed=String.valueOf(m.getOrDefault("framingInputHash",""));
+        if(!"COMPLETE".equals(String.valueOf(m.get("biasAnalysisStatus")))
+                ||requested.isBlank()||!requested.equals(analyzed)){
+            if(!"ANALYZING".equals(String.valueOf(m.get("biasAnalysisStatus")))){
+                m.put("biasAnalysisStatus","QUEUED");
+                m.put("biasAnalysisQueuedAt",Instant.now().toString());
+                m.remove("biasAnalysisError");
+            }
+            m.put("stage","WAITING_FOR_FRAMING_ANALYSIS");
+            m.put("detail","Normal video archived; preparing the framing review");
+        }else{
+            m.put("stage","QUEUED");
+            m.put("detail","Normal video archived; framing review ready for compatible worker");
+        }
+    }
+
+    private void markStandardPairQueued(Map<String,Object>m){
+        if(!pairFramingAfterStandard)return;
+        m.put("pairedVideoState","STANDARD_QUEUED");
+        m.remove("pairedStandardVersionId");
+        m.remove("pairedFramingVersionId");
     }
 
     public synchronized Map<String,Object> setUploadStatus(String storyId,boolean uploaded,String platform,String note){
@@ -531,14 +739,25 @@ public final class CommandCenterStore {
         ));
         m.remove("assignedWorker");m.remove("jobStartedAt");clearLease(m);
 
-        if(failures<=failureMaxRetries){
+        // Deterministic evidence, JSON/validation exhaustion and stale snapshots cannot
+        // be repaired by starting the entire video job repeatedly. Manual retry remains available.
+        boolean nonTransient=nonTransientFailure(message);
+        if(!nonTransient&&failures<=failureMaxRetries){
             Instant retryAt=now.plusSeconds(failureRetryDelaySeconds);
             m.put("status","QUEUED");m.put("stage","QUEUED");m.put("progress",15);m.put("queuedAt",now.toString());
             m.put("retryNotBefore",retryAt.toString());
             m.put("detail","Production failed; automatic retry "+failures+"/"+failureMaxRetries+" queued"+(failureRetryDelaySeconds>0?" in "+failureRetryDelaySeconds+"s":""));
         }else{
             m.put("status","FAILED");m.put("stage","FAILED");m.put("progress",0);m.remove("retryNotBefore");
-            m.put("detail","Production failed after "+failureMaxRetries+" automatic retries; manual action required");
+            m.put("detail",nonTransient
+                    ?"Non-transient production error; manual retry or new source evidence required"
+                    :"Production failed after "+failureMaxRetries+" automatic retries; manual action required");
+            if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE&&
+                    String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("FRAMING_"))
+                m.put("pairedVideoState","FRAMING_FAILED");
+            else if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.STANDARD&&
+                    String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("STANDARD_"))
+                m.put("pairedVideoState","STANDARD_FAILED");
         }
         persistQuiet();emit("story",publicStory(m));
     }
@@ -598,7 +817,7 @@ public final class CommandCenterStore {
         List<Map<String,Object>>matches=new ArrayList<>();
         Map<String,Object>facets=new LinkedHashMap<>();
         for(String key:BOARD_STATUSES)facets.put(key,0L);
-        for(Map<String,Object>story:stories.values()){
+        for(Map<String,Object>story:boardEntries()){
             String rawStatus=String.valueOf(story.getOrDefault("status",""));
             boolean recent=withinBoardAge(story,cutoff);
             // Rail counts ignore search and mirror the existing browser's age
@@ -614,7 +833,8 @@ public final class CommandCenterStore {
         }
         matches.sort(Comparator
                 .comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed()
-                .thenComparing(x->String.valueOf(x.getOrDefault("id",""))));
+                .thenComparing(x->String.valueOf(x.getOrDefault("id","")))
+                .thenComparingInt(x->"FRAMING_EXPOSURE".equals(x.get("entryMode"))?1:0));
         int total=matches.size();
         int totalPages=Math.max(1,(int)((total+(long)pageSize-1)/pageSize));
         int page=Math.min(requestedPage,totalPages);
@@ -628,6 +848,122 @@ public final class CommandCenterStore {
         return out;
     }
 
+    /**
+     * Operationally there is ONE RSS story/queue lease, but each produced format
+     * is an independently actionable board item. Project the two rows here
+     * rather than duplicating the job, which would break claim/retry semantics.
+     *
+     * Only the most recent completed version of each format is shown on the
+     * Story Operations Board. Older versions remain in the posting ledger.
+     * The archive is indexed once to avoid O(stories * videoVersions) scans.
+     */
+    private List<Map<String,Object>>boardEntries(){
+        Map<String,Map<ProductionMode,Map<String,Object>>>latest=new HashMap<>();
+        for(Map<String,Object>video:videos.values()){
+            String id=String.valueOf(video.getOrDefault("storyId",video.getOrDefault("jobId","")));
+            if(!stories.containsKey(id))continue;
+            ProductionMode mode=ProductionMode.fromPersisted(video.get("productionMode"));
+            Map<ProductionMode,Map<String,Object>>modes=latest.computeIfAbsent(id,k->new EnumMap<>(ProductionMode.class));
+            Map<String,Object>old=modes.get(mode);
+            if(old==null||integer(video.get("version"))>integer(old.get("version")))
+                modes.put(mode,video);
+        }
+        List<Map<String,Object>>rows=new ArrayList<>(stories.size()*2);
+        for(Map<String,Object>story:stories.values()){
+            String id=String.valueOf(story.get("id"));
+            Map<ProductionMode,Map<String,Object>>modes=latest.getOrDefault(id,Map.of());
+            boolean paired=story.containsKey("pairedVideoState")
+                    ||story.containsKey("pairedStandardVersionId")
+                    ||story.containsKey("pairedFramingVersionId");
+            ProductionMode active=ProductionMode.fromPersisted(story.get("productionMode"));
+            // Untouched RSS discovery entries are still one normal story card.
+            boolean standard=paired||modes.containsKey(ProductionMode.STANDARD)
+                    ||active==ProductionMode.STANDARD;
+            boolean review=paired||modes.containsKey(ProductionMode.FRAMING_EXPOSURE)
+                    ||active==ProductionMode.FRAMING_EXPOSURE;
+            if(standard)rows.add(boardEntry(story,ProductionMode.STANDARD,
+                    modes.get(ProductionMode.STANDARD),active==ProductionMode.STANDARD));
+            if(review){
+                // A new remake cycle must show its NEXT review as waiting,
+                // not disguise an older archived review as the new companion.
+                Map<String,Object>reviewVideo=modes.get(ProductionMode.FRAMING_EXPOSURE);
+                if(paired&&active==ProductionMode.STANDARD
+                        &&Set.of("STANDARD_QUEUED","STANDARD_PRODUCING","STANDARD_FAILED")
+                            .contains(String.valueOf(story.get("pairedVideoState"))))
+                    reviewVideo=null;
+                rows.add(boardEntry(story,ProductionMode.FRAMING_EXPOSURE,
+                        reviewVideo,active==ProductionMode.FRAMING_EXPOSURE));
+            }
+        }
+        return rows;
+    }
+
+    private Map<String,Object>boardEntry(Map<String,Object>story,ProductionMode mode,
+            Map<String,Object>completed,boolean active){
+        Map<String,Object>row=new LinkedHashMap<>(story);
+        String sourceId=String.valueOf(story.get("id"));
+        String originalTitle=String.valueOf(story.getOrDefault("topic",""));
+        String name=mode==ProductionMode.FRAMING_EXPOSURE
+                ?"Narrative Review: "+originalTitle:originalTitle;
+        row.put("boardEntryId",sourceId+"::"+mode.name());
+        row.put("sourceStoryId",sourceId);
+        row.put("entryMode",mode.name());
+        row.put("productionMode",mode.name());
+        row.put("displayTitle",name);
+        boolean live=active&&!Set.of("COMPLETE","COMPLETE_HISTORY").contains(
+                String.valueOf(story.getOrDefault("status","")));
+        row.put("entryActive",live);
+        row.put("entryHasVideo",completed!=null&&!live);
+        row.put("entryMayRemake","COMPLETE".equals(String.valueOf(story.get("status")))
+                &&completed!=null);
+        if(completed!=null&&!live){
+            row.put("status","COMPLETE");
+            row.put("stage","COMPLETE");
+            row.put("progress",100);
+            row.put("videoVersion",completed.get("version"));
+            row.put("currentVideoVersionId",completed.get("versionId"));
+            row.put("videoFilename",completed.getOrDefault("filename",""));
+            row.put("serverVideo",completed.getOrDefault("path",""));
+            row.put("completedAt",completed.getOrDefault("completedAt",""));
+            for(String key:List.of("ttsEngine","ttsVoice","visualMode","comfyCheckpoint","comfyImages"))
+                if(completed.containsKey(key))row.put(key,completed.get(key));else row.remove(key);
+            copyPublicationState(completed,row);
+            row.remove("lastFailure");row.remove("failureType");row.remove("error");
+            row.put("detail",mode==ProductionMode.STANDARD
+                    ?"Original report archived as "+completed.get("versionId")
+                    :"Narrative review archived as "+completed.get("versionId"));
+        }else if(!active){
+            // Second card is visible as soon as the first report is chosen,
+            // even though the dependent review is not yet claimable.
+            row.put("status","WAITING");
+            row.put("stage","WAITING_FOR_NORMAL_VIDEO");
+            row.put("progress",0);
+            row.put("detail","Waiting for original news video to complete");
+            row.put("entryMayRemake",false);
+            row.remove("currentVideoVersionId");
+            row.remove("videoVersion");
+            row.remove("videoFilename");
+            row.remove("lastFailure");row.remove("error");
+            row.put("uploaded",false);row.put("scrapped",false);
+            String pair=String.valueOf(story.getOrDefault("pairedVideoState",""));
+            if(mode==ProductionMode.FRAMING_EXPOSURE&&"FRAMING_SKIPPED".equals(pair)){
+                row.put("status","SKIPPED");
+                row.put("stage","SKIPPED");
+                row.put("detail",story.getOrDefault("detail","Narrative review could not be queued"));
+            }else if(mode==ProductionMode.FRAMING_EXPOSURE&&"STANDARD_FAILED".equals(pair)){
+                row.put("status","HOLD");
+                row.put("stage","WAITING_FOR_NORMAL_RETRY");
+                row.put("detail","Original video failed; review cannot start until it succeeds");
+            }
+        }else{
+            row.remove("currentVideoVersionId");
+            row.remove("videoVersion");
+            row.remove("videoFilename");
+            row.put("uploaded",false);row.put("scrapped",false);
+        }
+        return row;
+    }
+
     private static boolean isOperationalBoardStatus(String status){
         return "QUEUED".equals(status)||"PRODUCING".equals(status)||"HOLD".equals(status);
     }
@@ -636,6 +972,7 @@ public final class CommandCenterStore {
             case "ALL"->true;
             case "COMPLETE"->rawStatus.startsWith("COMPLETE");
             case "TO_POST"->isToPost(m);
+            case "QUEUED"->"QUEUED".equals(rawStatus)||"WAITING".equals(rawStatus);
             case "UPLOADED"->Boolean.TRUE.equals(m.get("uploaded"))&&!Boolean.TRUE.equals(m.get("scrapped"));
             case "SCRAPPED"->Boolean.TRUE.equals(m.get("scrapped"));
             case "WORTHY"->isActionableWorthy(m);
@@ -652,7 +989,7 @@ public final class CommandCenterStore {
     }
     private static String boardSearchText(Map<String,Object>m){
         StringBuilder sb=new StringBuilder();
-        for(String key:List.of("topic","category","uploadedPlatform","uploadNote","scrapReason",
+        for(String key:List.of("topic","displayTitle","entryMode","category","uploadedPlatform","uploadNote","scrapReason",
                 "lastFailure","failureType","assignedWorker","lastAssignedWorker")){
             Object value=m.get(key);
             if(value!=null)sb.append(value).append(' ');
@@ -673,6 +1010,26 @@ public final class CommandCenterStore {
     private static int stageProgress(String s){return switch(s){case "VERIFY"->20;case "SCRIPT"->34;case "TTS"->52;case "VISUALS"->68;case "RENDER"->84;case "AUDIT"->96;case "APPROVED"->99;case "REJECTED"->0;default->25;};}
     private static double number(Object x){return x instanceof Number n?n.doubleValue():0;}
     private static int integer(Object x){return x instanceof Number n?n.intValue():0;}
+    private boolean claimEligible(Map<String,Object>m,String workerId){
+        ProductionMode mode=ProductionMode.fromPersisted(m.get("productionMode"));
+        if(mode==ProductionMode.STANDARD)return true;
+        Map<String,Object>worker=workers.get(workerId);
+        if(worker==null||!(worker.get("capabilities") instanceof List<?> capabilities)
+                ||!capabilities.contains("framing_exposure_v1")){
+            m.put("stage","WAITING_FOR_COMPATIBLE_WORKER");
+            m.put("detail","WAITING FOR COMPATIBLE WORKER");
+            return false;
+        }
+        if(!"COMPLETE".equals(String.valueOf(m.get("biasAnalysisStatus")))
+                ||!String.valueOf(m.getOrDefault("biasAnalysisInputHash","")).equals(String.valueOf(m.getOrDefault("framingInputHash","")))){
+            m.put("stage","WAITING_FOR_FRAMING_ANALYSIS");return false;
+        }
+        if(!(m.get("framingAnalysis") instanceof Map<?,?>))return false;
+        Map<String,Object>analysis=Json.object(m.get("framingAnalysis"));
+        // Absence of political slant is a valid finding, not a reason to refuse analysis.
+        // The experimental script must report that conclusion rather than invent a bias.
+        return true;
+    }
     private static boolean retryReady(Map<String,Object>m){
         Object raw=m.get("retryNotBefore");
         if(raw==null)return true;
@@ -684,6 +1041,7 @@ public final class CommandCenterStore {
     }
     private static boolean isToPost(Map<String,Object>m){
         return "COMPLETE".equals(String.valueOf(m.get("status")))
+                &&Boolean.TRUE.equals(m.getOrDefault("entryHasVideo",true))
                 &&!Boolean.TRUE.equals(m.get("uploaded"))
                 &&!Boolean.TRUE.equals(m.get("scrapped"));
     }
@@ -737,12 +1095,70 @@ public final class CommandCenterStore {
     }
 
     private static void appendProductionAttempt(Map<String,Object>target,Instant now,Map<String,Object>values){
-        appendStateHistory(target,"productionAttempts",now,values);
+        Map<String,Object>withMode=new LinkedHashMap<>(values);
+        withMode.put("productionMode",ProductionMode.fromPersisted(target.get("productionMode")).name());
+        appendStateHistory(target,"productionAttempts",now,withMode);
         Object raw=target.get("productionAttempts");
         if(raw instanceof List<?> list&&list.size()>20)target.put("productionAttempts",new ArrayList<>(list.subList(list.size()-20,list.size())));
     }
+    private static String framingFingerprint(StoryCluster cluster){
+        return Hashing.sha256(cluster.articles.stream().map(a->
+                a.id()+"|"+a.title()+"|"+a.description()+"|"+a.bodyText())
+                .sorted().reduce("",(a,b)->a+"|"+b));
+    }
+
+    /** Preserve previously fetched article bodies across routine RSS rescans,
+     * but invalidate them when the publisher, headline, URL, or description changes. */
+    private static NewsPipeline.Candidate retainEnrichedEvidence(NewsPipeline.Candidate current,Object saved){
+        if(!(saved instanceof Map<?,?>))return current;
+        NewsPipeline.Candidate previous;
+        try{previous=NewsPipeline.Candidate.fromMap(Json.object(saved));}
+        catch(RuntimeException e){return current;}
+        Map<String,Article>byId=new HashMap<>();
+        for(Article a:previous.cluster().articles)byId.put(a.id(),a);
+        List<Article>retained=new ArrayList<>();
+        boolean changed=false;
+        for(Article a:current.cluster().articles){
+            Article old=byId.get(a.id());
+            if(old!=null&&a.bodyText().isBlank()&&!old.bodyText().isBlank()
+                    &&a.publisher().equals(old.publisher())&&a.title().equals(old.title())
+                    &&a.description().equals(old.description())&&a.url().equals(old.url())
+                    &&a.canonicalUrl().equals(old.canonicalUrl())){
+                retained.add(new Article(a.id(),a.publisher(),a.title(),a.url(),a.canonicalUrl(),
+                        a.publishedAt(),a.discoveredAt(),a.author(),a.category(),a.description(),
+                        old.bodyText(),a.language(),a.sourceTrustTier(),a.authoritativePrimary()));
+                changed=true;
+            }else retained.add(a);
+        }
+        if(!changed)return current;
+        StoryCluster cluster=current.cluster();
+        return new NewsPipeline.Candidate(new StoryCluster(cluster.id,cluster.topic,retained,
+                cluster.entities,cluster.fingerprint),current.factPackage(),current.score());
+    }
+
+    private static boolean nonTransientFailure(String message){
+        String lower=message==null?"":message.toLowerCase(Locale.ROOT);
+        return lower.contains("framing_script_validation_failed")
+                ||lower.contains("framing_script_format_failed")
+                ||lower.contains("framing_ollama_output_limit")
+                ||lower.contains("insufficient_framing_evidence")
+                ||lower.contains("stale_framing_evidence")
+                ||lower.contains("locked political framing opening changed");
+    }
     private static String failureTypeForStage(String stage,String message){
         String lower=message==null?"":message.toLowerCase(Locale.ROOT);
+        if(lower.contains("framing_ollama_failure"))return "OLLAMA_FAILURE";
+        if(lower.contains("framing_ollama_output_limit"))return "OLLAMA_OUTPUT_LIMIT";
+        if(lower.contains("framing_script_format_failed"))return "OLLAMA_FORMAT_FAILURE";
+        if(lower.contains("framing_script_validation_failed")
+                ||lower.contains("script validation failed")
+                ||lower.contains("repair segment ")
+                ||lower.contains("unsupported numerical claim")
+                ||lower.contains("expected exactly six analysis segments"))return "SCRIPT_FAILURE";
+        if(lower.contains("insufficient_framing_evidence"))return "EVIDENCE_FAILURE";
+        if(lower.contains("stale_framing_evidence"))return "STALE_EVIDENCE_FAILURE";
+        if(lower.contains("ollama http")||lower.contains("ollama output hit")
+                ||lower.contains("ollama returned an empty response"))return "OLLAMA_FAILURE";
         if(lower.contains("upload")||lower.contains("/video"))return "UPLOAD_FAILURE";
         return switch(stage==null?"":stage.toUpperCase(Locale.ROOT)){
             case "VERIFY"->"VERIFICATION_FAILURE";
@@ -792,6 +1208,12 @@ public final class CommandCenterStore {
                 m.put("lastFailure","Worker lease expired "+leaseRecoveries+" times; automatic lease recovery stopped.");
                 m.put("lastFailedAt",now.toString());m.put("error",m.get("lastFailure"));
                 m.put("detail","Worker lease recovery exhausted; manual retry required");
+                if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE&&
+                        String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("FRAMING_"))
+                    m.put("pairedVideoState","FRAMING_FAILED");
+                else if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.STANDARD&&
+                        String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("STANDARD_"))
+                    m.put("pairedVideoState","STANDARD_FAILED");
             }
             recovered++;if(announce)emit("story",publicStory(m));
         }

@@ -7,9 +7,9 @@ const ROOT=path.resolve(__dirname,"../..");
 const files={"": "index.html","/":"index.html","/app.js":"app.js","/styles.css":"styles.css"};
 function fixture(appOverride=null){
   const story={id:"story-1",topic:"Selected text must survive updates and worker activity",status:"VERIFIED",stage:"DISCOVERED",progress:12,score:.9,verified:true,worthy:true,
-    latestPublishedAt:new Date().toISOString(),publishers:["Associated Press","Reuters"],category:"general",independentSources:2,sourceMix:{left:0,center:2,right:0,unknown:0}};
+    latestPublishedAt:new Date().toISOString(),publishers:["Associated Press","Reuters"],category:"local",politicalCandidate:false,independentSources:1,sourceMix:{left:0,center:2,right:0,unknown:0}};
   const version={storyId:"story-1",versionId:"story-1#v1",version:1,current:true,topic:story.topic,
-    completedAt:new Date().toISOString(),filename:"test.mp4",uploaded:false,scrapped:false};
+    completedAt:new Date().toISOString(),filename:"test.mp4",productionMode:"STANDARD",uploaded:false,scrapped:false};
   const state={stories:[story],videos:[version],workers:Array.from({length:5},(_,i)=>({id:"worker-"+i,online:true,state:"IDLE",metrics:{cpuLoad:12+i,memoryTotalMb:20000,memoryFreeMb:10000,gpu:{available:false}}})),
     feeds:Array.from({length:90},(_,i)=>({url:"https://feed.test/rss/"+i,name:"Publisher "+i,category:"general",status:"OK",entries:3})),
     counts:{stories:1,worthy:1,verified:1,feedsOk:90,feedsFailed:0,workersOnline:5,queued:0,producing:0,complete:1,videoVersions:1,toPost:1,uploaded:0,scrapped:0},
@@ -71,20 +71,24 @@ function fixture(appOverride=null){
       let storyResult={...target};
       if(url.pathname.endsWith("/action")){
         const a=body.action;
-        if(a==="MAKE"||a==="WORTH"||a==="REMAKE"){target.status="QUEUED";target.stage="QUEUED";target.progress=15;state.counts.queued=1;}
+        if(a==="MAKE"||a==="WORTH"||a==="REMAKE"||a==="MAKE_FRAMING_EXPOSURE"||a==="REMAKE_FRAMING_EXPOSURE"){target.status="QUEUED";target.productionMode=a==="MAKE_FRAMING_EXPOSURE"?"FRAMING_EXPOSURE":"STANDARD";target.stage="QUEUED";target.progress=15;state.counts.queued=1;}
         else if(a==="HOLD"){target.status="HOLD";target.stage="HOLD"}
         else if(a==="SKIP"){target.status="SKIPPED";target.stage="SKIPPED"}
         else if(a==="AUTO"){target.status="VERIFIED";target.stage="DISCOVERED"}
         storyResult={...target};
       }else if(url.pathname.endsWith("/upload-status")){
-        version.uploaded=!!body.uploaded;
-        target.uploaded=version.uploaded;
-        state.counts.uploaded=+version.uploaded;
+        const chosen=state.videos.find(v=>v.versionId===body.versionId)||version;
+        chosen.uploaded=!!body.uploaded;
+        const match=state.stories.find(x=>x.currentVideoVersionId===chosen.versionId);
+        if(match)match.uploaded=chosen.uploaded;
+        state.counts.uploaded=state.videos.filter(v=>v.uploaded).length;
         storyResult={...target};
       }else if(url.pathname.endsWith("/scrap-status")){
-        version.scrapped=!!body.scrapped;
-        target.scrapped=version.scrapped;
-        state.counts.scrapped=+version.scrapped;
+        const chosen=state.videos.find(v=>v.versionId===body.versionId)||version;
+        chosen.scrapped=!!body.scrapped;
+        const match=state.stories.find(x=>x.currentVideoVersionId===chosen.versionId);
+        if(match)match.scrapped=chosen.scrapped;
+        state.counts.scrapped=state.videos.filter(v=>v.scrapped).length;
         storyResult={...target};
       }
       if(dropResponse){dropResponse=false;req.socket.destroy();return}
@@ -106,6 +110,97 @@ function fixture(appOverride=null){
     async start(){await new Promise(ok=>server.listen(0,"127.0.0.1",ok));return "http://127.0.0.1:"+server.address().port},
     async stop(){for(const client of clients)client.destroy();await new Promise(ok=>server.close(ok))}};
 }
+test("any one-source story can request framing exposure without publisher comparison",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    const card=page.locator("#stories .storyCard").first();
+    await expect(card).toBeVisible();
+    const experiment=card.locator('[data-command="MAKE_FRAMING_EXPOSURE"]');
+    await expect(experiment).toBeVisible();
+    await expect(experiment).toContainText("EXPOSE POLITICAL FRAMING");
+    await expect(page.locator(".videoRow")).toContainText("STANDARD");
+    page.on("dialog",dialog=>dialog.accept());
+    await experiment.click();
+    await expect.poll(()=>f.posts.filter(x=>x.body.action==="MAKE_FRAMING_EXPOSURE").length).toBe(1);
+    await expect(card.locator(".statusTag").filter({hasText:"NARRATIVE REVIEW"})).toBeVisible();
+    await expect(experiment).toBeDisabled();
+    expect(f.posts.filter(x=>x.body.action==="MAKE_FRAMING_EXPOSURE")).toHaveLength(1);
+    await expect(page.locator(".videoRow")).toContainText("STANDARD");
+  }finally{await f.stop();}
+});
+
+test("paired normal and narrative review display as separate keyed board rows with independent version actions",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    const original=f.story.topic,now=new Date().toISOString();
+    f.state.stories=[
+      {...f.story,id:"story-1",boardEntryId:"story-1::STANDARD",
+        sourceStoryId:"story-1",entryMode:"STANDARD",productionMode:"STANDARD",
+        displayTitle:original,status:"COMPLETE",stage:"COMPLETE",progress:100,
+        currentVideoVersionId:"story-1#v1",videoFilename:"original.mp4",
+        videoVersion:1,entryHasVideo:true,entryMayRemake:true,uploaded:false},
+      {...f.story,id:"story-1",boardEntryId:"story-1::FRAMING_EXPOSURE",
+        sourceStoryId:"story-1",entryMode:"FRAMING_EXPOSURE",productionMode:"FRAMING_EXPOSURE",
+        displayTitle:"Narrative Review: "+original,status:"COMPLETE",stage:"COMPLETE",progress:100,
+        currentVideoVersionId:"story-1#v2",videoFilename:"review.mp4",
+        videoVersion:2,entryHasVideo:true,entryMayRemake:true,uploaded:false}
+    ];
+    f.state.videos=[
+      {...f.version,current:false,filename:"original.mp4",versionId:"story-1#v1",version:1,completedAt:now},
+      {...f.version,current:true,filename:"review.mp4",versionId:"story-1#v2",
+        version:2,productionMode:"FRAMING_EXPOSURE",completedAt:now}
+    ];
+    f.state.counts.videoVersions=2;
+    await page.goto(url);
+    const rows=page.locator("#stories .storyCard");
+    await expect(rows).toHaveCount(2);
+    const originalRow=rows.nth(0),reviewRow=rows.nth(1);
+    await expect(originalRow.locator(".storyTitle")).toHaveText(original);
+    await expect(reviewRow.locator(".storyTitle")).toHaveText("Narrative Review: "+original);
+    await expect(originalRow.locator(".statusTag")).toContainText(["COMPLETE","ORIGINAL NEWS"]);
+    await expect(reviewRow.locator(".statusTag")).toContainText(["COMPLETE","NARRATIVE REVIEW"]);
+    const keys=await rows.evaluateAll(items=>items.map(x=>x.dataset.recordKey));
+    expect(new Set(keys).size).toBe(2);
+    await expect(originalRow.locator("a[href*='original.mp4']")).toBeVisible();
+    await expect(reviewRow.locator("a[href*='review.mp4']")).toBeVisible();
+    const archives=page.locator("#videos .videoRow");
+    await expect(archives).toHaveCount(2);
+    await expect(archives.filter({hasText:"Narrative Review:"})).toHaveCount(1);
+
+    // Each board card uses the source story route but its own actual video version.
+    page.on("dialog",dialog=>dialog.accept(dialog.type()==="prompt"?"TikTok":""));
+    await originalRow.locator('[data-command="UPLOAD"]').click();
+    await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/upload-status")
+      &&p.body.versionId==="story-1#v1"&&p.body.uploaded).length).toBe(1);
+    await expect(reviewRow.locator('[data-command="UPLOAD"]')).toBeEnabled();
+    await reviewRow.locator('[data-command="UPLOAD"]').click();
+    await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/upload-status")
+      &&p.body.versionId==="story-1#v2"&&p.body.uploaded).length).toBe(1);
+    await reviewRow.locator('[data-command="SCRAP"]').click();
+    await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/scrap-status")
+      &&p.body.versionId==="story-1#v2"&&p.body.scrapped).length).toBe(1);
+    const stillTwo=await page.locator("#stories .storyCard").count();
+    expect(stillTwo).toBe(2);
+  }finally{await f.stop();}
+});
+
+test("narrative review card retry targets review action rather than normal MAKE",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    f.state.stories=[{...f.story,boardEntryId:"story-1::FRAMING_EXPOSURE",
+      entryMode:"FRAMING_EXPOSURE",productionMode:"FRAMING_EXPOSURE",
+      displayTitle:"Narrative Review: "+f.story.topic,
+      status:"FAILED",pairedVideoState:"FRAMING_FAILED",stage:"SCRIPT",lastFailure:"Draft not valid"}];
+    await page.goto(url);
+    await expect(page.locator("#stories .storyCard")).toHaveCount(1);
+    page.on("dialog",dialog=>dialog.accept());
+    await page.locator('.storyCard [data-command="MAKE_FRAMING_EXPOSURE"]').click();
+    await expect.poll(()=>f.posts.filter(p=>p.body.action==="MAKE_FRAMING_EXPOSURE").length).toBe(1);
+    expect(f.posts.some(p=>p.body.action==="MAKE")).toBe(false);
+  }finally{await f.stop();}
+});
+
 test("selected text and card identity survive thirty seconds of live worker/feed updates",async({page})=>{
   const f=fixture(),url=await f.start();
   try{

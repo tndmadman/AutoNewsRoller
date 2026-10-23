@@ -43,7 +43,8 @@ public final class CommandCenterServer {
                 cfg.getDouble("commandCenterSingleSourceAutoQueueThreshold",0.82),
                 cfg.getInt("commandCenterFailureMaxRetries",3),
                 cfg.getInt("commandCenterFailureRetryDelaySeconds",20),
-                cfg.getInt("commandCenterLeaseRecoveryMaxRetries",3)
+                cfg.getInt("commandCenterLeaseRecoveryMaxRetries",3),
+                cfg.getBool("commandCenterPairFramingVideos",true)
         );
     }
 
@@ -155,7 +156,10 @@ public final class CommandCenterServer {
                 Map<String,Object>m=store.storyDetail(id);if(m==null){json(x,404,Map.of("error","story not found"));return;}json(x,200,m);return;
             }
             if(p.length>=2&&"action".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
-                Map<String,Object>body=bodyObject(x);String action=String.valueOf(body.getOrDefault("action",""));json(x,200,store.action(id,action,String.valueOf(body.getOrDefault("operationId",""))));return;
+                Map<String,Object>body=bodyObject(x);String action=String.valueOf(body.getOrDefault("action",""));
+                if(action.toUpperCase(Locale.ROOT).contains("FRAMING_EXPOSURE")&&!cfg.getBool("politicalExposureEnabled",true))
+                    throw new IllegalStateException("Political framing exposure experiment is disabled.");
+                json(x,200,store.action(id,action,String.valueOf(body.getOrDefault("operationId",""))));return;
             }
             if(p.length>=2&&"upload-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>body=bodyObject(x);
@@ -250,12 +254,18 @@ public final class CommandCenterServer {
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
                     Map<String,Object>b=bodyObject(x);
                     Map<String,Object>result=b.get("result") instanceof Map<?,?>?Json.object(b.get("result")):b;
-                    store.politicalAnalysisComplete(id,result,String.valueOf(b.getOrDefault("workerId","")));
+                    if(!(b.get("candidate") instanceof Map<?,?>))
+                        throw new IllegalStateException("Missing enriched analysis candidate");
+                    NewsPipeline.Candidate prepared=NewsPipeline.Candidate.fromMap(Json.object(b.get("candidate")));
+                    store.politicalAnalysisComplete(id,result,
+                            String.valueOf(b.getOrDefault("workerId","")),prepared,
+                            String.valueOf(b.getOrDefault("analysisInputFingerprint","")));
                     json(x,200,Map.of("ok",true));
                 }
                 case "bias-fail"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    Map<String,Object>b=bodyObject(x);store.politicalAnalysisFail(id,String.valueOf(b.getOrDefault("error","analysis failure")));json(x,200,Map.of("ok",true));
+                    Map<String,Object>b=bodyObject(x);store.politicalAnalysisFail(id,String.valueOf(b.getOrDefault("error","analysis failure")),
+                            String.valueOf(b.getOrDefault("workerId","")));json(x,200,Map.of("ok",true));
                 }
                 default->json(x,404,Map.of("error","unknown job operation"));
             }

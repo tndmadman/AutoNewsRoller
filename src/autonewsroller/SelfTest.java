@@ -43,6 +43,11 @@ public final class SelfTest {
         testCommandCenterLeaseRecovery(a);
         testPublisherBiasRegistry(root);
         testPoliticalAnalysisQueue(a);
+        testEnrichedFramingSnapshot();
+        testSelectedArticleEnrichment();
+        testPoliticalExposureMode();
+        testPairedSequentialVideoProduction();
+        testPoliticalExposureLengthRecovery();
         testPoliticalVisualGraphics(root,a);
         testAuthoritative(root);
         testMalformed(root);
@@ -267,7 +272,20 @@ public final class SelfTest {
                     &&((List<?>)smallPage.get("stories")).size()==Math.min(25,size),
                     "pagination boundaries for "+size+" stories");
         }
-        Json.write(state,Map.of("stories",records,"feeds",Map.of(),"videos",Map.of()));
+        Map<String,Object>archive=new LinkedHashMap<>();
+        for(Object rawRecord:records.values()){
+            Map<String,Object>item=Json.object(rawRecord);
+            if(!"COMPLETE".equals(item.get("status")))continue;
+            String storyId=String.valueOf(item.get("id"));
+            Map<String,Object>video=new LinkedHashMap<>();
+            video.put("storyId",storyId);video.put("jobId",storyId);
+            video.put("versionId",storyId+"#v1");video.put("version",1);
+            video.put("topic",item.get("topic"));video.put("productionMode","STANDARD");
+            video.put("uploaded",Boolean.TRUE.equals(item.get("uploaded")));
+            video.put("scrapped",false);
+            archive.put(storyId+"#v1",video);
+        }
+        Json.write(state,Map.of("stories",records,"feeds",Map.of(),"videos",archive));
         CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
         Map<String,Object>tiny=store.snapshot(false);
         ok(((List<?>)tiny.get("stories")).isEmpty()
@@ -657,6 +675,664 @@ public final class SelfTest {
         ok(((Number)deduped.get("center")).intValue()==1&&((Number)deduped.get("left")).intValue()==0&&((Number)deduped.get("right")).intValue()==0,"publisher bias mix deduplicates repeated publishers case-insensitively");
     }
 
+    private void testPoliticalExposureMode()throws Exception{
+        Instant now=Instant.now();
+        Article first=new Article("frame-a","Publisher A",
+                "Senate election bill sparks debate about voting rules",
+                "https://publisher-a.example/news/bill","https://publisher-a.example/news/bill",now,now,"","politics",
+                "Legislators discussed a voting bill.","","en",1,false);
+        StoryCluster cluster=new StoryCluster("framing-experiment-fixture",first.title(),List.of(first),
+                Set.of("Senate","election"),"fixture-fingerprint");
+        FactPackage fp=new FactPackage(cluster.id,first.title(),
+                "The Senate debated an election bill concerning voting rules.",
+                List.of(),List.of(),List.of(Map.of("publisher","Publisher A")),1,1,0.45,false);
+        NewsPipeline.DiscoveryItem item=new NewsPipeline.DiscoveryItem(cluster,fp,true,"fixture verified",0.91,false);
+        NewsPipeline.DiscoveryResult found=new NewsPipeline.DiscoveryResult(List.of(item),2,2,0,2,2,2,2,now);
+        Path dir=Files.createTempDirectory("autonews-political-exposure-");
+        Path state=dir.resolve("state.json");
+        CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),false,0.68,12,null);
+        store.applyDiscovery(found);
+        Map<String,Object>queued=store.action(cluster.id,"MAKE_FRAMING_EXPOSURE","same-operation");
+        ok("FRAMING_EXPOSURE".equals(queued.get("productionMode"))
+                &&"QUEUED".equals(queued.get("status")),"framing exposure action sets explicit experimental mode");
+        store.action(cluster.id,"MAKE_FRAMING_EXPOSURE","same-operation");
+        ok("WAITING_FOR_FRAMING_ANALYSIS".equals(store.storyDetail(cluster.id).get("stage")),
+                "experiment waits for framing evidence, duplicate operation does not create another job");
+        Map<String,Object>analysisJob=store.claim("old-worker",Map.of());
+        ok("POLITICAL_ANALYSIS".equals(analysisJob.get("jobType")),"legacy worker may handle political classification, not experimental video");
+        Map<String,Object>analysis=new LinkedHashMap<>();
+        analysis.put("politicalRelevance",0.11);analysis.put("overallClassification","not_political");
+        analysis.put("overallConfidence",0.85);analysis.put("overallWeights",Map.of("left",0.3,"center",0.4,"right",0.3));
+        analysis.put("summary","Insufficient evidence of political slant in the available text.");
+        analysis.put("articles",List.of(Map.of("id",first.id(),"classification","not_political",
+                "rationale","Only the headline and short description are available.")));
+        analysis.put("model","fixture-model");
+        store.politicalAnalysisComplete(cluster.id,analysis,"old-worker");
+        ok(store.claim("old-worker",Map.of())==null,"worker without exposure capability cannot claim experimental render");
+        CommandCenterStore loaded=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),false,0.68,12,null);
+        ok("FRAMING_EXPOSURE".equals(loaded.storyDetail(cluster.id).get("productionMode")),
+                "experimental mode survives restart");
+        loaded.heartbeat("new-worker",Map.of("id","new-worker","capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>job=loaded.claim("new-worker",Map.of("duration",75));
+        ok("VIDEO".equals(job.get("jobType"))&&"FRAMING_EXPOSURE".equals(job.get("productionMode")),
+                "capable worker claims only requested experiment");
+        loaded.complete(cluster.id,Map.of("workerId","new-worker","claimId",job.get("claimId"),
+                "sidecar",Map.of("productionMode","FRAMING_EXPOSURE")));
+        Map<String,Object>done=loaded.storyDetail(cluster.id);
+        String versionId=String.valueOf(done.get("currentVideoVersionId"));
+        loaded.setUploadStatus(cluster.id,versionId,true,"TikTok","first experiment");
+        loaded.action(cluster.id,"REMAKE");
+        ok("STANDARD".equals(loaded.storyDetail(cluster.id).get("productionMode")),
+                "ordinary remake explicitly returns to STANDARD");
+        Map<String,Object>snapshot=loaded.snapshot();
+        List<?>versions=(List<?>)snapshot.get("videos");
+        ok(versions.stream().anyMatch(v->v instanceof Map<?,?>m&&
+                "FRAMING_EXPOSURE".equals(m.get("productionMode"))&&Boolean.TRUE.equals(m.get("uploaded"))),
+                "historic framing video keeps its mode and independent uploaded flag");
+
+        PoliticalVisualData context=PoliticalVisualData.from(true,Map.of(),analysis,"COMPLETE","");
+        var evidence=new PoliticalFramingEvidenceBuilder().build(cluster,fp,context);
+        NewsScript script=new PoliticalFramingScriptGenerator(null,1).generate(fp,evidence,75,true);
+        ok(script.narration().startsWith(first.title()+" "+PoliticalFramingScriptGenerator.TEASER),
+                "title followed by exact mandatory audible teaser");
+        VisualPlan plan=new PoliticalFramingVisualPlanner().plan(script,evidence);
+        ok(plan.items().size()==8&&"FRAMING_HEADLINE".equals(plan.items().get(0).type())
+                &&"LANGUAGE_HIGHLIGHT".equals(plan.items().get(3).type())
+                &&"RHETORIC_CARD".equals(plan.items().get(4).type()),
+                "visual plan inspects the one source without a publisher comparison");
+        ok(evidence.articles().size()==1
+                &&"HEADLINE_AND_DESCRIPTION".equals(evidence.articles().get(0).get("availableTextScope")),
+                "single-source headline and description provide usable attributed framing evidence");
+        ok(script.sourceLabels().equals(List.of("Publisher A"))
+                &&script.segments().stream().noneMatch(s->s.purpose().equals("SECOND_SOURCE")),
+                "single-source script does not request a second publisher");
+        var filtered=new PoliticalFramingEvidenceBuilder().withArticleAnalysis(evidence,analysis);
+        ok(Json.object(filtered.politicalAnalysis().get("primaryArticleAnalysis")).get("classification").equals("not_political"),
+                "no-political-slant article finding is retained, not fabricated into a partisan verdict");
+        // A non-political category must still be eligible for a user-triggered framing check.
+        Article plain=new Article("frame-plain","Example News","City council announces new budget process",
+                "https://example.org/budget","https://example.org/budget",now,now,"","local","","","en",1,false);
+        StoryCluster plainCluster=new StoryCluster("manual-framing-story",plain.title(),List.of(plain),Set.of(),"plain");
+        FactPackage plainFacts=new FactPackage(plainCluster.id,plain.title(),plain.title(),List.of(),
+                List.of(),List.of(Map.of("publisher","Example News")),1,1,0.35,false);
+        NewsPipeline.DiscoveryResult plainDiscovery=new NewsPipeline.DiscoveryResult(
+                List.of(new NewsPipeline.DiscoveryItem(plainCluster,plainFacts,false,"one report",0.45,false)),
+                1,1,0,1,1,1,1,now);
+        CommandCenterStore singleStore=new CommandCenterStore(dir.resolve("non-political.json"),
+                BiasRegistry.load(dir.resolve("bias.json")),false,0.68,12,null);
+        singleStore.applyDiscovery(plainDiscovery);
+        ok(!Boolean.TRUE.equals(singleStore.storyDetail(plainCluster.id).get("politicalCandidate")),
+                "single-source non-political story is not auto-classified as political");
+        singleStore.action(plainCluster.id,"MAKE_FRAMING_EXPOSURE");
+        singleStore.applyDiscovery(plainDiscovery);
+        ok("QUEUED".equals(singleStore.storyDetail(plainCluster.id).get("biasAnalysisStatus")),
+                "manual exposure keeps its analysis queued across a feed rescan");
+        ok(ProductionMode.fromPersisted(null)==ProductionMode.STANDARD,"legacy jobs default to standard");
+        try{ProductionMode.fromPersisted("BROKEN");throw new AssertionError("Unknown mode accepted");}
+        catch(IllegalArgumentException expected){ok(true,"unknown mode is explicitly rejected");}
+    }
+
+    private void testPairedSequentialVideoProduction()throws Exception{
+        Instant now=Instant.now();
+        Article article=new Article("paired-a","Fixture News",
+                "Community market announces its Saturday vendor schedule",
+                "https://fixture.example/vote","https://fixture.example/vote",now,now,"","local",
+                "Local vendors plan to open their stalls on Saturday.","","en",1,false);
+        StoryCluster cluster=new StoryCluster("paired-story",article.title(),List.of(article),Set.of("market"),"paired-fingerprint");
+        FactPackage facts=new FactPackage(cluster.id,article.title(),"Market organizers released their Saturday schedule.",
+                List.of(),List.of(),List.of(Map.of("publisher",article.publisher())),1,1,.6,false);
+        NewsPipeline.DiscoveryResult discovery=new NewsPipeline.DiscoveryResult(
+                List.of(new NewsPipeline.DiscoveryItem(cluster,facts,false,"one attributable report",0.9,false)),
+                1,1,0,1,1,1,1,now);
+        Path dir=Files.createTempDirectory("autonews-sequential-pair-");
+        Path state=dir.resolve("state.json");
+        CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),
+                false,.68,12,null,75,.74,.82,0,0,1,true);
+        store.applyDiscovery(discovery);
+        ok(!Boolean.TRUE.equals(store.storyDetail(cluster.id).get("politicalCandidate")),
+                "ordinary local story does not begin as an automatic political classification");
+        store.action(cluster.id,"MAKE","selected-once");
+        ok("STANDARD_QUEUED".equals(store.storyDetail(cluster.id).get("pairedVideoState")),
+                "chosen MAKE job records a two-video sequence before rendering");
+        Map<String,Object>initialBoard=store.boardStories(1,25,"ALL","",0);
+        List<?>initialEntries=(List<?>)initialBoard.get("stories");
+        ok(initialEntries.size()==2
+                &&"paired-story::STANDARD".equals(Json.object(initialEntries.get(0)).get("boardEntryId"))
+                &&"paired-story::FRAMING_EXPOSURE".equals(Json.object(initialEntries.get(1)).get("boardEntryId")),
+                "selected story immediately appears as two adjacent uniquely keyed board entries");
+        ok("WAITING".equals(Json.object(initialEntries.get(1)).get("status"))
+                &&"WAITING_FOR_NORMAL_VIDEO".equals(Json.object(initialEntries.get(1)).get("stage"))
+                &&String.valueOf(Json.object(initialEntries.get(1)).get("displayTitle"))
+                    .startsWith("Narrative Review: "),
+                "narrative review entry has its own titled waiting state before production");
+        ok(((Number)store.boardStories(1,25,"QUEUED","",0).get("total")).intValue()==2,
+                "queue filter includes standard work and dependent review waiting state");
+        store.heartbeat("updated-worker",Map.of("id","updated-worker",
+                "capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>normal=store.claim("updated-worker",Map.of("duration",70));
+        ok("VIDEO".equals(normal.get("jobType"))&&"STANDARD".equals(normal.get("productionMode")),
+                "first claimed job is always the original normal video");
+        ok(store.claim("updated-worker",Map.of())==null,
+                "second video is never claimable while the standard video is in progress");
+        store.complete(cluster.id,Map.of("workerId","updated-worker","claimId",normal.get("claimId"),
+                "sidecar",Map.of("productionMode","STANDARD")));
+        Map<String,Object>afterFirst=store.storyDetail(cluster.id);
+        ok("QUEUED".equals(afterFirst.get("status"))
+                &&"FRAMING_EXPOSURE".equals(afterFirst.get("productionMode"))
+                &&"FRAMING_QUEUED".equals(afterFirst.get("pairedVideoState")),
+                "successful normal completion queues a separate framing review automatically");
+        String firstVersion=String.valueOf(afterFirst.get("pairedStandardVersionId"));
+        ok(firstVersion.equals(afterFirst.get("currentVideoVersionId")),
+                "first normal video remains the published current version until the review completes");
+        Map<String,Object>handoffBoard=store.boardStories(1,25,"ALL","",0);
+        List<?>handoffRows=(List<?>)handoffBoard.get("stories");
+        ok("COMPLETE".equals(Json.object(handoffRows.get(0)).get("status"))
+                &&"QUEUED".equals(Json.object(handoffRows.get(1)).get("status"))
+                &&firstVersion.equals(Json.object(handoffRows.get(0)).get("currentVideoVersionId")),
+                "normal card remains completed and version-linked while review queues");
+        ok(((Number)store.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==1,
+                "completed normal report remains independently visible in To Post");
+        store.setUploadStatus(cluster.id,firstVersion,true,"TikTok","normal news posted");
+        ok(((Number)store.boardStories(1,25,"UPLOADED","",0).get("total")).intValue()==1
+                &&((Number)store.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==0,
+                "posting original report changes only the original board entry");
+        store.applyDiscovery(discovery);
+        ok("QUEUED".equals(store.storyDetail(cluster.id).get("status")),
+                "feed rescan cannot discard or duplicate a pending second video");
+        CommandCenterStore reloaded=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),
+                false,.68,12,null,75,.74,.82,0,0,1,true);
+        ok("FRAMING_QUEUED".equals(reloaded.storyDetail(cluster.id).get("pairedVideoState")),
+                "paired handoff survives a Command Center restart");
+        ok(((Number)reloaded.boardStories(1,10,"ALL","narrative review",0).get("total")).intValue()==1,
+                "narrative review is individually searchable after restart");
+        Map<String,Object>analysisJob=reloaded.claim("old-worker",Map.of());
+        ok(analysisJob!=null&&"POLITICAL_ANALYSIS".equals(analysisJob.get("jobType")),
+                "second video waits for article framing analysis even for a local category");
+        Map<String,Object>framing=new LinkedHashMap<>();
+        framing.put("politicalRelevance",.12);framing.put("overallClassification","not_political");
+        framing.put("overallConfidence",.7);
+        framing.put("overallWeights",Map.of("left",.3,"center",.4,"right",.3));
+        framing.put("summary","No documented partisan framing from the text.");
+        framing.put("articles",List.of(Map.of("id",article.id(),"classification","not_political")));
+        reloaded.politicalAnalysisComplete(cluster.id,framing,"old-worker");
+        ok(reloaded.claim("old-worker",Map.of())==null,
+                "legacy workers cannot take the review without the capability");
+        reloaded.heartbeat("updated-worker",Map.of("id","updated-worker",
+                "capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>review=reloaded.claim("updated-worker",Map.of("duration",75));
+        ok(review!=null&&"VIDEO".equals(review.get("jobType"))
+                &&"FRAMING_EXPOSURE".equals(review.get("productionMode")),
+                "second video is claimed as framing exposure rather than another news report");
+        reloaded.complete(cluster.id,Map.of("workerId","updated-worker","claimId",review.get("claimId"),
+                "sidecar",Map.of("productionMode","FRAMING_EXPOSURE")));
+        Map<String,Object>done=reloaded.storyDetail(cluster.id);
+        ok("COMPLETE".equals(done.get("status"))
+                &&"COMPLETE".equals(done.get("pairedVideoState"))
+                &&!firstVersion.equals(done.get("pairedFramingVersionId")),
+                "two-video sequence completes with distinct archived version identifiers");
+        List<?>versions=(List<?>)reloaded.snapshot().get("videos");
+        ok(versions.size()==2&&versions.stream().anyMatch(v->v instanceof Map<?,?>m
+                &&"STANDARD".equals(m.get("productionMode"))&&Boolean.TRUE.equals(m.get("uploaded")))
+                &&versions.stream().anyMatch(v->v instanceof Map<?,?>m
+                &&"FRAMING_EXPOSURE".equals(m.get("productionMode"))&&!Boolean.TRUE.equals(m.get("uploaded"))),
+                "both versions retain independent publication status");
+        Map<String,Object>completedBoard=reloaded.boardStories(1,25,"ALL","",0);
+        List<?>completedRows=(List<?>)completedBoard.get("stories");
+        ok(completedRows.size()==2
+                &&"COMPLETE".equals(Json.object(completedRows.get(0)).get("status"))
+                &&"COMPLETE".equals(Json.object(completedRows.get(1)).get("status"))
+                &&!Json.object(completedRows.get(0)).get("boardEntryId")
+                    .equals(Json.object(completedRows.get(1)).get("boardEntryId")),
+                "successful pair has two separately completed board cards");
+        ok(((Number)reloaded.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==1
+                &&((Number)reloaded.boardStories(1,25,"UPLOADED","",0).get("total")).intValue()==1,
+                "posting filters treat review and original as separate completed entries");
+        ok(((Number)reloaded.boardStories(1,10,"UPLOADED","",0).get("total")).intValue()==1
+                &&"STANDARD".equals(Json.object(((List<?>)reloaded.boardStories(1,10,"UPLOADED","",0)
+                        .get("stories")).get(0)).get("entryMode")),
+                "uploaded filter selects original while review remains ready to post");
+        ok(reloaded.claim("updated-worker",Map.of())==null,
+                "a completed pair does not silently create a third video");
+
+        // AUTO-selected stories receive the same pair as manually queued ones.
+        Path autoState=dir.resolve("auto-queue.json");
+        NewsPipeline.DiscoveryResult autoDiscovery=new NewsPipeline.DiscoveryResult(
+                List.of(new NewsPipeline.DiscoveryItem(cluster,facts,true,"fixture verified",0.95,false)),
+                1,1,0,1,1,1,1,now);
+        CommandCenterStore automatic=new CommandCenterStore(autoState,
+                BiasRegistry.load(dir.resolve("bias.json")),true,.68,12,null,75,.74,.82,0,0,1,true);
+        automatic.applyDiscovery(autoDiscovery);
+        ok("STANDARD".equals(String.valueOf(automatic.storyDetail(cluster.id).getOrDefault("productionMode","STANDARD")))
+                &&"QUEUED".equals(automatic.storyDetail(cluster.id).get("status")),
+                "automatic selection queues the standard story first");
+        Map<String,Object>autoJob=automatic.claim("old-worker",Map.of());
+        ok(autoJob!=null&&"STANDARD".equals(autoJob.get("productionMode")),
+                "auto-selected videos begin with original news production");
+        automatic.complete(cluster.id,Map.of("workerId","old-worker","claimId",autoJob.get("claimId"),
+                "sidecar",Map.of("productionMode","STANDARD")));
+        ok("FRAMING_QUEUED".equals(automatic.storyDetail(cluster.id).get("pairedVideoState"))
+                &&"QUEUED".equals(automatic.storyDetail(cluster.id).get("status")),
+                "auto-selected standard video independently triggers its framing companion");
+
+        // Failure of the review must preserve the successful normal video and
+        // the retry action must target only FRAMING_EXPOSURE.
+        Map<String,Object>autoAnalysis=automatic.claim("old-worker",Map.of());
+        ok("POLITICAL_ANALYSIS".equals(autoAnalysis.get("jobType")),
+                "automatic pair queues framing analysis for a single-source nonpolitical story");
+        automatic.politicalAnalysisComplete(cluster.id,framing,"old-worker");
+        automatic.heartbeat("updated-worker",Map.of("id","updated-worker",
+                "capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>autoReview=automatic.claim("updated-worker",Map.of());
+        automatic.fail(cluster.id,"Synthetic review render failure","updated-worker",
+                String.valueOf(autoReview.get("claimId")));
+        ok("FRAMING_FAILED".equals(automatic.storyDetail(cluster.id).get("pairedVideoState"))
+                &&"FAILED".equals(automatic.storyDetail(cluster.id).get("status"))
+                &&((List<?>)automatic.snapshot().get("videos")).size()==1,
+                "failed framing review keeps completed normal version safe");
+        ok(((Number)automatic.boardStories(1,10,"FAILED","",0).get("total")).intValue()==1
+                &&((Number)automatic.boardStories(1,10,"COMPLETE","",0).get("total")).intValue()==1,
+                "failed review remains individually actionable while original card stays complete");
+        automatic.action(cluster.id,"MAKE");
+        ok("FRAMING_EXPOSURE".equals(automatic.storyDetail(cluster.id).get("productionMode"))
+                &&"FRAMING_QUEUED".equals(automatic.storyDetail(cluster.id).get("pairedVideoState")),
+                "retrying the failed pair resumes the framing review, not the completed news video");
+        ok(((List<?>)automatic.snapshot().get("videos")).size()==1,
+                "framing retry creates no duplicate normal version");
+        Map<String,Object>retryReview=automatic.claim("updated-worker",Map.of());
+        ok(retryReview!=null&&"FRAMING_EXPOSURE".equals(retryReview.get("productionMode")),
+                "manual retry claims only the failed narrative review");
+        automatic.progress(cluster.id,new WorkerState(1,1,PipelineStage.SCRIPT,
+                "Generating narrative review narration",Instant.now()),"updated-worker",
+                String.valueOf(retryReview.get("claimId")));
+        automatic.fail(cluster.id,"FRAMING_SCRIPT_VALIDATION_FAILED after 5 attempts",
+                "updated-worker",String.valueOf(retryReview.get("claimId")));
+        ok("SCRIPT_FAILURE".equals(automatic.storyDetail(cluster.id).get("failureType"))
+                &&((List<?>)automatic.snapshot().get("videos")).size()==1,
+                "script-generation failure is correctly labeled and the normal video stays archived");
+
+        // Explicit exposure action remains a one-video choice, with no standard prelude.
+        Path onlyState=dir.resolve("framing-only.json");
+        CommandCenterStore only=new CommandCenterStore(onlyState,BiasRegistry.load(dir.resolve("bias.json")),
+                false,.68,12,null,75,.74,.82,0,0,1,true);
+        only.applyDiscovery(discovery);
+        only.action(cluster.id,"MAKE_FRAMING_EXPOSURE");
+        ok("FRAMING_EXPOSURE".equals(only.storyDetail(cluster.id).get("productionMode"))
+                &&only.storyDetail(cluster.id).get("pairedStandardVersionId")==null,
+                "standalone framing button does not unexpectedly create a news report");
+
+        // A failed standard first stage must never enqueue a review.
+        Path failureState=dir.resolve("first-failure.json");
+        CommandCenterStore fail=new CommandCenterStore(failureState,BiasRegistry.load(dir.resolve("bias.json")),
+                false,.68,12,null,75,.74,.82,0,0,1,true);
+        fail.applyDiscovery(discovery);
+        fail.action(cluster.id,"MAKE");
+        Map<String,Object>bad=fail.claim("old-worker",Map.of());
+        fail.fail(cluster.id,"Synthetic standard rendering failure","old-worker",
+                String.valueOf(bad.get("claimId")));
+        ok("FAILED".equals(fail.storyDetail(cluster.id).get("status"))
+                &&"STANDARD_FAILED".equals(fail.storyDetail(cluster.id).get("pairedVideoState"))
+                &&((List<?>)fail.snapshot().get("videos")).isEmpty(),
+                "failed original video does not enqueue a premature framing review");
+
+        // Re-making a completed pair starts a new independent two-video cycle.
+        reloaded.action(cluster.id,"REMAKE");
+        Map<String,Object>remake=reloaded.claim("updated-worker",Map.of());
+        ok("STANDARD".equals(remake.get("productionMode")),"REMAKE starts a new normal video first");
+        reloaded.complete(cluster.id,Map.of("workerId","updated-worker","claimId",remake.get("claimId"),
+                "sidecar",Map.of("productionMode","STANDARD")));
+        ok(((List<?>)reloaded.snapshot().get("videos")).size()==3
+                &&"FRAMING_QUEUED".equals(reloaded.storyDetail(cluster.id).get("pairedVideoState")),
+                "remake preserves both original files and queues its own review");
+        Map<String,Object>remakeBoard=reloaded.boardStories(1,25,"ALL","",0);
+        ok(((List<?>)remakeBoard.get("stories")).size()==2,
+                "remakes replace current board state without duplicating cards for older archives");
+    }
+
+    private void testPoliticalExposureLengthRecovery()throws Exception{
+        Instant now=Instant.now();
+        Article article=new Article("framing-length-one","Fixture Gazette",
+                "Senate debates election proposal and new voting procedures",
+                "https://fixture.example/article","https://fixture.example/article",now,now,"","politics",
+                "Senate members debated a proposal about voting procedures.","","en",1,false);
+        StoryCluster cluster=new StoryCluster("length-fixture",article.title(),List.of(article),Set.of("Senate"),"length-test");
+        FactPackage facts=new FactPackage(cluster.id,article.title(),
+                "The source reports that senators debated changes to voting procedures.",
+                List.of(),List.of(),List.of(Map.of("publisher",article.publisher())),1,1,.5,false);
+        Map<String,Object>analysis=Map.of("politicalRelevance",.7,
+                "overallClassification","uncertain","overallConfidence",.5,
+                "overallWeights",Map.of("left",.3,"center",.4,"right",.3),
+                "summary","Headline wording should be inspected without assuming motives.");
+        PoliticalVisualData political=PoliticalVisualData.from(true,Map.of(),analysis,"COMPLETE","");
+        var evidence=new PoliticalFramingEvidenceBuilder().build(cluster,facts,political);
+
+        String[]sentences={
+                "The article reports that senators debated changes to voting procedures today.",
+                "The headline presents the debate as a proposed change under discussion.",
+                "This wording foregrounds the institutional process rather than a definite outcome.",
+                "The description discusses procedures but does not identify a final decision.",
+                "That distinction matters because a proposal is not an enacted policy.",
+                "Readers may interpret an active debate differently from a finished action.",
+                "The available article excerpt cannot establish the publisher's private motives."
+        };
+        List<String>oversized=new ArrayList<>();
+        for(int i=0;i<6;i++){
+            List<String>parts=new ArrayList<>();
+            for(int j=0;j<7;j++)parts.add(sentences[(i+j)%sentences.length]);
+            oversized.add(String.join(" ",parts));
+        }
+        int rawWords=autonewsroller.util.Text.words(article.title())
+                +autonewsroller.util.Text.words(PoliticalFramingScriptGenerator.TEASER)
+                +oversized.stream().mapToInt(autonewsroller.util.Text::words).sum();
+        ok(rawWords>300,"test Ollama produces a script longer than the 70-second upper limit");
+        PoliticalFramingLengthEditor.Edit edited=PoliticalFramingLengthEditor.compact(
+                oversized,article.title(),PoliticalFramingScriptGenerator.TEASER,70);
+        ok(edited.changed()&&edited.resultingWords()>=ScriptValidator.minWords(70)
+                &&edited.resultingWords()<=ScriptValidator.maxWords(70),
+                "oversized six-beat script is edited to valid duration budget using complete sentences");
+        ok(edited.paragraphs().size()==6
+                &&edited.paragraphs().stream().allMatch(x->x.endsWith("."))
+                &&edited.paragraphs().get(0).contains("reports"),
+                "length repair retains all six editorial beats and complete original sentences");
+        List<String>shortDraft=List.of("A factual summary.","An article headline.","A possible emphasis.",
+                "Evidence is limited.","An interpretation is possible.","No motive is established.");
+        ok(!PoliticalFramingLengthEditor.compact(shortDraft,article.title(),
+                PoliticalFramingScriptGenerator.TEASER,70).changed(),
+                "short drafts are never fabricated or padded with unsupported claims");
+
+        // Different, substantive observations should be allowed to occupy additional
+        // runtime rather than mechanically losing complete explanatory paragraphs.
+        List<String>longDraft=List.of(
+                "The article reports a debate about a proposed change to voting procedures. A discussion of a proposal is not the same as an enacted policy. The available description identifies a deliberative process without claiming final adoption. That distinction controls how confidently any outcome may be stated.",
+                "The headline uses the active verb debates, keeping lawmakers and their deliberation at the center. The phrase election proposal identifies a plan under discussion instead of a completed result. Naming voting procedures foregrounds administration rather than an individual voter. This selection of emphasis could influence expectations about the story.",
+                "The headline does not use an obvious alarm word or explicit partisan attack. Its reference to new procedures suggests change while leaving the impact unspecified. The short description contains no separate emotionally charged label. These observable choices leave the audience to infer possible effects without the article spelling them out.",
+                "A reported debate is supported by the attributed description available here. Any assertion about legal consequences would need additional information that was not supplied. The word proposal is important because it restricts the reported development to consideration. Treating a contemplated measure as settled law would go beyond the evidence.",
+                "Readers may focus first on the prospect of administrative change because the headline foregrounds procedures. A different reader may instead notice the ongoing debate and understand the outcome as open. Neither interpretation establishes intentional persuasion by the publisher. The text supports analysis of emphasis, not a judgment about concealed motives.",
+                "The clearest framing observation is the contrast between an active debate and an unresolved proposal. The available wording supports scrutiny of what is presented as established. The short supplied source does not prove partisan manipulation or describe the full underlying policy. That limitation should remain clear in the final assessment."
+        );
+        int longWords=autonewsroller.util.Text.words(article.title())
+                +autonewsroller.util.Text.words(PoliticalFramingScriptGenerator.TEASER)
+                +longDraft.stream().mapToInt(autonewsroller.util.Text::words).sum();
+        ok(longWords>ScriptValidator.maxWords(75),
+                "a substantive six-part framing draft can exceed the short 75-second format");
+        ok(!PoliticalFramingDurationPolicy.excessiveRepetition(longDraft),
+                "distinct framing paragraphs are not mistaken for repetitive padding");
+        ok(PoliticalFramingDurationPolicy.excessiveRepetition(oversized),
+                "repeated sentences cannot justify an extended video");
+        ok(PoliticalFramingDurationPolicy.chooseSeconds(320,75,180)==128
+                &&PoliticalFramingDurationPolicy.chooseSeconds(400,75,180)==160,
+                "nominal runtime expands to reflect meaningful word count");
+        ok(PoliticalFramingDurationPolicy.chooseSeconds(600,75,180)==180
+                &&PoliticalFramingDurationPolicy.chooseSeconds(120,75,180)==75,
+                "automatic framing runtime remains capped and retains the minimum");
+
+        AtomicInteger calls=new AtomicInteger();
+        HttpServer mock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        mock.createContext("/generate",exchange->{
+            calls.incrementAndGet();
+            byte[]response=Json.stringify(Map.of("response",Json.stringify(Map.of("segments",longDraft)),
+                    "done_reason","stop")).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type","application/json");
+            exchange.sendResponseHeaders(200,response.length);
+            try(OutputStream output=exchange.getResponseBody()){output.write(response);}
+        });
+        mock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-length-recovery-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+mock.getAddress().getPort()+"/generate",
+                    "mock-framing","5m",scratch.resolve("ollama.lock"));
+            NewsScript expanded=new PoliticalFramingScriptGenerator(client,5,180).generate(facts,evidence,70,false);
+            int expectedSeconds=PoliticalFramingDurationPolicy.chooseSeconds(longWords,70,180);
+            ok(calls.get()==1,"a lengthy useful Ollama response does not trigger five regeneration attempts");
+            ok(expanded.estimatedDuration()==expectedSeconds&&expanded.estimatedDuration()>70,
+                    "substantive framing analysis automatically increases script duration");
+            ok(autonewsroller.util.Text.words(expanded.narration())>=ScriptValidator.minWords(expectedSeconds)
+                    &&autonewsroller.util.Text.words(expanded.narration())<=ScriptValidator.maxWords(expectedSeconds),
+                    "expanded script remains inside its dynamically chosen narration budget");
+            ok(expanded.narration().startsWith(article.title()+" "+PoliticalFramingScriptGenerator.TEASER)
+                    &&expanded.sourceLabels().equals(List.of(article.publisher())),
+                    "expanded duration preserves exact opening, attribution and one-source inspection");
+            ok(expanded.segments().size()==8
+                    &&expanded.narration().contains("The short supplied source does not prove partisan manipulation"),
+                    "longer framing mode preserves detailed evidence limitations instead of truncating them");
+        }finally{mock.stop(0);}
+
+        // Repro: the 30-word first draft must be EXPANDED by targeted edits,
+        // not condensed or blindly discarded. The mocked Ollama validates schema usage.
+        AtomicInteger shortCalls=new AtomicInteger();
+        AtomicInteger schemaChecks=new AtomicInteger();
+        HttpServer shortMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        shortMock.createContext("/generate",exchange->{
+            Map<String,Object>request=Json.object(Json.parse(new String(
+                    exchange.getRequestBody().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8)));
+            if(request.get("format") instanceof Map<?,?>)schemaChecks.incrementAndGet();
+            int call=shortCalls.incrementAndGet();
+            String responseText;
+            if(call==1){
+                responseText=Json.stringify(Map.of("segments",shortDraft));
+            }else{
+                Map<String,Object>controls=Json.object(Json.parse(
+                        String.valueOf(request.get("prompt")).substring(
+                                String.valueOf(request.get("prompt")).indexOf('{'))));
+                List<?>indices=(List<?>)controls.get("repairIndices");
+                List<Map<String,Object>>fixes=new ArrayList<>();
+                for(Object index:indices)fixes.add(Map.of("segmentIndex",index,
+                        "narration",longDraft.get(((Number)index).intValue())));
+                responseText=Json.stringify(Map.of("replacements",fixes));
+            }
+            byte[]body=Json.stringify(Map.of("response",responseText,"done_reason","stop"))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+        });
+        shortMock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-short-repair-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    shortMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+            NewsScript recovered=new PoliticalFramingScriptGenerator(client,4,180)
+                    .generate(facts,evidence,75,false);
+            ok(shortCalls.get()==2&&schemaChecks.get()==2,
+                    "short framing draft receives one schema-validated targeted repair");
+            ok(recovered.segments().get(2).narration().equals(shortDraft.get(0))
+                    &&recovered.segments().get(3).narration().equals(longDraft.get(1)),
+                    "short-draft repair preserves unaffected recap and expands analytical beats");
+        }finally{shortMock.stop(0);}
+
+        // Repro: the stray unsupported number zero is corrected only in its
+        // offending paragraph; other source-grounded analysis must survive.
+        List<String>numericDraft=new ArrayList<>(longDraft);
+        numericDraft.set(2,numericDraft.get(2)+" 0.");
+        AtomicInteger numericCalls=new AtomicInteger();
+        HttpServer numberMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        numberMock.createContext("/generate",exchange->{
+            int call=numericCalls.incrementAndGet();
+            String responseText=call==1?Json.stringify(Map.of("segments",numericDraft))
+                    :Json.stringify(Map.of("replacements",List.of(
+                            Map.of("segmentIndex",2,"narration",longDraft.get(2)))));
+            byte[]body=Json.stringify(Map.of("response",responseText,"done_reason","stop"))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+        });
+        numberMock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-number-repair-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    numberMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+            NewsScript fixed=new PoliticalFramingScriptGenerator(client,4,180)
+                    .generate(facts,evidence,75,false);
+            ok(numericCalls.get()==2&&fixed.segments().get(4).narration().equals(longDraft.get(2))
+                    &&fixed.segments().get(3).narration().equals(longDraft.get(1)),
+                    "unsupported zero triggers single-segment factual repair");
+        }finally{numberMock.stop(0);}
+
+
+        // Truncated/malformed JSON must not be blindly regenerated five times
+        // when Ollama returns the same invalid content verbatim.
+        for(String broken:List.of("{\"segments\":[\"broken\",]",
+                Json.stringify(Map.of("segments",longDraft.subList(0,5))),
+                Json.stringify(Map.of("segments",List.of("one","two","three","four","five","six","seven"))))){
+            AtomicInteger brokenCalls=new AtomicInteger();
+            HttpServer brokenMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+            brokenMock.createContext("/generate",exchange->{
+                brokenCalls.incrementAndGet();
+                byte[]body=Json.stringify(Map.of("response",broken,"done_reason","stop"))
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200,body.length);
+                try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+            });
+            brokenMock.start();
+            try{
+                Path scratch=Files.createTempDirectory("framing-invalid-json-");
+                OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                        brokenMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+                boolean safelyRejected=false;
+                try{new PoliticalFramingScriptGenerator(client,5,180).generate(facts,evidence,75,false);}
+                catch(IllegalStateException failure){
+                    safelyRejected=failure.getMessage().contains("FRAMING_SCRIPT_FORMAT_FAILED");
+                }
+                ok(safelyRejected&&brokenCalls.get()==2,
+                        "repeated malformed/five-or-seven segment JSON is rejected after two identical responses");
+            }finally{brokenMock.stop(0);}
+        }
+
+        // A percentage is not interchangeable with the same bare number.
+        List<String>unsupportedPercent=new ArrayList<>(longDraft);
+        unsupportedPercent.set(2,longDraft.get(2)+" This change reaches 0% of readers.");
+        AtomicInteger percentCalls=new AtomicInteger();
+        HttpServer percentMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        percentMock.createContext("/generate",exchange->{
+            int call=percentCalls.incrementAndGet();
+            String responseText=call==1?Json.stringify(Map.of("segments",unsupportedPercent))
+                    :Json.stringify(Map.of("replacements",List.of(
+                            Map.of("segmentIndex",2,"narration",longDraft.get(2)))));
+            byte[]body=Json.stringify(Map.of("response",responseText,"done_reason","stop"))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+        });
+        percentMock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-percent-repair-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    percentMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+            NewsScript fixed=new PoliticalFramingScriptGenerator(client,4,180)
+                    .generate(facts,evidence,75,false);
+            ok(percentCalls.get()==2&&!fixed.narration().contains("0%"),
+                    "unsupported percentages are checked and repaired independently of integer evidence");
+        }finally{percentMock.stop(0);}
+
+        List<String>quotedDraft=new ArrayList<>(longDraft);
+        quotedDraft.set(1,longDraft.get(1)+
+                " The actual headline says \"Senate   debates election proposal\".");
+        AtomicInteger quoteCalls=new AtomicInteger();
+        HttpServer quoteMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        quoteMock.createContext("/generate",exchange->{
+            quoteCalls.incrementAndGet();
+            byte[]body=Json.stringify(Map.of("response",Json.stringify(Map.of("segments",quotedDraft)),
+                    "done_reason","stop")).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+        });
+        quoteMock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-source-quote-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    quoteMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+            NewsScript accepted=new PoliticalFramingScriptGenerator(client,2,180)
+                    .generate(facts,evidence,75,false);
+            ok(quoteCalls.get()==1&&accepted.narration().contains("Senate   debates election proposal"),
+                    "attributed real headline quotation tolerates benign whitespace differences");
+        }finally{quoteMock.stop(0);}
+
+        Article bodyLimited=new Article("excerpt-limit","Fixture Gazette",article.title(),
+                article.url(),article.canonicalUrl(),now,now,"","politics",
+                "description ".repeat(200),"article paragraph ".repeat(300),"en",1,false);
+        var clippedEvidence=new PoliticalFramingEvidenceBuilder().build(new StoryCluster(
+                "excerpt-limit-test",article.title(),List.of(bodyLimited),Set.of(),"source-limit"),facts,political);
+        Map<String,Object>clipped=clippedEvidence.articles().get(0);
+        ok(Boolean.TRUE.equals(clipped.get("bodyTruncated"))
+                &&Boolean.TRUE.equals(clipped.get("descriptionTruncated"))
+                &&String.valueOf(clipped.get("bodyText")).length()<=3600
+                &&clippedEvidence.contentFingerprint()!=null,
+                "evidence truncation remains explicit and fingerprints preserve full source integrity");
+
+
+        for(String unsupported:List.of(
+                "The publisher deliberately hides crucial context from readers.",
+                "The debate triggered an election crisis.")){
+            List<String>unsafe=new ArrayList<>(longDraft);
+            unsafe.set(2,longDraft.get(2)+" "+unsupported);
+            AtomicInteger repairs=new AtomicInteger();
+            HttpServer groundingMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+            groundingMock.createContext("/generate",exchange->{
+                int call=repairs.incrementAndGet();
+                String responseText=call==1?Json.stringify(Map.of("segments",unsafe))
+                        :Json.stringify(Map.of("replacements",List.of(
+                                Map.of("segmentIndex",2,"narration",longDraft.get(2)))));
+                byte[]body=Json.stringify(Map.of("response",responseText,"done_reason","stop"))
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200,body.length);
+                try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+            });
+            groundingMock.start();
+            try{
+                Path scratch=Files.createTempDirectory("framing-causal-omission-");
+                OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                        groundingMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+                NewsScript result=new PoliticalFramingScriptGenerator(client,4,180)
+                        .generate(facts,evidence,75,false);
+                ok(repairs.get()==2&&!result.narration().contains(unsupported)
+                        &&result.segments().get(4).narration().equals(longDraft.get(2)),
+                        "fabricated omission or unsupported causal claim receives a targeted repair");
+            }finally{groundingMock.stop(0);}
+        }
+
+        // Numbers from corroborating outlets are not source evidence for a review
+        // of ONE article, even if the upstream fact package contains them.
+        FactPackage crossOutletFacts=new FactPackage(facts.storyId(),facts.headline(),
+                "A separate publisher reports 47 votes.",facts.facts(),facts.disputedClaims(),
+                facts.sources(),facts.sourceCount(),facts.independentSourceCount(),
+                facts.confidence(),facts.authoritativePrimaryAccepted());
+        List<String>foreignNumeric=new ArrayList<>(longDraft);
+        foreignNumeric.set(2,longDraft.get(2)+" The measure received 47 votes.");
+        AtomicInteger foreignCalls=new AtomicInteger();
+        HttpServer sourceMock=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        sourceMock.createContext("/generate",exchange->{
+            int call=foreignCalls.incrementAndGet();
+            String responseText=call==1?Json.stringify(Map.of("segments",foreignNumeric))
+                    :Json.stringify(Map.of("replacements",List.of(
+                            Map.of("segmentIndex",2,"narration",longDraft.get(2)))));
+            byte[]body=Json.stringify(Map.of("response",responseText,"done_reason","stop"))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(body);}
+        });
+        sourceMock.start();
+        try{
+            Path scratch=Files.createTempDirectory("framing-source-boundary-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    sourceMock.getAddress().getPort()+"/generate","mock","5m",scratch.resolve("gate.lock"));
+            NewsScript fixed=new PoliticalFramingScriptGenerator(client,4,180)
+                    .generate(crossOutletFacts,evidence,75,false);
+            ok(foreignCalls.get()==2&&!fixed.narration().contains("47 votes"),
+                    "numerical facts from another publisher cannot license claims about the selected article");
+        }finally{sourceMock.stop(0);}
+
+        Article headlineOnly=new Article("only-headline","Fixture Gazette",
+                article.title(),article.url(),article.canonicalUrl(),now,now,"","politics",
+                "","","en",1,false);
+        StoryCluster limitedCluster=new StoryCluster("limited-framing",article.title(),
+                List.of(headlineOnly),Set.of(),"limited-framing-test");
+        var limitedEvidence=new PoliticalFramingEvidenceBuilder().build(limitedCluster,facts,political);
+        boolean limitedRejected=false;
+        try{new PoliticalFramingScriptGenerator(null,1).generate(facts,limitedEvidence,75,false);}
+        catch(IllegalStateException insufficient){
+            limitedRejected=insufficient.getMessage().contains("INSUFFICIENT_FRAMING_EVIDENCE");
+        }
+        ok(limitedRejected,"headline-only evidence reports an explicit insufficient-evidence result");
+    }
+
     private void testPoliticalAnalysisQueue(List<Article>a)throws Exception{
         Article base=a.stream().filter(x->!x.title().contains("Old archive")).findFirst().orElseThrow();
         Article political=new Article(
@@ -686,6 +1362,135 @@ public final class SelfTest {
         store.politicalAnalysisComplete(cluster.id,analysis,"analysis-worker");
         Map<String,Object>done=store.storyDetail(cluster.id);
         ok("COMPLETE".equals(done.get("biasAnalysisStatus"))&&Json.object(done.get("framingAnalysis")).get("overallClassification").equals("center"),"political framing result persists in command center state");
+    }
+
+    private void testEnrichedFramingSnapshot()throws Exception{
+        Instant now=Instant.now();
+        Article rss=new Article("enriched-article","Fixture Politics",
+                "Senate debates new election proposal",
+                "https://fixture.example/election","https://fixture.example/election",
+                now,now,"","politics","Lawmakers debated a proposal.","","en",1,false);
+        StoryCluster cluster=new StoryCluster("enriched-story",rss.title(),List.of(rss),
+                Set.of("Senate"),"unchanged-identity");
+        FactPackage facts=new SourceVerifier().verify(cluster,2).factPackage();
+        NewsPipeline.Candidate initial=new NewsPipeline.Candidate(cluster,facts,.8);
+        var discoveryItem=new NewsPipeline.DiscoveryItem(cluster,facts,false,"test",.8,false);
+        var scan=new NewsPipeline.DiscoveryResult(List.of(discoveryItem),1,1,0,1,1,1,1,now);
+        Path dir=Files.createTempDirectory("framing-atomic-evidence-");
+        CommandCenterStore store=new CommandCenterStore(dir.resolve("state.json"),
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82);
+        store.applyDiscovery(scan);
+        Map<String,Object>job=store.claim("analysis-worker",Map.of());
+        ok("POLITICAL_ANALYSIS".equals(job.get("jobType")),
+                "enrichment fixture claims a political-analysis job");
+        String originalHash=String.valueOf(job.get("analysisInputFingerprint"));
+        Article fetched=new Article(rss.id(),rss.publisher(),rss.title(),rss.url(),rss.canonicalUrl(),
+                rss.publishedAt(),rss.discoveredAt(),rss.author(),rss.category(),rss.description(),
+                "The full source discusses the proposal and describes proposed changes to voting procedures.",
+                rss.language(),rss.sourceTrustTier(),rss.authoritativePrimary());
+        StoryCluster enrichedCluster=new StoryCluster(cluster.id,cluster.topic,List.of(fetched),
+                cluster.entities,cluster.fingerprint);
+        NewsPipeline.Candidate enriched=new NewsPipeline.Candidate(enrichedCluster,facts,.8);
+        Map<String,Object>analysis=Map.of("model","fixture","overallClassification","uncertain",
+                "summary","Insufficient textual basis for a partisan verdict",
+                "articles",List.of(Map.of("id",rss.id(),"classification","uncertain")));
+        store.politicalAnalysisComplete(cluster.id,analysis,"analysis-worker",enriched,originalHash);
+        Map<String,Object>saved=store.storyDetail(cluster.id);
+        String updatedHash=String.valueOf(saved.get("biasAnalysisInputHash"));
+        NewsPipeline.Candidate persisted=NewsPipeline.Candidate.fromMap(Json.object(saved.get("candidate")));
+        ok(!originalHash.equals(updatedHash)
+                &&updatedHash.equals(saved.get("framingInputHash"))
+                &&"COMPLETE".equals(saved.get("biasAnalysisStatus"))
+                &&persisted.cluster().articles.get(0).bodyText().equals(fetched.bodyText()),
+                "enriched source, political analysis, and matching fingerprints commit together");
+
+        store.applyDiscovery(scan);
+        Map<String,Object>rescan=store.storyDetail(cluster.id);
+        ok(updatedHash.equals(rescan.get("biasAnalysisInputHash"))
+                &&"COMPLETE".equals(rescan.get("biasAnalysisStatus"))
+                &&NewsPipeline.Candidate.fromMap(Json.object(rescan.get("candidate")))
+                    .cluster().articles.get(0).bodyText().equals(fetched.bodyText()),
+                "repeated RSS scans retain unchanged enriched article evidence and prior analysis");
+
+        Article revised=new Article(rss.id(),rss.publisher(),rss.title(),rss.url(),rss.canonicalUrl(),
+                now,now,"",rss.category(),"Source issued a revised description.","","en",1,false);
+        StoryCluster changed=new StoryCluster(cluster.id,cluster.topic,List.of(revised),
+                cluster.entities,cluster.fingerprint);
+        FactPackage changedFacts=new SourceVerifier().verify(changed,2).factPackage();
+        var newItem=new NewsPipeline.DiscoveryItem(changed,changedFacts,false,"test",.8,false);
+        store.applyDiscovery(new NewsPipeline.DiscoveryResult(List.of(newItem),1,1,0,1,1,1,1,now));
+        Map<String,Object>invalidated=store.storyDetail(cluster.id);
+        ok(!updatedHash.equals(invalidated.get("biasAnalysisInputHash"))
+                &&"QUEUED".equals(invalidated.get("biasAnalysisStatus"))
+                &&NewsPipeline.Candidate.fromMap(Json.object(invalidated.get("candidate")))
+                    .cluster().articles.get(0).bodyText().isBlank(),
+                "changed article description invalidates old analysis and cannot retain stale body");
+
+        Map<String,Object>newJob=store.claim("analysis-worker",Map.of());
+        ok("POLITICAL_ANALYSIS".equals(newJob.get("jobType")),
+                "updated article can be re-analyzed against its new fingerprint");
+        boolean staleRejected=false;
+        try{store.politicalAnalysisComplete(cluster.id,analysis,"analysis-worker",enriched,originalHash);}
+        catch(IllegalStateException stale){staleRejected=stale.getMessage().contains("STALE_FRAMING_EVIDENCE");}
+        ok(staleRejected,"outdated worker results cannot overwrite a newer article version");
+
+        NewsPipeline.Candidate replacement=NewsPipeline.Candidate.fromMap(Json.object(newJob.get("candidate")));
+        store.politicalAnalysisComplete(cluster.id,analysis,"analysis-worker",replacement,
+                String.valueOf(newJob.get("analysisInputFingerprint")));
+        ok("COMPLETE".equals(store.storyDetail(cluster.id).get("biasAnalysisStatus")),
+                "newly verified snapshot can finish analysis after a source-content change");
+        store.action(cluster.id,"MAKE_FRAMING_EXPOSURE");
+        store.heartbeat("video-worker",Map.of("id","video-worker",
+                "capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>videoJob=store.claim("video-worker",Map.of());
+        ok(videoJob!=null&&"FRAMING_EXPOSURE".equals(videoJob.get("productionMode"))
+                &&Objects.equals(store.storyDetail(cluster.id).get("biasAnalysisInputHash"),
+                        videoJob.get("framingContentFingerprint")),
+                "the framing video job receives the exact analyzed article fingerprint");
+    }
+
+    private void testSelectedArticleEnrichment()throws Exception{
+        HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        AtomicInteger fetches=new AtomicInteger();
+        server.createContext("/article",exchange->{
+            fetches.incrementAndGet();
+            byte[]html=("<html><body><main><p>"+
+                    "The original article describes the proposed voting procedure and the lawmakers who discussed it."+
+                    "</p><p>The reporting distinguishes committee debate from an enacted law.</p>"+
+                    "</main></body></html>").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type","text/html; charset=UTF-8");
+            exchange.sendResponseHeaders(200,html.length);
+            try(OutputStream out=exchange.getResponseBody()){out.write(html);}
+        });
+        server.start();
+        try{
+            Instant now=Instant.now();
+            String url="http://127.0.0.1:"+server.getAddress().getPort()+"/article";
+            Article unselected=new Article("alternate","Another Publisher","Different angle",
+                    url,url,now,now,"","politics","Unrelated article text.","","en",2,false);
+            Article primary=new Article("selected","Fixture Publisher","Senate debates new procedures",
+                    url,url,now,now,"","politics","Senate discusses procedural reform.","","en",1,false);
+            StoryCluster cluster=new StoryCluster("enrich-selection",primary.title(),
+                    List.of(unselected,primary),Set.of(),"fixed");
+            Path scratch=Files.createTempDirectory("framing-select-fetch-");
+            NewsConfig cfg=NewsConfig.load(scratch);
+            NewsPipeline pipeline=new NewsPipeline(scratch,cfg,scratch.resolve("batch"));
+            StoryCluster enriched=pipeline.enrichForFraming(cluster);
+            ok(fetches.get()==1&&enriched.articles.get(0).bodyText().isBlank()
+                    &&enriched.articles.get(1).bodyText().contains("The original article"),
+                    "political analysis fetches only the selected article, not unrelated outlets");
+            StoryCluster unchanged=pipeline.enrichForFraming(enriched);
+            ok(fetches.get()==1&&unchanged.articles.get(1).bodyText().equals(
+                    enriched.articles.get(1).bodyText()),
+                    "already enriched article evidence is not fetched a second time");
+            Article unavailable=new Article(primary.id(),primary.publisher(),primary.title(),
+                    "invalid://article","invalid://article",now,now,"","politics",
+                    primary.description(),"","en",1,false);
+            StoryCluster fallback=new StoryCluster("enrich-fallback",unavailable.title(),
+                    List.of(unavailable),Set.of(),"fixed");
+            ok(pipeline.enrichForFraming(fallback).articles.get(0).bodyText().isBlank(),
+                    "inaccessible article returns unchanged headline/description evidence without inventing text");
+        }finally{server.stop(0);}
     }
 
     private void testPoliticalVisualGraphics(Path root,List<Article>a)throws Exception{
@@ -1233,6 +2038,32 @@ public final class SelfTest {
         NewsScript s=NewsScriptGenerator.deterministic(fp,60);
         ok(!s.narration().isBlank(),"dry-run script generation");
         ok(new ScriptValidator().validate(s,fp,60).stream().noneMatch(x->x.startsWith("unsupported number")),"script JSON/fact validation");
+        // Deterministic fallback has only two beats; create a third fixture
+        // segment so the repair contract can exercise reported segment index 2.
+        List<NewsScript.Segment>repairSegments=new ArrayList<>(s.segments());
+        NewsScript.Segment source=s.segments().get(1);
+        repairSegments.add(new NewsScript.Segment(2,source.narration(),source.purpose(),
+                source.visualType(),source.visualPrompt(),source.durationTarget()));
+        NewsScript repairBase=new NewsScript(s.storyId(),s.headline(),
+                s.narration()+" "+source.narration(),repairSegments,s.estimatedDuration(),
+                s.sourceLabels(),s.hook());
+        NewsScriptGenerator.RepairTarget target=new NewsScriptGenerator.RepairTarget(
+                2,26,30,28,repairBase.segments().get(2).narration());
+        String tooShort=Json.stringify(Map.of("replacements",List.of(
+                Map.of("segmentIndex",2,"narration","grounded ".repeat(21).strip()))));
+        boolean rejected=false;
+        try{NewsScriptGenerator.applyReplacements(repairBase,tooShort,fp,60,List.of(target));}
+        catch(IllegalArgumentException lengthError){
+            rejected=lengthError.getMessage().contains("Repair segment 2 returned 21 words; required 26-30");
+        }
+        ok(rejected,"standard repair rejects 21-word segment when 26-30 words are required");
+        String corrected=Json.stringify(Map.of("replacements",List.of(
+                Map.of("segmentIndex",2,"narration","grounded ".repeat(28).strip()))));
+        NewsScript fixed=NewsScriptGenerator.applyReplacements(repairBase,corrected,fp,60,List.of(target));
+        ok(autonewsroller.util.Text.words(fixed.segments().get(2).narration())==28
+                &&fixed.segments().get(0).narration().equals(repairBase.segments().get(0).narration())
+                &&fixed.segments().get(1).narration().equals(repairBase.segments().get(1).narration()),
+                "standard targeted repair accepts corrected length and keeps the hook and unrelated segments");
     }
 
     private void testWorkerEvent(){
