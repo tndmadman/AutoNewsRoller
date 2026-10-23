@@ -143,6 +143,8 @@ public final class RemoteWorker {
             ProductionMode productionMode=ProductionMode.fromPersisted(job.get("productionMode"));
             if(productionMode==ProductionMode.FRAMING_EXPOSURE&&!cfg.getBool("politicalExposureEnabled",true))
                 throw new IllegalStateException("Worker does not support framing exposure v1.");
+            if(productionMode==ProductionMode.MEME_RAGEBAIT&&!cfg.getBool("memePipelineEnabled",true))
+                throw new IllegalStateException("Worker does not support meme_ragebait_v1.");
             NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
             if(productionMode==ProductionMode.FRAMING_EXPOSURE){
                 String expected=String.valueOf(job.getOrDefault("framingContentFingerprint",""));
@@ -157,6 +159,8 @@ public final class RemoteWorker {
             int duration=Math.max(cfg.getInt("commandCenterMinimumTargetSeconds",70),requestedDuration);
             if(productionMode==ProductionMode.FRAMING_EXPOSURE)
                 duration=Math.max(duration,cfg.getInt("politicalExposureDefaultDurationSeconds",75));
+            else if(productionMode==ProductionMode.MEME_RAGEBAIT)
+                duration=Math.max(1,cfg.getInt("memeDurationHintSeconds",30));
             String encoder=String.valueOf(settings.getOrDefault("encoder",cfg.get("videoEncoder","auto")));
             boolean controllerComfy=settings.containsKey("useComfy")?bool(settings.get("useComfy")):true;
             boolean useComfy=cfg.getBool("commandCenterUseComfy",true)||controllerComfy;
@@ -166,6 +170,10 @@ public final class RemoteWorker {
             if(productionMode==ProductionMode.FRAMING_EXPOSURE){
                 useComfy=cfg.getBool("politicalExposureRequireComfy",false);
                 requireComfy=useComfy;
+            }else if(productionMode==ProductionMode.MEME_RAGEBAIT){
+                useComfy=cfg.getBool("memeUseComfy",true);
+                requireComfy=cfg.getBool("memeRequireComfy",true);
+                comfyImages=Math.max(1,cfg.getInt("memeComfyImages",3));
             }
             event("progress",Map.of("stage","CLAIMED","detail","mode="+productionMode.name()+
                     "; durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy));
@@ -251,7 +259,10 @@ public final class RemoteWorker {
             Map<String,Object> m=new LinkedHashMap<>();
             m.put("id",workerId);m.put("state",state);m.put("currentJob",currentJob);m.put("currentTopic",currentTopic);
             m.put("claimId",currentClaimId);
-            m.put("capabilities",cfg.getBool("politicalExposureEnabled",true)?List.of("framing_exposure_v1"):List.of());
+            List<String>capabilities=new ArrayList<>();
+            if(cfg.getBool("politicalExposureEnabled",true))capabilities.add("framing_exposure_v1");
+            if(cfg.getBool("memePipelineEnabled",true))capabilities.add("meme_ragebait_v1");
+            m.put("capabilities",capabilities);
             m.put("metrics",metrics.get());m.put("timestamp",Instant.now().toString());
             post("/api/workers/heartbeat",m);lastHeartbeat=Instant.now();
         }catch(Exception e){error("heartbeat",e);}

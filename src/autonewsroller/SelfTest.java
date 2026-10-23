@@ -47,6 +47,7 @@ public final class SelfTest {
         testSelectedArticleEnrichment();
         testPoliticalExposureMode();
         testPairedSequentialVideoProduction();
+        testMemePipeline();
         testPoliticalExposureLengthRecovery();
         testPoliticalVisualGraphics(root,a);
         testAuthoritative(root);
@@ -62,6 +63,217 @@ public final class SelfTest {
         testFilename(root);
         testEncoderNormalize();
         System.out.println("SELF-TEST PASS: "+passed+" checks");
+    }
+
+
+    private void testMemePipeline()throws Exception{
+        Instant now=Instant.now();
+        Article article=new Article("meme-a","Fixture News",
+                "City buys novelty traffic signs",
+                "https://fixture.example/meme","https://fixture.example/meme",now,now,"","local",
+                "The city purchased novelty signs.",
+                "The city purchased novelty signs for the downtown plaza.","en",1,false);
+        StoryCluster cluster=new StoryCluster("meme-story",article.title(),List.of(article),
+                Set.of("City"),"meme-fingerprint");
+        FactClaim claim=new FactClaim(article.title(),List.of(article.url()),.75,false);
+        FactPackage fp=new FactPackage(cluster.id,article.title(),article.title(),
+                List.of(claim),List.of(),List.of(Map.of("publisher",article.publisher())),1,1,.6,false);
+        var evidence=new MemeEvidenceBuilder().build(cluster,fp);
+        ok(!evidence.fingerprint().isBlank()&&evidence.factIds().contains("F1")
+                &&!evidence.sourceText().isBlank(),
+                "meme article evidence retains facts, URLs and fingerprints");
+        NewsScript script=new MemeScriptGenerator(null,1).generate(fp,evidence,true);
+        ok(script.segments().size()==2
+                &&"MEME_RAGEBAIT".equals(script.hook().get("type"))
+                &&"PAYOFF".equals(script.segments().get(script.segments().size()-1).purpose())
+                &&script.estimatedDuration()<61,
+                "independent meme generator admits short variable-beat output");
+        new MemeScriptValidator().validate(script,evidence);
+        ok(true,"short meme narration passes mode-specific evidence validation");
+        testMemeOllamaHookSelection(fp,evidence);
+        VisualPlan plan=new MemeVisualPlanner().plan(script);
+        ok(plan.items().size()==script.segments().size()
+                &&"MEME_HOOK".equals(plan.items().get(0).type())
+                &&plan.items().get(0).title().equals(script.hook().get("hookText")),
+                "meme visual plan opens on its caption with no news graphics");
+        Path dir=Files.createTempDirectory("autonews-meme-fixture-");
+        Path frame=dir.resolve("opening.png");
+        new MemeCardRenderer().render(plan.items().get(0),frame,360,640);
+        BufferedImage opening=ImageIO.read(frame.toFile());
+        ok(opening!=null&&opening.getWidth()==360&&opening.getHeight()==640,
+                "meme opening frame renders with the vertical safe footer");
+        try{
+            NewsScript invalid=new NewsScript(script.storyId(),script.headline(),
+                    "This report says the city bought 9999999 signs.",
+                    script.segments(),8,script.sourceLabels(),script.hook());
+            new MemeScriptValidator().validate(invalid,evidence);
+            throw new AssertionError("Unsupported numerical meme claim accepted");
+        }catch(IllegalArgumentException expected){
+            ok(expected.getMessage().contains("Unsupported number"),
+                    "meme validator rejects unsupported numerals");
+        }
+        try{
+            NewsScript inventedQuote=new NewsScript(script.storyId(),script.headline(),
+                    "An official said \"I bought the moon\", which is unverified.",
+                    script.segments(),8,script.sourceLabels(),script.hook());
+            new MemeScriptValidator().validate(inventedQuote,evidence);
+            throw new AssertionError("Unsourced direct quotation accepted");
+        }catch(IllegalArgumentException expected){
+            ok(expected.getMessage().contains("Unsupported direct quotation"),
+                    "meme validator rejects fabricated direct quotes");
+        }
+        Path state=dir.resolve("state.json");
+        var discovery=new NewsPipeline.DiscoveryResult(
+                List.of(new NewsPipeline.DiscoveryItem(cluster,fp,false,
+                        "single attributed fixture",.9,false)),
+                1,1,0,1,1,1,1,now);
+        CommandCenterStore store=new CommandCenterStore(state,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        store.applyDiscovery(discovery);
+        store.action(cluster.id,"MAKE","standard-first");
+        store.action(cluster.id,"MAKE_MEME","meme-after-normal");
+        store.action(cluster.id,"MAKE_MEME","meme-after-normal");
+        ok(Boolean.TRUE.equals(store.storyDetail(cluster.id).get("pendingMemeRequest"))
+                &&"STANDARD".equals(store.storyDetail(cluster.id).get("productionMode")),
+                "meme requested during queued standard production waits without overwriting");
+        var board=store.boardStories(1,25,"ALL","",0);
+        ok(((Number)board.get("total")).intValue()==2
+                &&((List<?>)board.get("stories")).stream().anyMatch(x->x instanceof Map<?,?>m
+                        &&"meme-story::MEME_RAGEBAIT".equals(m.get("boardEntryId"))
+                        &&"WAITING".equals(m.get("status"))),
+                "meme has an independent waiting board card");
+        CommandCenterStore resumed=new CommandCenterStore(state,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        resumed.applyDiscovery(discovery);
+        ok(Boolean.TRUE.equals(resumed.storyDetail(cluster.id).get("pendingMemeRequest")),
+                "meme request survives restart and RSS rescan");
+        resumed.heartbeat("legacy",Map.of("id","legacy","capabilities",List.of()));
+        Map<String,Object>normal=resumed.claim("legacy",Map.of());
+        ok(normal!=null&&"STANDARD".equals(normal.get("productionMode")),
+                "original news production claims before pending meme");
+        resumed.complete(cluster.id,Map.of("workerId","legacy","claimId",normal.get("claimId"),
+                "sidecar",Map.of("productionMode","STANDARD")));
+        ok("MEME_RAGEBAIT".equals(resumed.storyDetail(cluster.id).get("productionMode"))
+                &&"QUEUED".equals(resumed.storyDetail(cluster.id).get("status")),
+                "meme queues immediately after standard completion");
+        ok(resumed.claim("legacy",Map.of())==null,
+                "worker without meme capability cannot claim queued meme");
+        resumed.heartbeat("meme-worker",Map.of("id","meme-worker",
+                "capabilities",List.of("meme_ragebait_v1")));
+        Map<String,Object>job=resumed.claim("meme-worker",Map.of("duration",12));
+        ok(job!=null&&"MEME_RAGEBAIT".equals(job.get("productionMode")),
+                "meme-capable worker claims independent production mode");
+        try{
+            resumed.complete(cluster.id,Map.of("workerId","meme-worker",
+                    "claimId",job.get("claimId")));
+            throw new AssertionError("Meme without sidecar accepted");
+        }catch(IllegalStateException expected){
+            ok(expected.getMessage().contains("sidecar"),
+                    "meme completion requires a provenance sidecar");
+        }
+        Map<String,Object>sidecar=new LinkedHashMap<>();
+        sidecar.put("productionMode","MEME_RAGEBAIT");
+        sidecar.put("comedyAngle","Absurd signs");
+        sidecar.put("imageSources",List.of(Map.of("type","comfyui-generated-ai-illustration")));
+        resumed.complete(cluster.id,Map.of("workerId","meme-worker","claimId",job.get("claimId"),
+                "sidecar",sidecar));
+        Map<String,Object>snapshot=resumed.snapshot();
+        List<?> archive=(List<?>)snapshot.get("videos");
+        ok(archive.size()==2&&archive.stream().anyMatch(v->v instanceof Map<?,?>m
+                    &&"MEME_RAGEBAIT".equals(m.get("productionMode")))
+                &&archive.stream().anyMatch(v->v instanceof Map<?,?>m
+                    &&"STANDARD".equals(m.get("productionMode"))),
+                "original and meme coexist as independently archived entries");
+        ok(((Number)resumed.storyDetail(cluster.id).get("comfyImages")).intValue()==1,
+                "real ComfyUI illustration provenance contributes to generated count");
+        Map<String,Object>memeRow=Json.object(((List<?>)resumed.boardStories(1,25,
+                "ALL","meme roast",0).get("stories")).get(0));
+        ok("COMPLETE".equals(memeRow.get("status"))
+                &&Boolean.TRUE.equals(memeRow.get("entryMayRemake")),
+                "completed meme is separately searchable and remakable");
+        resumed.action(cluster.id,"REMAKE_MEME","remake-once");
+        ok("QUEUED".equals(resumed.storyDetail(cluster.id).get("status"))
+                &&"MEME_RAGEBAIT".equals(resumed.storyDetail(cluster.id).get("productionMode")),
+                "REMAKE_MEME queues only meme mode and preserves archive");
+    }
+
+
+    private void testMemeOllamaHookSelection(FactPackage facts,
+            MemeEvidenceBuilder.Evidence evidence)throws Exception{
+        AtomicInteger calls=new AtomicInteger();
+        HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/api/generate",exchange->{
+            int call=calls.incrementAndGet();
+            try{
+                Map<String,Object>output=new LinkedHashMap<>();
+                if(call==1){
+                    output.put("candidates",List.of(
+                            Map.of("angle","Street sign absurdity","factualBasis","F1",
+                                    "visualIdea","Cartoon street signs","surprise","Real novelty signs","score",8),
+                            Map.of("angle","Paperwork comedy","factualBasis","F1",
+                                    "visualIdea","Animated paperwork","surprise","Novelty procurement","score",7),
+                            Map.of("angle","Sign-shaped roast","factualBasis","F1",
+                                    "visualIdea","Signing gag","surprise","Downtown signs","score",6)));
+                    output.put("selectedAngle","Street sign absurdity");
+                }else if(call==2){
+                    output.put("candidates",List.of(
+                            Map.of("caption","THEY DID WHAT?","spoken","Seriously, what just happened?",
+                                    "factIds",List.of("F1"),"score",10.0),
+                            Map.of("caption","CITY BOUGHT COMEDY SIGNS",
+                                    "spoken","The city bought novelty signs.",
+                                    "factIds",List.of("F1"),"score",9.5,"reason","Concrete city purchase"),
+                            Map.of("caption","DOWNTOWN HAS NOVELTY SIGNS",
+                                    "spoken","Downtown got novelty signs.",
+                                    "factIds",List.of("F1"),"score",7.0),
+                            Map.of("caption","THE SIGNS ARE TALKING",
+                                    "spoken","The signs are alive.",
+                                    "factIds",List.of("F99"),"score",9.0)));
+                }else if(call==3){
+                    output.put("angle","Street sign absurdity");
+                    output.put("hookText","CITY BOUGHT COMEDY SIGNS");
+                    output.put("spokenHook","The city bought novelty signs.");
+                    output.put("beats",List.of(
+                            Map.of("speech","The city bought novelty signs.",
+                                    "caption","CITY BOUGHT COMEDY SIGNS",
+                                    "visualPrompt","Cartoon city street with novelty signs",
+                                    "purpose","HOOK","factIds",List.of("F1")),
+                            Map.of("speech","The reported city purchase put novelty signs in the downtown plaza. Apparently the street signs have more personality than the meeting.",
+                                    "caption","SIGNS WITH PERSONALITY",
+                                    "visualPrompt","Satirical cartoon of signs auditioning for comedy",
+                                    "purpose","PAYOFF","factIds",List.of("F1"))));
+                }
+                byte[]bytes=Json.stringify(Map.of(
+                        "response",Json.stringify(output),"done_reason","stop")).getBytes(
+                            java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type","application/json");
+                exchange.sendResponseHeaders(200,bytes.length);
+                try(OutputStream out=exchange.getResponseBody()){out.write(bytes);}
+            }catch(Exception e){
+                exchange.sendResponseHeaders(500,-1);
+            }finally{exchange.close();}
+        });
+        server.start();
+        try{
+            Path dir=Files.createTempDirectory("autonews-meme-ollama-fixture-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    server.getAddress().getPort()+"/api/generate",
+                    "fixture-model","1m",dir.resolve("ollama.lock"),4096,2000,.5);
+            NewsScript generated=new MemeScriptGenerator(client,1).generate(
+                    facts,evidence,false);
+            ok(calls.get()==3&&"CITY BOUGHT COMEDY SIGNS".equals(
+                    generated.hook().get("hookText")),
+                    "mocked Ollama selects a source-specific short hook over generic high score");
+            ok(generated.hook().get("hookCandidates") instanceof List<?>c
+                    &&c.size()==4
+                    &&"F1".equals(((List<?>)generated.hook().get("hookFactIds")).get(0)),
+                    "meme hook retains candidate diagnostics and supported fact IDs");
+            new MemeScriptValidator().validate(generated,evidence);
+            ok(generated.segments().size()==2
+                    &&generated.segments().get(0).narration().equals(
+                        generated.hook().get("spokenHook"))
+                    &&"PAYOFF".equals(generated.segments().get(1).purpose()),
+                    "complete mocked Ollama meme script preserves locked hook and final punchline");
+        }finally{server.stop(0);}
     }
 
     private void testSourceConfig(Path root)throws Exception{

@@ -234,3 +234,11 @@ The controller Command Center remains at port `8787`. Existing
 headless-compatible. Do not run both the console-managed worker and a separate
 headless worker under the same worker ID. Read
 [docs/GPU_WORKER_WEB_UI.md](docs/GPU_WORKER_WEB_UI.md) for operational details.
+
+
+### Meme / ragebait production
+
+The Command Center now supports an independently queued **MAKE MEME / RAGEBAIT** operation
+powered by local Ollama, Kokoro/Qwen, ComfyUI and FFmpeg, without changing the original
+news and narrative-review pairing. Updated workers must advertise `meme_ragebait_v1`.
+See [meme pipeline architecture, safety and setup](docs/MEME_RAGEBAIT_PIPELINE.md).

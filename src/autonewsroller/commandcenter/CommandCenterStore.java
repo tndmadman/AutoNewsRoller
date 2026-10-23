@@ -214,6 +214,28 @@ public final class CommandCenterStore {
         if(("MAKE".equals(a)||"QUEUE".equals(a)||"WORTH".equals(a)||"WORTH_IT".equals(a)||"WORTH-IT".equals(a))
                 &&("COMPLETE".equals(status)||"COMPLETE_HISTORY".equals(status)))
             throw new IllegalStateException("Completed video cannot be queued again with MAKE/WORTH; use RE-MAKE.");
+        if("MAKE_MEME".equals(a)||"REMAKE_MEME".equals(a)){
+            if(!(m.get("candidate") instanceof Map<?,?>))
+                throw new IllegalStateException("MEME_EVIDENCE_MISSING: No RSS source candidate");
+            NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(m.get("candidate")));
+            if(candidate.cluster().articles.stream().noneMatch(article->
+                    !article.title().isBlank()&&!article.publisher().isBlank()&&!article.url().isBlank()))
+                throw new IllegalStateException("MEME_EVIDENCE_MISSING: Attributed title and URL required");
+            if("REMAKE_MEME".equals(a)&&!hasCompletedMeme(storyId))
+                throw new IllegalStateException("No completed meme version exists to remake");
+            if("QUEUED".equals(status)||"PRODUCING".equals(status)){
+                if(ProductionMode.fromPersisted(m.get("productionMode"))!=ProductionMode.MEME_RAGEBAIT
+                        &&!Boolean.TRUE.equals(m.get("pendingMemeRequest"))){
+                    m.put("pendingMemeRequest",true);m.put("pendingMemeKind",a);
+                    m.put("pendingMemeAt",Instant.now().toString());
+                    m.put("updatedAt",Instant.now().toString());
+                }
+            }else{
+                queueMeme(m,a);
+            }
+            remember(operationId,identity);persistRequired();Map<String,Object>pub=publicStory(m);
+            emit("story",pub);return pub;
+        }
         if("PRODUCING".equals(status))
             throw new IllegalStateException("Job is being produced. Wait for completion before changing its decision.");
         switch(a){
@@ -321,6 +343,30 @@ public final class CommandCenterStore {
             default->throw new IllegalArgumentException("Unknown action: "+action);
         }
         m.put("updatedAt",Instant.now().toString());remember(operationId,identity);persistRequired();Map<String,Object>pub=publicStory(m);emit("story",pub);return pub;
+    }
+
+    /** An independent meme request waits for an occupied per-story slot, including a paired review. */
+    private void queueMeme(Map<String,Object>m,String action){
+        boolean hadCompleted="COMPLETE".equals(m.get("status"));
+        m.remove("pendingMemeRequest");m.remove("pendingMemeKind");m.remove("pendingMemeAt");
+        m.put("manualWorth",true);m.put("worthy",true);m.put("decision",action);
+        m.put("productionMode",ProductionMode.MEME_RAGEBAIT.name());
+        m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());
+        m.put("stage","QUEUED");m.put("detail","Meme roast waiting for a compatible worker");
+        m.put("progress",15);m.put("updatedAt",Instant.now().toString());m.remove("error");
+        clearLease(m);resetFailureRetryState(m);
+        m.remove("manualVerificationOverride");m.remove("softVerificationOverride");
+        if(hadCompleted)clearCurrentPublicationState(m);
+        clearCurrentMediaResult(m);
+    }
+    private void activatePendingMeme(Map<String,Object>m){
+        if(Boolean.TRUE.equals(m.get("pendingMemeRequest"))
+                &&!("QUEUED".equals(m.get("status"))||"PRODUCING".equals(m.get("status"))))
+            queueMeme(m,String.valueOf(m.getOrDefault("pendingMemeKind","MAKE_MEME")));
+    }
+    private boolean hasCompletedMeme(String storyId){
+        return videos.values().stream().anyMatch(v->storyId.equals(String.valueOf(v.get("storyId")))
+                &&ProductionMode.fromPersisted(v.get("productionMode"))==ProductionMode.MEME_RAGEBAIT);
     }
 
     public synchronized Map<String,Object> claim(String workerId,Map<String,Object>settings){
@@ -533,7 +579,7 @@ public final class CommandCenterStore {
         if(metadata.get("sidecar") instanceof Map<?,?> sidecarMode){
             String declared=String.valueOf(Json.object(sidecarMode).getOrDefault("productionMode","STANDARD"));
             if(!completedMode.name().equals(declared))throw new IllegalStateException("Completion mode mismatch: "+declared);
-        }else if(completedMode==ProductionMode.FRAMING_EXPOSURE)
+        }else if(completedMode!=ProductionMode.STANDARD)
             throw new IllegalStateException("Experimental video requires a provenance sidecar.");
         int version=nextVideoVersion(jobId);
         String versionId=videoVersionId(jobId,version);
@@ -553,7 +599,7 @@ public final class CommandCenterStore {
                 for(Object image:list){
                     if(!(image instanceof Map<?,?>))continue;
                     String type=String.valueOf(Json.object(image).getOrDefault("type",""));
-                    if("comfyui-generated".equals(type))comfyImages++;
+                    if("comfyui-generated".equals(type)||"comfyui-generated-ai-illustration".equals(type))comfyImages++;
                     if("procedural-card".equals(type))proceduralImages++;
                 }
             }
@@ -573,6 +619,7 @@ public final class CommandCenterStore {
             m.put("pairedVideoState","COMPLETE");
             m.put("detail","Both videos complete: original report and political framing review");
         }
+        activatePendingMeme(m);
         persistQuiet();emit("story",publicStory(m));emit("video",publicCopy(v));
     }
 
@@ -758,6 +805,7 @@ public final class CommandCenterStore {
             else if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.STANDARD&&
                     String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("STANDARD_"))
                 m.put("pairedVideoState","STANDARD_FAILED");
+            activatePendingMeme(m);
         }
         persistQuiet();emit("story",publicStory(m));
     }
@@ -834,7 +882,8 @@ public final class CommandCenterStore {
         matches.sort(Comparator
                 .comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed()
                 .thenComparing(x->String.valueOf(x.getOrDefault("id","")))
-                .thenComparingInt(x->"FRAMING_EXPOSURE".equals(x.get("entryMode"))?1:0));
+                .thenComparingInt(x->"FRAMING_EXPOSURE".equals(x.get("entryMode"))?1:
+                        "MEME_RAGEBAIT".equals(x.get("entryMode"))?2:0));
         int total=matches.size();
         int totalPages=Math.max(1,(int)((total+(long)pageSize-1)/pageSize));
         int page=Math.min(requestedPage,totalPages);
@@ -868,7 +917,7 @@ public final class CommandCenterStore {
             if(old==null||integer(video.get("version"))>integer(old.get("version")))
                 modes.put(mode,video);
         }
-        List<Map<String,Object>>rows=new ArrayList<>(stories.size()*2);
+        List<Map<String,Object>>rows=new ArrayList<>(stories.size()*3);
         for(Map<String,Object>story:stories.values()){
             String id=String.valueOf(story.get("id"));
             Map<ProductionMode,Map<String,Object>>modes=latest.getOrDefault(id,Map.of());
@@ -878,7 +927,8 @@ public final class CommandCenterStore {
             ProductionMode active=ProductionMode.fromPersisted(story.get("productionMode"));
             // Untouched RSS discovery entries are still one normal story card.
             boolean standard=paired||modes.containsKey(ProductionMode.STANDARD)
-                    ||active==ProductionMode.STANDARD;
+                    ||active==ProductionMode.STANDARD||active==ProductionMode.MEME_RAGEBAIT
+                    ||Boolean.TRUE.equals(story.get("pendingMemeRequest"));
             boolean review=paired||modes.containsKey(ProductionMode.FRAMING_EXPOSURE)
                     ||active==ProductionMode.FRAMING_EXPOSURE;
             if(standard)rows.add(boardEntry(story,ProductionMode.STANDARD,
@@ -894,6 +944,11 @@ public final class CommandCenterStore {
                 rows.add(boardEntry(story,ProductionMode.FRAMING_EXPOSURE,
                         reviewVideo,active==ProductionMode.FRAMING_EXPOSURE));
             }
+            if(modes.containsKey(ProductionMode.MEME_RAGEBAIT)
+                    ||active==ProductionMode.MEME_RAGEBAIT
+                    ||Boolean.TRUE.equals(story.get("pendingMemeRequest")))
+                rows.add(boardEntry(story,ProductionMode.MEME_RAGEBAIT,
+                        modes.get(ProductionMode.MEME_RAGEBAIT),active==ProductionMode.MEME_RAGEBAIT));
         }
         return rows;
     }
@@ -904,7 +959,8 @@ public final class CommandCenterStore {
         String sourceId=String.valueOf(story.get("id"));
         String originalTitle=String.valueOf(story.getOrDefault("topic",""));
         String name=mode==ProductionMode.FRAMING_EXPOSURE
-                ?"Narrative Review: "+originalTitle:originalTitle;
+                ?"Narrative Review: "+originalTitle:mode==ProductionMode.MEME_RAGEBAIT
+                    ?"Meme Roast: "+originalTitle:originalTitle;
         row.put("boardEntryId",sourceId+"::"+mode.name());
         row.put("sourceStoryId",sourceId);
         row.put("entryMode",mode.name());
@@ -916,7 +972,12 @@ public final class CommandCenterStore {
         row.put("entryHasVideo",completed!=null&&!live);
         row.put("entryMayRemake","COMPLETE".equals(String.valueOf(story.get("status")))
                 &&completed!=null);
-        if(completed!=null&&!live){
+        if(mode==ProductionMode.MEME_RAGEBAIT&&Boolean.TRUE.equals(story.get("pendingMemeRequest"))&&!active){
+            row.put("status","WAITING");row.put("stage","WAITING_FOR_STORY_SLOT");
+            row.put("detail","Meme roast saved; waiting for the current video and any paired review");
+            row.put("entryHasVideo",false);row.put("entryMayRemake",false);
+            row.remove("currentVideoVersionId");row.remove("videoFilename");
+        }else if(completed!=null&&!live){
             row.put("status","COMPLETE");
             row.put("stage","COMPLETE");
             row.put("progress",100);
@@ -931,7 +992,9 @@ public final class CommandCenterStore {
             row.remove("lastFailure");row.remove("failureType");row.remove("error");
             row.put("detail",mode==ProductionMode.STANDARD
                     ?"Original report archived as "+completed.get("versionId")
-                    :"Narrative review archived as "+completed.get("versionId"));
+                    :mode==ProductionMode.FRAMING_EXPOSURE
+                        ?"Narrative review archived as "+completed.get("versionId")
+                        :"Meme roast archived as "+completed.get("versionId"));
         }else if(!active){
             // Second card is visible as soon as the first report is chosen,
             // even though the dependent review is not yet claimable.
@@ -939,6 +1002,10 @@ public final class CommandCenterStore {
             row.put("stage","WAITING_FOR_NORMAL_VIDEO");
             row.put("progress",0);
             row.put("detail","Waiting for original news video to complete");
+            if(mode==ProductionMode.STANDARD){
+                row.put("status","DISCOVERED");row.put("stage","DISCOVERED");
+                row.put("detail","Original news video has not been queued");
+            }
             row.put("entryMayRemake",false);
             row.remove("currentVideoVersionId");
             row.remove("videoVersion");
@@ -1014,12 +1081,14 @@ public final class CommandCenterStore {
         ProductionMode mode=ProductionMode.fromPersisted(m.get("productionMode"));
         if(mode==ProductionMode.STANDARD)return true;
         Map<String,Object>worker=workers.get(workerId);
+        String capability=mode==ProductionMode.MEME_RAGEBAIT?"meme_ragebait_v1":"framing_exposure_v1";
         if(worker==null||!(worker.get("capabilities") instanceof List<?> capabilities)
-                ||!capabilities.contains("framing_exposure_v1")){
+                ||!capabilities.contains(capability)){
             m.put("stage","WAITING_FOR_COMPATIBLE_WORKER");
-            m.put("detail","WAITING FOR COMPATIBLE WORKER");
+            m.put("detail","WAITING FOR COMPATIBLE WORKER: "+capability);
             return false;
         }
+        if(mode==ProductionMode.MEME_RAGEBAIT)return true;
         if(!"COMPLETE".equals(String.valueOf(m.get("biasAnalysisStatus")))
                 ||!String.valueOf(m.getOrDefault("biasAnalysisInputHash","")).equals(String.valueOf(m.getOrDefault("framingInputHash","")))){
             m.put("stage","WAITING_FOR_FRAMING_ANALYSIS");return false;

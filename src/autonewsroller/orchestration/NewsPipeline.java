@@ -156,7 +156,8 @@ public final class NewsPipeline {
         for(Article a:c.articles)Json.write(articleDir.resolve(String.format("%02d.json",articleIndex++)),a.toMap());
         Json.write(slotDir.resolve("fact_package.json"),fp.toMap());
 
-        PoliticalVisualData political=resolvePoliticalVisualData(c,suppliedPolitical,dryRun);
+        PoliticalVisualData political=mode==ProductionMode.MEME_RAGEBAIT
+                ?PoliticalVisualData.empty():resolvePoliticalVisualData(c,suppliedPolitical,dryRun);
         Json.write(slotDir.resolve("political_analysis.json"),political.toMap());
 
         OllamaClient oc=dryRun?null:new OllamaClient(
@@ -169,6 +170,14 @@ public final class NewsPipeline {
                 cfg.getDouble("ollamaTemperature",0.2)
         );
         NewsScriptGenerator scriptGenerator=new NewsScriptGenerator(oc,cfg.getInt("ollamaRetries",5));
+        MemeEvidenceBuilder.Evidence memeEvidence=null;
+        MemeScriptGenerator memeGenerator=null;
+        if(mode==ProductionMode.MEME_RAGEBAIT){
+            if(!cfg.getBool("memePipelineEnabled",true))throw new IllegalStateException("Meme pipeline disabled");
+            memeEvidence=new MemeEvidenceBuilder().build(c,fp);
+            Json.write(slotDir.resolve("meme_evidence.json"),memeEvidence.toMap());
+            memeGenerator=new MemeScriptGenerator(oc,cfg.getInt("ollamaRetries",5));
+        }
         PoliticalFramingEvidenceBuilder.Evidence evidence=null;
         PoliticalFramingScriptGenerator exposureGenerator=null;
         if(mode==ProductionMode.FRAMING_EXPOSURE){
@@ -181,10 +190,13 @@ public final class NewsPipeline {
         }
         // Report the stage BEFORE invoking Ollama. Failed generation is not source verification.
         events.emit(worker,slot,PipelineStage.SCRIPT,
-                "Generating "+(mode==ProductionMode.FRAMING_EXPOSURE?"narrative review":"standard news")+" narration");
+                "Generating "+(mode==ProductionMode.FRAMING_EXPOSURE?"narrative review":
+                    mode==ProductionMode.MEME_RAGEBAIT?"source-grounded meme":"standard news")+" narration");
         NewsScript script=mode==ProductionMode.FRAMING_EXPOSURE
                 ?exposureGenerator.generate(fp,evidence,targetSeconds,dryRun)
-                :scriptGenerator.generate(fp,targetSeconds,dryRun);
+                :mode==ProductionMode.MEME_RAGEBAIT
+                    ?memeGenerator.generate(fp,memeEvidence,dryRun)
+                    :scriptGenerator.generate(fp,targetSeconds,dryRun);
         Json.write(slotDir.resolve("script.json"),script.toMap());
         if(mode==ProductionMode.FRAMING_EXPOSURE)
             logs.worker(worker,"slot="+slot+" framing duration: requestedMinimum="+targetSeconds+
@@ -195,9 +207,14 @@ public final class NewsPipeline {
                 " hookType="+String.valueOf(script.hook().getOrDefault("type","unknown")));
 
         if(dryRun){
-            GroundedVisualPromptGenerator.Result visualPrompts=generateVisualPrompts(script,fp,c,true,worker,slot);
+            GroundedVisualPromptGenerator.Result visualPrompts=mode==ProductionMode.MEME_RAGEBAIT
+                    ?new GroundedVisualPromptGenerator.Result(List.of(),0,0,0,"meme-script-scene-prompts")
+                    :generateVisualPrompts(script,fp,c,true,worker,slot);
             Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
-            VisualPlan plan=mode==ProductionMode.FRAMING_EXPOSURE ?new PoliticalFramingVisualPlanner().plan(script,evidence):new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
+            VisualPlan plan=mode==ProductionMode.FRAMING_EXPOSURE
+                ?new PoliticalFramingVisualPlanner().plan(script,evidence)
+                :mode==ProductionMode.MEME_RAGEBAIT?new MemeVisualPlanner().plan(script)
+                :new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
             Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
             SpeechTiming.Alignment dryTiming=SpeechTiming.align(script.narration(),script.segments(),null,Math.max(1,script.estimatedDuration()));
@@ -227,12 +244,13 @@ public final class NewsPipeline {
         // Standard videos retain their established floor. Narrative reviews must
         // actually meet the requested minimum in measured TTS audio, not just
         // the nominal 2.5-words/second writing estimate.
-        double minimumFinalSeconds=cfg.getDouble("minimumFinalVideoSeconds",61.0);
+        double minimumFinalSeconds=mode==ProductionMode.MEME_RAGEBAIT?0.5:
+                cfg.getDouble("minimumFinalVideoSeconds",61.0);
         if(mode==ProductionMode.FRAMING_EXPOSURE)
             minimumFinalSeconds=Math.max(minimumFinalSeconds,targetSeconds);
         logs.worker(worker,String.format(Locale.ROOT,"slot=%d narration duration=%.2fs words=%d",slot,narrationSeconds,Text.words(script.narration())));
 
-        if(narrationSeconds<minimumFinalSeconds){
+        if(mode!=ProductionMode.MEME_RAGEBAIT&&narrationSeconds<minimumFinalSeconds){
             double desiredAudio=Math.max(minimumFinalSeconds+4.0,65.0);
             int durationCeiling=mode==ProductionMode.FRAMING_EXPOSURE
                     ?Math.max(targetSeconds,cfg.getInt("politicalExposureMaxDurationSeconds",180))
@@ -253,9 +271,14 @@ public final class NewsPipeline {
                 throw new IllegalStateException(String.format(Locale.ROOT,"Narration audio still too short after repair: %.2fs; minimum is %.2fs",narrationSeconds,minimumFinalSeconds));
         }
 
-        GroundedVisualPromptGenerator.Result visualPrompts=generateVisualPrompts(script,fp,c,false,worker,slot);
+        GroundedVisualPromptGenerator.Result visualPrompts=mode==ProductionMode.MEME_RAGEBAIT
+                ?new GroundedVisualPromptGenerator.Result(List.of(),0,0,0,"meme-script-scene-prompts")
+                :generateVisualPrompts(script,fp,c,false,worker,slot);
         Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
-        VisualPlan plan=mode==ProductionMode.FRAMING_EXPOSURE ?new PoliticalFramingVisualPlanner().plan(script,evidence):new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
+        VisualPlan plan=mode==ProductionMode.FRAMING_EXPOSURE
+                ?new PoliticalFramingVisualPlanner().plan(script,evidence)
+                :mode==ProductionMode.MEME_RAGEBAIT?new MemeVisualPlanner().plan(script)
+                :new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
         Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
         Path timingSidecar=nr.wav().resolveSibling(nr.wav().getFileName().toString().replaceFirst("\\.wav$",".timing.tsv"));
@@ -285,7 +308,8 @@ public final class NewsPipeline {
         List<Boolean>renderMotion=new ArrayList<>();
         List<Map<String,Object>>imageSources=new ArrayList<>();
         boolean classic="classic".equalsIgnoreCase(cfg.get("visualQualityPreset","enhanced"));
-        CardRenderer cards=classic?new ClassicCardRenderer():new CardRenderer();int i=0;
+        CardRenderer cards=mode==ProductionMode.MEME_RAGEBAIT?new MemeCardRenderer():
+                classic?new ClassicCardRenderer():new CardRenderer();int i=0;
         for(VisualPlan.Item item:plan.items()){
             Path p=visuals.resolve(String.format("%02d_%s.png",i++,item.type().toLowerCase(Locale.ROOT)));
             if(mode==ProductionMode.FRAMING_EXPOSURE)
@@ -335,8 +359,9 @@ public final class NewsPipeline {
                 List<Integer>eligible=new ArrayList<>();
                 for(int n=0;n<plan.items().size();n++){
                     VisualPlan.Item item=plan.items().get(n);
-                    if(item.type().equals("HEADLINE_CARD")||item.type().equals("SOURCE_CARD")||item.type().equals("POLITICAL_CONTEXT")
-                            ||item.type().equals("STATISTIC")||item.type().equals("QUOTE")||item.type().equals("TIMELINE"))continue;
+                    if(mode!=ProductionMode.MEME_RAGEBAIT&&(item.type().equals("HEADLINE_CARD")
+                            ||item.type().equals("SOURCE_CARD")||item.type().equals("POLITICAL_CONTEXT")
+                            ||item.type().equals("STATISTIC")||item.type().equals("QUOTE")||item.type().equals("TIMELINE")))continue;
                     if(item.type().equals("FACT_HIGHLIGHT"))secondaryEligible.add(n);
                     else eligible.add(n);
                 }
@@ -363,11 +388,17 @@ public final class NewsPipeline {
                     String visualSuffix="HOOK".equalsIgnoreCase(chosen.type())
                             ?", thumbnail-safe opening frame for a vertical news video, realistic wire-service news photography, strongest concrete focal subject visible immediately on a phone screen, main subject in the upper-middle of the frame, lower quarter visually clean for a broadcast lower-third, believable real-world colors and skin tones, neutral white balance, moderate documentary contrast, restrained saturation, newsroom realism"
                             :", realistic wire-service editorial documentary photograph for a vertical broadcast news package, clear central subject, natural scene depth, portrait composition, believable real-world colors and skin tones, neutral white balance, moderate documentary contrast, restrained saturation, lower quarter reasonably uncluttered for a news lower-third";
-                    String negativePrompt=sceneNegativePrompt(chosen);
+                    String negativePrompt=mode==ProductionMode.MEME_RAGEBAIT
+                            ?"text, letters, watermark, logo, ugly, blurry, unintentional photorealistic evidence, gore"
+                            :sceneNegativePrompt(chosen);
                     for(int attempt=0;attempt<=maxRetries;attempt++){
-                        String correction=attempt==0?"":", centered subject, uncluttered factual editorial composition, no unsupported secondary subjects";
-                        String prompt=(basePrompt+visualSuffix+correction).replaceAll("\\s+"," ").trim();
-                        assertNoExcludedConceptInPositive(chosen,prompt);
+                        String correction=attempt==0?"":mode==ProductionMode.MEME_RAGEBAIT
+                                ?", clear cartoon focal subject, comic punchline visible, mobile friendly"
+                                :", centered subject, uncluttered factual editorial composition, no unsupported secondary subjects";
+                        String prompt=(basePrompt+(mode==ProductionMode.MEME_RAGEBAIT
+                                ?", absurd satirical comic illustration, expressive characters, strong single visual gag, 9:16 portrait, no text, not documentary evidence"
+                                :visualSuffix)+correction).replaceAll("\\s+"," ").trim();
+                        if(mode!=ProductionMode.MEME_RAGEBAIT)assertNoExcludedConceptInPositive(chosen,prompt);
                         long seed=Integer.toUnsignedLong(Objects.hash(c.id,replace,usedCheckpoint,attempt));
                         Path generated=visuals.resolve(String.format("%02d_comfy_attempt_%02d.png",replace,attempt+1));
                         String generating="COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" attempt="+(attempt+1)+" checkpoint="+usedCheckpoint;
@@ -463,15 +494,22 @@ public final class NewsPipeline {
         // amplitude relative to the former -14 dB exposure level, before limiting.
         boolean introEnabled=mode==ProductionMode.FRAMING_EXPOSURE
                 ?cfg.getBool("politicalExposureIntroSoundEnabled",true)
+                :mode==ProductionMode.MEME_RAGEBAIT?cfg.getBool("memeIntroSoundEnabled",true)
                 :cfg.getBool("newsIntroSoundEnabled",true);
         if(mode==ProductionMode.FRAMING_EXPOSURE&&!introEnabled)
             throw new IllegalStateException("Required experimental audio sting disabled");
         double introGainDb=mode==ProductionMode.FRAMING_EXPOSURE
                 ?cfg.getDouble("politicalExposureIntroSoundGainDb",-4.46)
+                :mode==ProductionMode.MEME_RAGEBAIT?cfg.getDouble("memeIntroSoundGainDb",-10.0)
                 :cfg.getDouble("newsIntroSoundGainDb",-4.46);
+        String introId=mode==ProductionMode.MEME_RAGEBAIT
+                ?ComedyIntroAudioMixer.STING_ID:NewsIntroAudioMixer.STING_ID;
         if(introEnabled)
-            renderAudio=new NewsIntroAudioMixer().mix(nr.wav(),slotDir.resolve("narration/intro_mixed.wav"),
-                    cfg.get("ffmpegCommand","ffmpeg"),introGainDb);
+            renderAudio=mode==ProductionMode.MEME_RAGEBAIT
+                    ?new ComedyIntroAudioMixer().mix(nr.wav(),slotDir.resolve("narration/intro_mixed.wav"),
+                            cfg.get("ffmpegCommand","ffmpeg"),introGainDb)
+                    :new NewsIntroAudioMixer().mix(nr.wav(),slotDir.resolve("narration/intro_mixed.wav"),
+                            cfg.get("ffmpegCommand","ffmpeg"),introGainDb);
         Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v5-editorial");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30),classic);List<Double>sceneWeights=!classic&&cfg.getBool("visualNarrationSyncEnabled",true)?storyboard.durations():plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,renderAudio,render,encoder,cfg.get("captions","sentence"),script.narration(),cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null);
         events.emit(worker,slot,PipelineStage.RENDER,"ENCODER ACTUAL="+rr.encoder());
         Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,renderAudio,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();Map<String,Object>visualQuality=VisualQualityReport.create(cfg.get("ffmpegCommand","ffmpeg"),render,slotDir,finalSeconds,storyboard,cfg.getBool("visualGenerateContactSheet",true),!"off".equalsIgnoreCase(cfg.get("captions","sentence")),classic);
@@ -480,7 +518,7 @@ public final class NewsPipeline {
         Json.write(slotDir.resolve("visual_quality_report.json"),visualQuality);
         audit.put("visualQuality",visualQuality);audit.put("narrationTiming",alignment.toMap());if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("productionMode",mode.name());
         audit.put("introSound",Map.of("enabled",introEnabled,
-                "identity",introEnabled?NewsIntroAudioMixer.STING_ID:"",
+                "identity",introEnabled?introId:"",
                 "gainDb",introGainDb,
                 "startSeconds",0));
         if(mode==ProductionMode.FRAMING_EXPOSURE){
@@ -493,7 +531,7 @@ public final class NewsPipeline {
         Path finalDir=slotDir.getParent().resolve("final_videos");Path finalVideo=FileNames.unique(finalDir,c.topic,".mp4");Files.createDirectories(finalDir);Files.copy(render,finalVideo,StandardCopyOption.REPLACE_EXISTING);
         Map<String,Object>prov=new LinkedHashMap<>();prov.put("productionMode",mode.name());
         prov.put("introSound",Map.of("enabled",introEnabled,
-                "identity",introEnabled?NewsIntroAudioMixer.STING_ID:"",
+                "identity",introEnabled?introId:"",
                 "gainDb",introGainDb,
                 "startSeconds",0));
         if(mode==ProductionMode.FRAMING_EXPOSURE){
@@ -503,7 +541,13 @@ public final class NewsPipeline {
                     "actualNarrationSeconds",narrationSeconds,
                     "maximumAutomaticTargetSeconds",cfg.getInt("politicalExposureMaxDurationSeconds",180)));
         }
-        prov.put("experimentalFormatVersion",mode==ProductionMode.FRAMING_EXPOSURE?"framing-exposure-v2-single-article":"");if(evidence!=null){prov.put("framingEvidence",evidence.toMap());prov.put("lockedHeadline",script.headline());prov.put("lockedTeaser",PoliticalFramingScriptGenerator.TEASER);}prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("postLayout","tiktok-footer-220");prov.put("motionPackage","editorial-motion-v5");prov.put("narrationTiming",alignment.toMap());prov.put("visualStoryboard",storyboard.toMap());prov.put("visualQuality",visualQuality);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
+        prov.put("experimentalFormatVersion",mode==ProductionMode.FRAMING_EXPOSURE?"framing-exposure-v2-single-article":
+                mode==ProductionMode.MEME_RAGEBAIT?"meme-ragebait-v1":"");if(memeEvidence!=null){prov.put("memeEvidence",memeEvidence.toMap());
+            prov.put("comedyAngle",script.hook().getOrDefault("angle",""));
+            prov.put("sourceContentFingerprint",memeEvidence.fingerprint());
+            prov.put("measuredNarrationSeconds",narrationSeconds);
+            prov.put("actualFinalVideoSeconds",finalSeconds);}
+        if(evidence!=null){prov.put("framingEvidence",evidence.toMap());prov.put("lockedHeadline",script.headline());prov.put("lockedTeaser",PoliticalFramingScriptGenerator.TEASER);}prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("postLayout","tiktok-footer-220");prov.put("motionPackage","editorial-motion-v5");prov.put("narrationTiming",alignment.toMap());prov.put("visualStoryboard",storyboard.toMap());prov.put("visualQuality",visualQuality);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
         history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
     }
 

@@ -159,6 +159,8 @@ public final class CommandCenterServer {
                 Map<String,Object>body=bodyObject(x);String action=String.valueOf(body.getOrDefault("action",""));
                 if(action.toUpperCase(Locale.ROOT).contains("FRAMING_EXPOSURE")&&!cfg.getBool("politicalExposureEnabled",true))
                     throw new IllegalStateException("Political framing exposure experiment is disabled.");
+                if(action.toUpperCase(Locale.ROOT).contains("MEME")&&!cfg.getBool("memePipelineEnabled",true))
+                    throw new IllegalStateException("Meme production is disabled.");
                 json(x,200,store.action(id,action,String.valueOf(body.getOrDefault("operationId",""))));return;
             }
             if(p.length>=2&&"upload-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
