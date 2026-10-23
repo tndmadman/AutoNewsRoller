@@ -114,7 +114,7 @@ public final class SelfTest {
         }
         try{
             NewsScript inventedQuote=new NewsScript(script.storyId(),script.headline(),
-                    "An official said \\"I bought the moon\\", which is unverified.",
+                    "An official said \"I bought the moon\", which is unverified.",
                     script.segments(),8,script.sourceLabels(),script.hook());
             new MemeScriptValidator().validate(inventedQuote,evidence);
             throw new AssertionError("Unsourced direct quotation accepted");
