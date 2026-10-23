@@ -1,6 +1,7 @@
 package autonewsroller.commandcenter;
 
 import autonewsroller.config.NewsConfig;
+import autonewsroller.meme.MemeWorthinessAnalyzer;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.*;
 import autonewsroller.util.Json;
@@ -133,13 +134,14 @@ public final class RemoteWorker {
         String type=String.valueOf(job.getOrDefault("jobType","VIDEO")).toUpperCase(Locale.ROOT);
         currentJob=jobId;currentClaimId=String.valueOf(job.getOrDefault("claimId",""));
         currentTopic=String.valueOf(job.getOrDefault("topic",""));
-        state="POLITICAL_ANALYSIS".equals(type)?"ANALYZING_BIAS":"PRODUCING";
-        jobType=type;stage="POLITICAL_ANALYSIS".equals(type)?"ANALYSIS":"CLAIMED";
+        state="POLITICAL_ANALYSIS".equals(type)?"ANALYZING_BIAS":"MEME_ANALYSIS".equals(type)?"ANALYZING_MEME":"PRODUCING";
+        jobType=type;stage="POLITICAL_ANALYSIS".equals(type)||"MEME_ANALYSIS".equals(type)?"ANALYSIS":"CLAIMED";
         detail="Controller job claimed";jobStartedAt=Instant.now().toString();
         actualEncoder="";actualTts="";actualVoice="";comfyActivity="";
         event("job-start",Map.of("jobId",jobId,"jobType",type,"topic",currentTopic,"stage",stage,"workerId",workerId));
         try{
             if("POLITICAL_ANALYSIS".equals(type)){runPoliticalAnalysis(job);return;}
+            if("MEME_ANALYSIS".equals(type)){runMemeAnalysis(job);return;}
             ProductionMode productionMode=ProductionMode.fromPersisted(job.get("productionMode"));
             if(productionMode==ProductionMode.FRAMING_EXPOSURE&&!cfg.getBool("politicalExposureEnabled",true))
                 throw new IllegalStateException("Worker does not support framing exposure v1.");
@@ -207,6 +209,10 @@ public final class RemoteWorker {
             try{
                 if("POLITICAL_ANALYSIS".equals(type))
                     post("/api/jobs/"+enc(jobId)+"/bias-fail",Map.of("workerId",workerId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
+                else if("MEME_ANALYSIS".equals(type))
+                    post("/api/jobs/"+enc(jobId)+"/meme-fail",Map.of("workerId",workerId,"claimId",currentClaimId,
+                            "analysisInputFingerprint",String.valueOf(job.getOrDefault("analysisInputFingerprint","")),
+                            "error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
                 else
                     post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"claimId",currentClaimId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
                 acknowledged=true;
@@ -217,6 +223,25 @@ public final class RemoteWorker {
             state="IDLE";currentJob="";currentTopic="";currentClaimId="";jobType="";stage="";detail="";jobStartedAt="";
         }
     }
+    private void runMemeAnalysis(Map<String,Object>job)throws Exception{
+        if(!cfg.getBool("memeWorthinessEnabled",true))
+            throw new IllegalStateException("Worker meme_analysis_v1 is disabled");
+        NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
+        String hash=String.valueOf(job.getOrDefault("analysisInputFingerprint",""));
+        if(hash.isBlank()||!hash.equals(MemeWorthinessAnalyzer.fingerprint(candidate.cluster())))
+            throw new IllegalStateException("STALE_MEME_ANALYSIS: Candidate evidence changed");
+        String id=String.valueOf(job.get("jobId"));
+        NewsPipeline preparation=new NewsPipeline(root,cfg,
+                root.resolve("output/remote_worker/meme_analysis_"+safeName(id)));
+        NewsPipeline.Candidate prepared=new NewsPipeline.Candidate(
+                preparation.enrichForFraming(candidate.cluster()),candidate.factPackage(),candidate.score());
+        Map<String,Object>result=new MemeWorthinessAnalyzer(root,cfg).analyze(prepared.cluster());
+        post("/api/jobs/"+enc(id)+"/meme-complete",
+                Map.of("workerId",workerId,"claimId",currentClaimId,"result",result,
+                        "candidate",prepared.toMap(),"analysisInputFingerprint",hash));
+        event("job-finish",Map.of("jobId",id,"result","COMPLETE","stage","MEME_ANALYSIS"));
+    }
+
     private void runPoliticalAnalysis(Map<String,Object>job)throws Exception{
         NewsPipeline.Candidate candidate=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
         String jobId=String.valueOf(job.get("jobId"));
@@ -262,6 +287,7 @@ public final class RemoteWorker {
             List<String>capabilities=new ArrayList<>();
             if(cfg.getBool("politicalExposureEnabled",true))capabilities.add("framing_exposure_v1");
             if(cfg.getBool("memePipelineEnabled",true))capabilities.add("meme_ragebait_v1");
+            if(cfg.getBool("memeWorthinessEnabled",true))capabilities.add("meme_analysis_v1");
             m.put("capabilities",capabilities);
             m.put("metrics",metrics.get());m.put("timestamp",Instant.now().toString());
             post("/api/workers/heartbeat",m);lastHeartbeat=Instant.now();
