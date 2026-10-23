@@ -970,7 +970,8 @@ public final class CommandCenterStore {
                 String.valueOf(story.getOrDefault("status","")));
         row.put("entryActive",live);
         row.put("entryHasVideo",completed!=null&&!live);
-        row.put("entryMayRemake",completed!=null);
+        row.put("entryMayRemake","COMPLETE".equals(String.valueOf(story.get("status")))
+                &&completed!=null);
         if(mode==ProductionMode.MEME_RAGEBAIT&&Boolean.TRUE.equals(story.get("pendingMemeRequest"))&&!active){
             row.put("status","WAITING");row.put("stage","WAITING_FOR_STORY_SLOT");
             row.put("detail","Meme roast saved; waiting for the current video and any paired review");

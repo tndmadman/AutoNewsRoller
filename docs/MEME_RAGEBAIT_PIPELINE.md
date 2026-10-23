@@ -41,8 +41,10 @@ the worker's 70-second requested target and the framing repair floor. Actual aud
 duration controls the final FFmpeg cut. The first segment is the very first frame: no
 silent title slate or breaking-news introduction.
 
-A 220px scaled dark footer is preserved for platform overlays; standard-news header,
-ticker and TikTok-safe behavior remain separate.
+A 220px scaled **text-free** dark footer is preserved for platform post descriptions.
+The satire disclosure appears immediately above it, and the meme layout rotates
+multiple caption/reaction treatments without touching the standard-news header,
+ticker or TikTok-safe layout.
 
 ## Queue and archive
 

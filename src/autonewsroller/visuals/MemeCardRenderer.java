@@ -47,14 +47,26 @@ public final class MemeCardRenderer extends CardRenderer {
             }
         }
         if(!backgroundOnly){
-            g.setColor(new Color(0,0,0,210));g.fillRoundRect(30,35,1020,260,32,32);
+            int template=Math.floorMod(item.index(),4);
+            // Switch visual structures across beats; keep text geometry deterministic.
+            if(template==2){
+                g.setColor(new Color(255,230,40,210));g.fillRect(534,345,12,1210);
+                g.setColor(new Color(0,0,0,175));g.fillRoundRect(45,1390,990,150,24,24);
+            }else if(template==3){
+                g.setColor(new Color(255,67,129,180));g.fillRoundRect(55,980,970,430,48,48);
+                g.setColor(new Color(0,0,0,180));g.fillRoundRect(65,995,950,400,42,42);
+            }else if(template==1){
+                g.setColor(new Color(255,232,39,215));g.fillRect(0,30,1080,18);
+            }
+            int barY=template==1?325:template==3?70:35;
+            g.setColor(new Color(0,0,0,220));g.fillRoundRect(30,barY,1020,270,32,32);
             g.setColor(new Color(255,231,40));
             String text=item.title()==null?"":item.title().toUpperCase(Locale.ROOT);
             Font font=new Font("Impact",Font.BOLD,text.length()>38?53:72);
             g.setFont(font);
             FontMetrics fm=g.getFontMetrics();
             java.util.List<String>lines=wrap(text,fm,950);
-            int y=95+fm.getAscent();
+            int y=barY+45+fm.getAscent();
             for(String line:lines.subList(0,Math.min(2,lines.size()))){
                 g.setColor(Color.BLACK);
                 for(int dx=-3;dx<=3;dx+=3)for(int dy=-3;dy<=3;dy+=3)
@@ -63,12 +75,13 @@ public final class MemeCardRenderer extends CardRenderer {
                 g.drawString(line,540-fm.stringWidth(line)/2,y);
                 y+=fm.getHeight()+2;
             }
-            g.setColor(new Color(10,8,17,245));g.fillRect(0,1920-FOOTER,1080,FOOTER);
-            g.setColor(new Color(255,74,137));g.fillRect(0,1920-FOOTER,1080,10);
+            // The full footer stays text-free: TikTok's native post description
+            // overlays this region. The satire disclosure sits directly above it.
+            g.setColor(new Color(10,8,17));g.fillRect(0,1920-FOOTER,1080,FOOTER);
+            g.setColor(new Color(255,74,137));g.fillRect(0,1920-FOOTER,1080,7);
+            g.setColor(new Color(0,0,0,215));g.fillRoundRect(35,1920-FOOTER-73,470,60,12,12);
             g.setColor(Color.WHITE);g.setFont(new Font("SansSerif",Font.BOLD,28));
-            g.drawString("SATIRE / AI ILLUSTRATION",48,1920-FOOTER+58);
-            g.setFont(new Font("SansSerif",Font.PLAIN,26));
-            g.drawString("AutoNewsRoller  /  Source-backed comedy",48,1920-FOOTER+111);
+            g.drawString("SATIRE / AI ILLUSTRATION",48,1920-FOOTER-33);
         }
         g.dispose();ImageIO.write(img,"png",out.toFile());return out;
     }

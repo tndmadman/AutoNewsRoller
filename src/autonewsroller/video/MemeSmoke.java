@@ -44,6 +44,8 @@ public final class MemeSmoke {
         BufferedImage first=ImageIO.read(images.get(0).toFile());
         if(first==null||first.getWidth()!=360||first.getHeight()!=640)
             throw new AssertionError("Meme frame geometry");
+        if(first.getRGB(32,620)!=first.getRGB(270,620))
+            throw new AssertionError("Meme footer must remain uniform and clear for platform post text");
         Path mp4=dir.resolve("synthetic-meme.mp4");
         VideoRenderer renderer=new VideoRenderer("ffmpeg","ffprobe",360,640,15);
         renderer.render(images,List.of(1.5,2.5),mixed,mp4,"x264","off",
