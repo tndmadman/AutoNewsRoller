@@ -49,6 +49,7 @@ Do not reuse generic phrases such as "They did what?" unless the fact itself mak
 Aim naturally for 10-45 seconds, but DO NOT pad, truncate, or enforce a hard runtime.
 Use 2-10 flexible beats; each is a different setup, context, joke, or payoff.
 Make visual prompts explicit about source subject, the intended gag and cartoon/satirical illustration.
+Visual prompts are POSITIVE ComfyUI image conditioning only: describe what to draw, never include exclusions such as no text, without logos, not a photograph, or unsupported things to avoid. Java adds captions after image generation; never ask the image model to write words.
 Each beat must cite one or more exact supported fact IDs, and put uncertain claims in qualified terms.
 Return JSON only: {"angle":"...","hookText":"...","spokenHook":"...",
 "beats":[{"speech":"...","caption":"...","visualPrompt":"...","factIds":["F1"],"purpose":"SETUP|JOKE|CONTEXT|PAYOFF"}]}.
