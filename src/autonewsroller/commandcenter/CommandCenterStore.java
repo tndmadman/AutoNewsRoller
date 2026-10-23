@@ -672,15 +672,30 @@ public final class CommandCenterStore {
         return job;
     }
     public synchronized void memeAnalysisComplete(String storyId,Map<String,Object>result,
-            String workerId,String claimId,String claimedHash){
+            String workerId,String claimId,String claimedHash,NewsPipeline.Candidate prepared){
         Map<String,Object>m=requireStory(storyId);
         if("COMPLETE".equals(m.get("memeAnalysisStatus"))
                 &&claimId.equals(m.get("memeLastClaimId"))&&claimedHash.equals(m.get("memeLastClaimHash")))
             return; // idempotent acknowledgement
         verifyMemeClaim(m,workerId,claimId,claimedHash);
-        String actual=MemeWorthinessAnalyzer.fingerprint(
-                NewsPipeline.Candidate.fromMap(Json.object(m.get("candidate"))).cluster());
+        if(!(m.get("candidate") instanceof Map<?,?>))throw new IllegalStateException("Missing meme source candidate");
+        NewsPipeline.Candidate existing=NewsPipeline.Candidate.fromMap(Json.object(m.get("candidate")));
+        StoryCluster before=existing.cluster(),after=prepared.cluster();
+        if(!before.id.equals(after.id)||!before.topic.equals(after.topic)
+                ||!before.fingerprint.equals(after.fingerprint)
+                ||before.articles.size()!=after.articles.size())
+            throw new IllegalStateException("STALE_MEME_ANALYSIS: Story identity changed during enrichment");
+        for(int i=0;i<before.articles.size();i++){
+            Article old=before.articles.get(i),next=after.articles.get(i);
+            Map<String,Object>a=new LinkedHashMap<>(old.toMap()),b=new LinkedHashMap<>(next.toMap());
+            a.remove("bodyText");b.remove("bodyText");
+            if(!a.equals(b)||(!old.bodyText().isBlank()&&!old.bodyText().equals(next.bodyText())))
+                throw new IllegalStateException("STALE_MEME_ANALYSIS: Article identity or original text changed");
+        }
+        String actual=MemeWorthinessAnalyzer.fingerprint(after);
         MemeWorthinessAnalyzer.validateResult(result,storyId,actual);
+        m.put("candidate",prepared.toMap());
+        m.put("memeAnalysisInputHash",actual);
         m.put("memeAnalysis",deepCopyMap(result));
         m.put("memeScore",result.get("memeScore"));
         m.put("memeConfidence",result.get("confidence"));
@@ -1059,14 +1074,14 @@ public final class CommandCenterStore {
             if(!matchesBoardStatus(story,rawStatus,status))continue;
             if(!isOperationalBoardStatus(status)&&!recent)continue;
             if(!query.isEmpty()&&!boardSearchText(story).contains(query))continue;
-            matches.add(story);
+            matches.add("MEME_WORTHY".equals(status)?new LinkedHashMap<>(story):story);
         }
-        if(!"MEME_WORTHY".equals(status)){
+        {
             long count=stories.values().stream().filter(this::memeWorthy)
                     .filter(x->withinBoardAge(x,cutoff)).count();
             facets.put("MEME_WORTHY",count);
-        }else{
-            facets.put("MEME_WORTHY",(long)matches.size());
+        }
+        if("MEME_WORTHY".equals(status)){
             for(Map<String,Object>m:matches){
                 m.put("memeCandidate",true);
                 m.put("boardEntryId",String.valueOf(m.get("id"))+"::MEME_CANDIDATE");
