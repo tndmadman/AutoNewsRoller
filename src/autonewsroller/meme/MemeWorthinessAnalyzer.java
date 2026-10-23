@@ -19,9 +19,11 @@ public final class MemeWorthinessAnalyzer {
     private final OllamaClient ollama;
     private final String model;
     private final int threshold,excellent;
+    private final double temperature;
 
     public MemeWorthinessAnalyzer(Path root,NewsConfig cfg){
         model=cfg.get("memeWorthinessModel",cfg.get("ollamaModel","llama3.1:8b"));
+        temperature=cfg.getDouble("memeWorthinessTemperature",0.2);
         threshold=limit(cfg.getInt("memeWorthinessThreshold",72),0,100);
         excellent=limit(cfg.getInt("memeWorthinessExcellentThreshold",85),threshold,100);
         ollama=new OllamaClient(cfg.get("memeWorthinessOllamaUrl",cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate")),
@@ -108,7 +110,7 @@ editorialWarnings (array of short strings), severeRisk (boolean).
         Map<String,Object>input=new LinkedHashMap<>();
         input.put("storyId",cluster.id);input.put("topic",shortText(cluster.topic,300));input.put("facts",facts);
         Map<String,Object>raw=Json.object(Json.parse(ollama.generateJson(system,Json.stringify(input),"json",
-                0.2,1800)));
+                temperature,1800)));
         Map<String,Object>dimensions=validateDimensions(raw.get("dimensions"));
         int score=weightedScore(dimensions);
         double confidence=fraction(raw.get("confidence"));

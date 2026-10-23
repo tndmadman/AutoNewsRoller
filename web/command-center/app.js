@@ -245,7 +245,7 @@ function render(){
 }
 function renderRails(){
   const f=boardData.facets||{};
-  const fields={railAll:"ALL",railFound:"DISCOVERED",railVerified:"WORTHY",railQueued:"QUEUED",
+  const fields={railAll:"ALL",railFound:"DISCOVERED",railVerified:"WORTHY",railMemeWorthy:"MEME_WORTHY",railQueued:"QUEUED",
     railProducing:"PRODUCING",railFailed:"FAILED",railComplete:"COMPLETE",
     railToPost:"TO_POST",railUploaded:"UPLOADED",railScrapped:"SCRAPPED"};
   for(const [id,status] of Object.entries(fields))$("#"+id).textContent=f[status]||0;
@@ -423,11 +423,49 @@ function failurePanelHtml(s,status){
   '</div>';
 }
 
+
+function memePanelHtml(s){
+  const info=s.memeAnalysis||{},status=String(s.memeAnalysisStatus||"NOT_SCORED");
+  const score=s.memeScore===null||s.memeScore===undefined?null:Math.max(0,Math.min(100,num(s.memeScore)));
+  const reasons=(Array.isArray(info.reasons)?info.reasons:[]).slice(0,4)
+    .map(x=>'<li>'+esc(x)+'</li>').join("");
+  const angle=(Array.isArray(info.suggestedAngles)?info.suggestedAngles:[])[0]||{};
+  const warnings=(Array.isArray(info.editorialWarnings)?info.editorialWarnings:[]).slice(0,6)
+    .map(x=>'<div class="memeWarning">'+esc(x)+'</div>').join("");
+  const sources=(Array.isArray(s.sourceUrls)?s.sourceUrls:[]).slice(0,8)
+    .map(url=>{const safe=safeHttpUrl(url);return safe?'<a href="'+esc(safe)+'" target="_blank" rel="noopener noreferrer">'+esc(new URL(safe).hostname)+'</a>':""}).join(" ");
+  const working=status==="QUEUED"||status==="ANALYZING";
+  const decision=String(s.memeManualDecision||"AUTO");
+  const busyProduction=!!s.pendingMemeRequest||
+    (String(s.productionMode||"")==="MEME_RAGEBAIT"&&["PRODUCING","QUEUED"].includes(String(s.status||"")));
+  return '<section class="memePanel" aria-label="Independent meme worthiness">'+
+    '<div class="memePanelTitle">MEME-WORTHINESS // INDEPENDENT OLLAMA ASSESSMENT <b>'+esc(String(s.memeClassification||status))+'</b></div>'+
+    '<div class="memeMetrics"><div class="memeScoreMeter" role="meter" aria-label="Meme suitability score" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+(score===null?0:score)+'"><b>'+(score===null?"—":score)+'</b><span>MEME SCORE</span><i style="width:'+(score===null?0:pct(score))+'%"></i></div>'+
+    '<span>CONFIDENCE: '+(Math.round(num(s.memeConfidence)*100))+'%</span>'+
+    '<span>MODEL: '+esc(info.model||"pending")+'</span>'+
+    '<span>ANALYZED: '+esc(info.analyzedAt||"not yet")+'</span></div>'+
+    (reasons?'<ul class="memeReasons">'+reasons+'</ul>':'<p>Analysis: '+esc(s.memeAnalysisError||status.replaceAll("_"," "))+'</p>')+
+    (angle.angle?'<div class="memeAngle"><b>COMEDIC ANGLE:</b> '+esc(angle.angle)+'</div>':'')+
+    (angle.hook?'<div class="memeAngle"><b>FIRST-SECOND HOOK:</b> '+esc(angle.hook)+'</div>':'')+
+    (angle.visualConcept?'<div class="memeAngle"><b>VISUAL:</b> '+esc(angle.visualConcept)+'</div>':'')+
+    (warnings||"")+
+    '<div class="memeSources"><b>SOURCES / EVIDENCE:</b> '+(sources||"not available")+
+    ' // '+esc(info.evidenceStatus||"NOT SCORED")+'</div>'+
+    '<div class="storyActions memeActions">'+
+    '<button class="btn primary" data-command="MAKE_MEME" '+(busyProduction?"disabled":"")+'>MAKE MEME</button>'+
+    '<button class="btn ghost" data-command="REANALYZE_MEME" '+(working?"disabled":"")+'>'+(working?status.replaceAll("_"," "):"↻ REANALYZE MEME")+'</button>'+
+    '<button class="btn good" data-command="MEME_ACCEPT" '+(decision==="WORTH"?"disabled":"")+'>MEME WORTH IT</button>'+
+    '<button class="btn bad" data-command="MEME_REJECT" '+(decision==="NOT_WORTH"?"disabled":"")+'>NOT MEME WORTHY</button>'+
+    '<button class="btn ghost" data-command="MEME_AUTO" '+(decision==="AUTO"?"disabled":"")+'>AUTO</button>'+
+    '</div></section>';
+}
+
 function storyCard(s){
   const score=Math.round(num(s.score)*100),verified=!!s.verified,status=String(s.status||"DISCOVERED"),mix=s.sourceMix||{},total=Math.max(1,num(mix.left)+num(mix.center)+num(mix.right)+num(mix.unknown));
   const bar=k=>Math.round(num(mix[k])/total*100);
   const pubs=(s.publishers||[]).slice(0,8).map(p=>`<span class="sourceChip">${esc(p)}</span>`).join("");
   const cls=status==="PRODUCING"?" producing":status==="FAILED"?" failed":"";
+  const memeCandidate=!!s.memeCandidate;
   const review=s.entryMode==="FRAMING_EXPOSURE"||s.productionMode==="FRAMING_EXPOSURE";
   const meme=s.entryMode==="MEME_RAGEBAIT"||s.productionMode==="MEME_RAGEBAIT";
   const hasVideo=s.entryHasVideo===undefined?status==="COMPLETE":!!s.entryHasVideo;
@@ -505,23 +543,24 @@ function storyCard(s){
     ${failurePanel}
     ${liveDetail}
     ${uploadState}
+    ${memeCandidate?memePanelHtml(s):""}
     <div class="storyActions">
-      ${boardVideoUrl?`<a class="btn ghost" href="${esc(boardVideoUrl)}" target="_blank" rel="noopener">OPEN MP4</a>`:""}
-      ${!review&&!meme&&!completeLike?`
+      ${!memeCandidate&&boardVideoUrl?`<a class="btn ghost" href="${esc(boardVideoUrl)}" target="_blank" rel="noopener">OPEN MP4</a>`:""}
+      ${!memeCandidate&&!review&&!meme&&!completeLike?`
         <button class="btn good" data-command="WORTH" title="Queue normal news followed by a narrative review" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
         <button class="btn primary" data-command="MAKE" title="Make normal news, then a narrative review" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
         <button class="btn warn" data-command="HOLD" ${working?"disabled":""}>Ⅱ HOLD</button>
         <button class="btn bad" data-command="SKIP" ${working?"disabled":""}>× NOT WORTH</button>
         <button class="btn ghost" data-command="AUTO" ${working?"disabled":""}>↻ AUTO</button>`:""}
-      ${meme&&!completeLike?`<button class="btn primary" data-command="MAKE_MEME" ${working?"disabled":""}>${status==="FAILED"?"↻ RETRY MEME":"MAKE MEME / RAGEBAIT"}</button>`:""}
-       ${!review&&!meme&&completeLike?`<button class="btn ghost" data-command="MAKE_MEME" ${s.pendingMemeRequest?"disabled":""}>${s.pendingMemeRequest?"MEME WAITING":"MAKE MEME / RAGEBAIT"}</button>`:""}
-       ${review&&!completeLike?`<button class="btn primary" data-command="MAKE_FRAMING_EXPOSURE"
+      ${!memeCandidate&&meme&&!completeLike?`<button class="btn primary" data-command="MAKE_MEME" ${working?"disabled":""}>${status==="FAILED"?"↻ RETRY MEME":"MAKE MEME / RAGEBAIT"}</button>`:""}
+       ${!memeCandidate&&!review&&!meme&&completeLike?`<button class="btn ghost" data-command="MAKE_MEME" ${s.pendingMemeRequest?"disabled":""}>${s.pendingMemeRequest?"MEME WAITING":"MAKE MEME / RAGEBAIT"}</button>`:""}
+       ${!memeCandidate&&review&&!completeLike?`<button class="btn primary" data-command="MAKE_FRAMING_EXPOSURE"
         ${working||status==="SKIPPED"||status==="HOLD"?"disabled":""}>${status==="FAILED"?"↻ RETRY NARRATIVE REVIEW":status==="SKIPPED"?"REVIEW UNAVAILABLE":status==="HOLD"?"WAITING FOR ORIGINAL RETRY":status==="WAITING"?"WAITING FOR ORIGINAL VIDEO":working?"NARRATIVE REVIEW QUEUED":"◉ MAKE NARRATIVE REVIEW"}</button>`:""}
-      ${!review&&!meme&&!completeLike&&status!=="WAITING"?`
+      ${!memeCandidate&&!review&&!meme&&!completeLike&&status!=="WAITING"?`
          <button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${working?"disabled":""}>◉ EXPOSE POLITICAL FRAMING</button>
          <button class="btn ghost" data-command="MAKE_MEME" ${s.pendingMemeRequest?"disabled":""}>${s.pendingMemeRequest?"MEME WAITING":"MAKE MEME / RAGEBAIT"}</button>`:""}
-      ${completeLike&&canRemake?`<button class="btn primary" data-command="${review?"REMAKE_FRAMING_EXPOSURE":meme?"REMAKE_MEME":"REMAKE"}" title="${review?"Regenerate only the narrative review":meme?"Regenerate only this meme":"Remake news followed by its review"}">↻ ${review?"RE-MAKE REVIEW":meme?"RE-MAKE MEME":"RE-MAKE NEWS"}</button>`:""}
-      ${completeLike&&hasVideo?`
+      ${!memeCandidate&&completeLike&&canRemake?`<button class="btn primary" data-command="${review?"REMAKE_FRAMING_EXPOSURE":meme?"REMAKE_MEME":"REMAKE"}" title="${review?"Regenerate only the narrative review":meme?"Regenerate only this meme":"Remake news followed by its review"}">↻ ${review?"RE-MAKE REVIEW":meme?"RE-MAKE MEME":"RE-MAKE NEWS"}</button>`:""}
+      ${!memeCandidate&&completeLike&&hasVideo?`
         ${s.scrapped
           ?`<button class="btn ghost" data-command="RESTORE">↩ RESTORE VIDEO</button>`
           :`<button class="btn bad" data-command="SCRAP">× SCRAP VIDEO</button>`}
@@ -628,6 +667,15 @@ document.addEventListener("click",e=>{
   :(command==="REMAKE_MEME"?"Remake ONLY the meme? Existing news and review remain unchanged.":"Remake ONLY the narrative review? The normal news video remains unchanged.")))return;
   if(command==="MAKE_FRAMING_EXPOSURE"&&!confirm("Create or retry the narrative review from this article? Existing videos remain archived."))return;
   if(command==="MAKE_MEME"&&!confirm("Create a source-grounded comedic meme roast? Other queued videos remain intact."))return;
+  if(command==="REANALYZE_MEME"){
+    submitOperation(id,button,path+"/analyze-meme",{},"POST","Meme evaluation queued.");
+    return;
+  }
+  if(["MEME_ACCEPT","MEME_REJECT","MEME_AUTO"].includes(command)){
+    const decision=command==="MEME_ACCEPT"?"WORTH":command==="MEME_REJECT"?"NOT_WORTH":"AUTO";
+    submitOperation(id,button,path+"/meme-decision",{decision},"POST","Meme decision saved independently from news worth.");
+    return;
+  }
   if(command==="ANALYZE"){
     submitOperation(id,button,path+"/analyze-bias",{},"POST","Political framing analysis queued for an idle worker.");
     return;

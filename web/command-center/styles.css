@@ -283,3 +283,17 @@ main {position:relative;z-index:1;padding:22px clamp(10px,1.8vw,28px) 30px;max-w
 @media (prefers-reduced-motion:reduce) {
   *,*::before,*::after {animation-duration:.01ms !important;transition-duration:.01ms !important;scroll-behavior:auto !important}
 }
+
+/* Independent meme-worthiness discovery: separate from the normal WORTH score. */
+.memePanel{margin:12px 0;padding:13px;border:1px solid rgba(245,178,70,.44);background:rgba(32,25,12,.54);border-radius:8px;font-size:.88rem}
+.memePanelTitle{display:flex;justify-content:space-between;gap:10px;color:#f0bd67;font-weight:700;letter-spacing:.07em}
+.memeMetrics{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0;color:#b9bcc2}
+.memeScoreMeter{display:flex;flex-direction:column;gap:2px;min-width:108px;color:#ffcf7b}
+.memeScoreMeter b{font-size:1.7rem;line-height:1}.memeScoreMeter span{font-size:.7rem;letter-spacing:.12em}
+.memeScoreMeter i{display:block;height:4px;max-width:100%;background:#eaaa4b;border-radius:4px}
+.memeReasons{padding-left:22px;margin:10px 0}.memeReasons li{margin-bottom:5px}
+.memeAngle{margin:6px 0;overflow-wrap:anywhere}.memeAngle b{color:#ffc97b}
+.memeWarning{color:#ff9c83;padding:5px 0}
+.memeSources{margin-top:10px;color:#a7b2bd;overflow-wrap:anywhere}
+.memeSources a{color:#79c4e3;margin-right:8px;text-decoration:underline}
+.memeActions{margin-top:12px;display:flex;gap:6px;flex-wrap:wrap}
