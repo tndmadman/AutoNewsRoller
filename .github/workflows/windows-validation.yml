@@ -62,6 +62,7 @@ jobs:
           ffmpeg -version
           java -cp build/classes autonewsroller.video.VisualSmoke
           java -cp build/classes autonewsroller.video.PoliticalFramingSmoke
+          java -cp build/classes autonewsroller.video.MemeSmoke
 
   linux-headless:
     runs-on: ubuntu-latest
@@ -96,6 +97,7 @@ jobs:
           ffmpeg -version | head -n 1
           V5_LONG_SMOKE=true java -cp build/classes autonewsroller.video.VisualSmoke
           java -cp build/classes autonewsroller.video.PoliticalFramingSmoke
+          java -cp build/classes autonewsroller.video.MemeSmoke
       - uses: actions/upload-artifact@v4
         if: always()
         with:

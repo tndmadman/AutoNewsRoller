@@ -579,7 +579,7 @@ public final class CommandCenterStore {
         if(metadata.get("sidecar") instanceof Map<?,?> sidecarMode){
             String declared=String.valueOf(Json.object(sidecarMode).getOrDefault("productionMode","STANDARD"));
             if(!completedMode.name().equals(declared))throw new IllegalStateException("Completion mode mismatch: "+declared);
-        }else if(completedMode==ProductionMode.FRAMING_EXPOSURE)
+        }else if(completedMode!=ProductionMode.STANDARD)
             throw new IllegalStateException("Experimental video requires a provenance sidecar.");
         int version=nextVideoVersion(jobId);
         String versionId=videoVersionId(jobId,version);

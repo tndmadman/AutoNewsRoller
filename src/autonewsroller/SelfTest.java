@@ -47,6 +47,7 @@ public final class SelfTest {
         testSelectedArticleEnrichment();
         testPoliticalExposureMode();
         testPairedSequentialVideoProduction();
+        testMemePipeline();
         testPoliticalExposureLengthRecovery();
         testPoliticalVisualGraphics(root,a);
         testAuthoritative(root);
@@ -62,6 +63,126 @@ public final class SelfTest {
         testFilename(root);
         testEncoderNormalize();
         System.out.println("SELF-TEST PASS: "+passed+" checks");
+    }
+
+
+    private void testMemePipeline()throws Exception{
+        Instant now=Instant.now();
+        Article article=new Article("meme-a","Fixture News",
+                "City buys novelty traffic signs",
+                "https://fixture.example/meme","https://fixture.example/meme",now,now,"","local",
+                "The city purchased novelty signs.",
+                "The city purchased novelty signs for the downtown plaza.","en",1,false);
+        StoryCluster cluster=new StoryCluster("meme-story",article.title(),List.of(article),
+                Set.of("City"),"meme-fingerprint");
+        FactClaim claim=new FactClaim(article.title(),List.of(article.url()),.75,false);
+        FactPackage fp=new FactPackage(cluster.id,article.title(),article.title(),
+                List.of(claim),List.of(),List.of(Map.of("publisher",article.publisher())),1,1,.6,false);
+        var evidence=new MemeEvidenceBuilder().build(cluster,fp);
+        ok(!evidence.fingerprint().isBlank()&&evidence.factIds().contains("F1")
+                &&!evidence.sourceText().isBlank(),
+                "meme article evidence retains facts, URLs and fingerprints");
+        NewsScript script=new MemeScriptGenerator(null,1).generate(fp,evidence,true);
+        ok(script.segments().size()==2
+                &&"MEME_RAGEBAIT".equals(script.hook().get("type"))
+                &&script.estimatedDuration()<61,
+                "independent meme generator admits short variable-beat output");
+        new MemeScriptValidator().validate(script,evidence);
+        ok(true,"short meme narration passes mode-specific evidence validation");
+        VisualPlan plan=new MemeVisualPlanner().plan(script);
+        ok(plan.items().size()==script.segments().size()
+                &&"MEME_HOOK".equals(plan.items().get(0).type())
+                &&plan.items().get(0).title().equals(script.hook().get("hookText")),
+                "meme visual plan opens on its caption with no news graphics");
+        Path dir=Files.createTempDirectory("autonews-meme-fixture-");
+        Path frame=dir.resolve("opening.png");
+        new MemeCardRenderer().render(plan.items().get(0),frame,360,640);
+        BufferedImage opening=ImageIO.read(frame.toFile());
+        ok(opening!=null&&opening.getWidth()==360&&opening.getHeight()==640,
+                "meme opening frame renders with the vertical safe footer");
+        try{
+            NewsScript invalid=new NewsScript(script.storyId(),script.headline(),
+                    "This report says the city bought 9999999 signs.",
+                    script.segments(),8,script.sourceLabels(),script.hook());
+            new MemeScriptValidator().validate(invalid,evidence);
+            throw new AssertionError("Unsupported numerical meme claim accepted");
+        }catch(IllegalArgumentException expected){
+            ok(expected.getMessage().contains("Unsupported number"),
+                    "meme validator rejects unsupported numerals");
+        }
+        Path state=dir.resolve("state.json");
+        var discovery=new NewsPipeline.DiscoveryResult(
+                List.of(new NewsPipeline.DiscoveryItem(cluster,fp,false,
+                        "single attributed fixture",.9,false)),
+                1,1,0,1,1,1,1,now);
+        CommandCenterStore store=new CommandCenterStore(state,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        store.applyDiscovery(discovery);
+        store.action(cluster.id,"MAKE","standard-first");
+        store.action(cluster.id,"MAKE_MEME","meme-after-normal");
+        store.action(cluster.id,"MAKE_MEME","meme-after-normal");
+        ok(Boolean.TRUE.equals(store.storyDetail(cluster.id).get("pendingMemeRequest"))
+                &&"STANDARD".equals(store.storyDetail(cluster.id).get("productionMode")),
+                "meme requested during queued standard production waits without overwriting");
+        var board=store.boardStories(1,25,"ALL","",0);
+        ok(((Number)board.get("total")).intValue()==2
+                &&((List<?>)board.get("stories")).stream().anyMatch(x->x instanceof Map<?,?>m
+                        &&"meme-story::MEME_RAGEBAIT".equals(m.get("boardEntryId"))
+                        &&"WAITING".equals(m.get("status"))),
+                "meme has an independent waiting board card");
+        CommandCenterStore resumed=new CommandCenterStore(state,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        resumed.applyDiscovery(discovery);
+        ok(Boolean.TRUE.equals(resumed.storyDetail(cluster.id).get("pendingMemeRequest")),
+                "meme request survives restart and RSS rescan");
+        resumed.heartbeat("legacy",Map.of("id","legacy","capabilities",List.of()));
+        Map<String,Object>normal=resumed.claim("legacy",Map.of());
+        ok(normal!=null&&"STANDARD".equals(normal.get("productionMode")),
+                "original news production claims before pending meme");
+        resumed.complete(cluster.id,Map.of("workerId","legacy","claimId",normal.get("claimId"),
+                "sidecar",Map.of("productionMode","STANDARD")));
+        ok("MEME_RAGEBAIT".equals(resumed.storyDetail(cluster.id).get("productionMode"))
+                &&"QUEUED".equals(resumed.storyDetail(cluster.id).get("status")),
+                "meme queues immediately after standard completion");
+        ok(resumed.claim("legacy",Map.of())==null,
+                "worker without meme capability cannot claim queued meme");
+        resumed.heartbeat("meme-worker",Map.of("id","meme-worker",
+                "capabilities",List.of("meme_ragebait_v1")));
+        Map<String,Object>job=resumed.claim("meme-worker",Map.of("duration",12));
+        ok(job!=null&&"MEME_RAGEBAIT".equals(job.get("productionMode")),
+                "meme-capable worker claims independent production mode");
+        try{
+            resumed.complete(cluster.id,Map.of("workerId","meme-worker",
+                    "claimId",job.get("claimId")));
+            throw new AssertionError("Meme without sidecar accepted");
+        }catch(IllegalStateException expected){
+            ok(expected.getMessage().contains("sidecar"),
+                    "meme completion requires a provenance sidecar");
+        }
+        Map<String,Object>sidecar=new LinkedHashMap<>();
+        sidecar.put("productionMode","MEME_RAGEBAIT");
+        sidecar.put("comedyAngle","Absurd signs");
+        sidecar.put("imageSources",List.of(Map.of("type","comfyui-generated-ai-illustration")));
+        resumed.complete(cluster.id,Map.of("workerId","meme-worker","claimId",job.get("claimId"),
+                "sidecar",sidecar));
+        Map<String,Object>snapshot=resumed.snapshot();
+        List<?> archive=(List<?>)snapshot.get("videos");
+        ok(archive.size()==2&&archive.stream().anyMatch(v->v instanceof Map<?,?>m
+                    &&"MEME_RAGEBAIT".equals(m.get("productionMode")))
+                &&archive.stream().anyMatch(v->v instanceof Map<?,?>m
+                    &&"STANDARD".equals(m.get("productionMode"))),
+                "original and meme coexist as independently archived entries");
+        ok(((Number)resumed.storyDetail(cluster.id).get("comfyImages")).intValue()==1,
+                "real ComfyUI illustration provenance contributes to generated count");
+        Map<String,Object>memeRow=Json.object(((List<?>)resumed.boardStories(1,25,
+                "ALL","meme roast",0).get("stories")).get(0));
+        ok("COMPLETE".equals(memeRow.get("status"))
+                &&Boolean.TRUE.equals(memeRow.get("entryMayRemake")),
+                "completed meme is separately searchable and remakable");
+        resumed.action(cluster.id,"REMAKE_MEME","remake-once");
+        ok("QUEUED".equals(resumed.storyDetail(cluster.id).get("status"))
+                &&"MEME_RAGEBAIT".equals(resumed.storyDetail(cluster.id).get("productionMode")),
+                "REMAKE_MEME queues only meme mode and preserves archive");
     }
 
     private void testSourceConfig(Path root)throws Exception{
