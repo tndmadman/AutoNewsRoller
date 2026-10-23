@@ -79,6 +79,6 @@ public final class MemeCardRenderer extends CardRenderer {
             if(!line.isEmpty()&&fm.stringWidth(candidate)>maxWidth){out.add(line);line=word;}
             else line=candidate;
         }
-        if(!line.isEmpty())out.add(line);return out.isEmpty()?List.of(""):out;
+        if(!line.isEmpty())out.add(line);return out.isEmpty()?java.util.List.of(""):out;
     }
 }
