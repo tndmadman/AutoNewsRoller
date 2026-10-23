@@ -46,6 +46,7 @@ public final class CommandCenterServer {
                 cfg.getInt("commandCenterLeaseRecoveryMaxRetries",3),
                 cfg.getBool("commandCenterPairFramingVideos",true)
         );
+        this.store.configureMeme(cfg);
     }
 
     public int start() throws Exception {
@@ -178,6 +179,16 @@ public final class CommandCenterServer {
                 String versionId=String.valueOf(body.getOrDefault("versionId",""));
                 json(x,200,store.setScrapStatus(id,versionId,scrapped,reason,String.valueOf(body.getOrDefault("operationId",""))));return;
             }
+            if(p.length>=2&&"analyze-meme".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
+                if(!cfg.getBool("memeWorthinessEnabled",true))throw new IllegalStateException("Meme analysis disabled");
+                Map<String,Object>b=bodyObject(x);
+                json(x,202,store.queueMemeAnalysis(id,String.valueOf(b.getOrDefault("operationId",""))));return;
+            }
+            if(p.length>=2&&"meme-decision".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
+                Map<String,Object>b=bodyObject(x);
+                json(x,200,store.memeDecision(id,String.valueOf(b.getOrDefault("decision","")),
+                        String.valueOf(b.getOrDefault("operationId",""))));return;
+            }
             if(p.length>=2&&"analyze-bias".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>b=bodyObject(x);json(x,202,store.queuePoliticalAnalysis(id,String.valueOf(b.getOrDefault("operationId",""))));return;
             }
@@ -251,6 +262,27 @@ public final class CommandCenterServer {
                 case "fail"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
                     Map<String,Object>b=bodyObject(x);store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")));json(x,200,Map.of("ok",true));
+                }
+                case "meme-complete"->{
+                    if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+                    Map<String,Object>b=bodyObject(x);
+                    if(!(b.get("result") instanceof Map<?,?>)||!(b.get("candidate") instanceof Map<?,?>))
+                        throw new IllegalArgumentException("Missing meme result or prepared candidate");
+                    store.memeAnalysisComplete(id,Json.object(b.get("result")),
+                            String.valueOf(b.getOrDefault("workerId","")),
+                            String.valueOf(b.getOrDefault("claimId","")),
+                            String.valueOf(b.getOrDefault("analysisInputFingerprint","")),
+                            NewsPipeline.Candidate.fromMap(Json.object(b.get("candidate"))));
+                    json(x,200,Map.of("ok",true));
+                }
+                case "meme-fail"->{
+                    if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+                    Map<String,Object>b=bodyObject(x);
+                    store.memeAnalysisFail(id,String.valueOf(b.getOrDefault("error","meme analysis failure")),
+                            String.valueOf(b.getOrDefault("workerId","")),
+                            String.valueOf(b.getOrDefault("claimId","")),
+                            String.valueOf(b.getOrDefault("analysisInputFingerprint","")));
+                    json(x,200,Map.of("ok",true));
                 }
                 case "bias-complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
