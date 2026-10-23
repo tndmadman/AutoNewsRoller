@@ -21,7 +21,7 @@ fallback), local ComfyUI and FFmpeg/ffprobe. Updated workers advertise
    openings. The selected hook is locked into variable-length script generation
    with cited fact IDs and explicit satirical visual descriptions. Use an ordinary safe fallback only for **dry runs**.
 4. `MemeScriptValidator` checks basic narration, first-hook brevity, cited fact ID
-   presence, generic filler and unsupported numerical claims. Satire is not proof; operators
+   presence, generic filler, unsupported numerals and invented direct quotations. Satire is not proof; operators
    still need human review for quotation fidelity, fairness and joke quality.
 5. `MemeVisualPlanner` maps beat captions and descriptions to scene timing.
    `MemeCardRenderer` produces 9:16 cartoon-oriented cards, Java-rendered captions and

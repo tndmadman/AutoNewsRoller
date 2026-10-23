@@ -112,6 +112,16 @@ public final class SelfTest {
             ok(expected.getMessage().contains("Unsupported number"),
                     "meme validator rejects unsupported numerals");
         }
+        try{
+            NewsScript inventedQuote=new NewsScript(script.storyId(),script.headline(),
+                    "An official said \\"I bought the moon\\", which is unverified.",
+                    script.segments(),8,script.sourceLabels(),script.hook());
+            new MemeScriptValidator().validate(inventedQuote,evidence);
+            throw new AssertionError("Unsourced direct quotation accepted");
+        }catch(IllegalArgumentException expected){
+            ok(expected.getMessage().contains("Unsupported direct quotation"),
+                    "meme validator rejects fabricated direct quotes");
+        }
         Path state=dir.resolve("state.json");
         var discovery=new NewsPipeline.DiscoveryResult(
                 List.of(new NewsPipeline.DiscoveryItem(cluster,fp,false,

@@ -8,6 +8,7 @@ import java.util.regex.*;
 /** Mode-local quality gates: no news minimum duration and no fixed beat count. */
 public final class MemeScriptValidator {
     private static final Pattern NUMBER=Pattern.compile("(?<![\\p{L}\\p{N}])(?:\\$)?\\d+(?:[.,]\\d+)*(?:%)?");
+    private static final Pattern QUOTE=Pattern.compile("[\\\"“]([^\\\"”]{3,160})[\\\"”]");
     public void validate(NewsScript script,MemeEvidenceBuilder.Evidence evidence){
         if(script.segments().size()<2||script.segments().size()>12)
             throw new IllegalArgumentException("MEME_SCRIPT_VALIDATION_FAILED: Expected 2-12 distinct beats");
@@ -37,6 +38,13 @@ public final class MemeScriptValidator {
                 throw new IllegalArgumentException("MEME_SCRIPT_VALIDATION_FAILED: Unknown fact reference "+id);
         }
         String source=evidence.sourceText().replaceAll("\\s+"," ").toLowerCase(Locale.ROOT);
+        Matcher quoted=QUOTE.matcher(script.narration());
+        while(quoted.find()){
+            String claim=quoted.group(1).replaceAll("\\s+"," ").toLowerCase(Locale.ROOT);
+            if(!source.contains(claim))
+                throw new IllegalArgumentException(
+                        "MEME_SCRIPT_VALIDATION_FAILED: Unsupported direct quotation: "+claim);
+        }
         Matcher nums=NUMBER.matcher(script.narration());
         while(nums.find()){
             String n=nums.group();
