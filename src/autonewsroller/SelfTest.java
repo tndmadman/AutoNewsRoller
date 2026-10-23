@@ -5,6 +5,7 @@ import autonewsroller.commandcenter.*;
 import autonewsroller.config.*;
 import autonewsroller.ingest.*;
 import autonewsroller.model.*;
+import autonewsroller.meme.MemeWorthinessAnalyzer;
 import autonewsroller.orchestration.*;
 import autonewsroller.script.*;
 import autonewsroller.util.*;
@@ -48,6 +49,7 @@ public final class SelfTest {
         testPoliticalExposureMode();
         testPairedSequentialVideoProduction();
         testMemePipeline();
+        testMemeWorthinessEngine(root);
         testPoliticalExposureLengthRecovery();
         testPoliticalVisualGraphics(root,a);
         testAuthoritative(root);
@@ -66,6 +68,134 @@ public final class SelfTest {
         System.out.println("SELF-TEST PASS: "+passed+" checks");
     }
 
+
+
+    private void testMemeWorthinessEngine(Path root)throws Exception{
+        Map<String,Object>dims=Map.of("hook",10,"absurdity",9,"visual",9,"relatability",8,
+                "originality",9,"factualClarity",9,"timeliness",9,"engagement",9);
+        ok(MemeWorthinessAnalyzer.weightedScore(dims)>=85,
+                "meme weighted score is independent and respects eight dimensions");
+        try{
+            MemeWorthinessAnalyzer.validateDimensions(Map.of("hook",11));
+            throw new AssertionError("Out-of-range model score accepted");
+        }catch(IllegalArgumentException expected){ok(true,"invalid dimension rejected");}
+        Instant now=Instant.now();
+        Article a=new Article("local-source","Local Reporter",
+                "Store accidentally sells a giant cardboard potato",
+                "https://fixture.example/potato","https://fixture.example/potato",now,now,
+                "","local","A store ordered a novelty display potato and it arrived by mistake.",
+                "The store accidentally received a giant cardboard potato instead of a normal display. "+
+                "Employees placed the potato by the checkout, and shoppers took photos of it.",
+                "en",3,false);
+        StoryCluster story=new StoryCluster("meme-independent","Cardboard potato surprise",
+                List.of(a),Set.of("Store"),"potato-event");
+        Path dir=Files.createTempDirectory("meme-worthiness-selftest");
+        java.util.concurrent.atomic.AtomicInteger calls=new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<String> request=new java.util.concurrent.atomic.AtomicReference<>("");
+        java.util.concurrent.atomic.AtomicReference<String> modelResponse=new java.util.concurrent.atomic.AtomicReference<>(
+                Json.stringify(Map.of("dimensions",dims,"confidence",.87,
+                        "reasons",List.of("Surprising real-world retail mix-up"),
+                        "suggestedAngles",List.of(Map.of("angle","A comically huge potato in a shop",
+                                "hook","The checkout got an enormous potato",
+                                "factIds",List.of("F1"),"visualConcept","Large cardboard potato at checkout")),
+                        "editorialWarnings",List.of(),"severeRisk",false)));
+        HttpServer ollama=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        ollama.createContext("/api/generate",x->{
+            request.set(new String(x.getRequestBody().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8));
+            calls.incrementAndGet();
+            byte[]out=Json.stringify(Map.of("response",modelResponse.get(),"done_reason","stop"))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            x.getResponseHeaders().set("Content-Type","application/json");
+            x.sendResponseHeaders(200,out.length);
+            try(var stream=x.getResponseBody()){stream.write(out);}
+        });
+        ollama.start();
+        try{
+            NewsConfig cfg=NewsConfig.load(root);
+            cfg.set("memeWorthinessEnabled","true");
+            cfg.set("memeWorthinessAutoAnalyze","true");
+            cfg.set("memeWorthinessPrefilterMinimum","0");
+            cfg.set("memeWorthinessMaxAnalysisPerScan","2");
+            cfg.set("memeWorthinessOllamaUrl","http://127.0.0.1:"+ollama.getAddress().getPort()+"/api/generate");
+            cfg.set("memeWorthinessModel","llama3.1:8b");
+            FactPackage fp=new FactPackage(story.id,story.topic,story.topic,
+                    List.of(new FactClaim(a.title(),List.of(a.url()),.6,false)),
+                    List.of(),List.of(Map.of("publisher",a.publisher())),1,1,.5,false);
+            var item=new NewsPipeline.DiscoveryItem(story,fp,false,"One news source",.12,false);
+            var discovery=new NewsPipeline.DiscoveryResult(
+                    List.of(item),1,1,0,1,1,1,1,now);
+            CommandCenterStore store=new CommandCenterStore(dir.resolve("state.json"),
+                    BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,e->{});
+            store.configureMeme(cfg);
+            store.applyDiscovery(discovery);
+            ok("QUEUED".equals(store.storyDetail(story.id).get("memeAnalysisStatus"))
+                    &&((Number)store.storyDetail(story.id).get("score")).doubleValue()==.12,
+                    "low news score does not prevent one-source meme analysis");
+            store.heartbeat("meme-worker",Map.of("capabilities",List.of("meme_analysis_v1")));
+            Map<String,Object>job=store.claim("meme-worker",Map.of());
+            ok(job!=null&&"MEME_ANALYSIS".equals(job.get("jobType"))
+                    &&job.get("claimId")!=null,
+                    "meme-capable worker claims independent job with token");
+            Map<String,Object>analysis=new MemeWorthinessAnalyzer(dir,cfg).analyze(story);
+            ok("llama3.1:8b".equals(Json.object(Json.parse(request.get())).get("model"))
+                    &&request.get().contains("UNTRUSTED DATA"),
+                    "mock Ollama request uses chosen model and source-data instructions");
+            NewsPipeline.Candidate prepared=NewsPipeline.Candidate.fromMap(Json.object(job.get("candidate")));
+            String claimed=String.valueOf(job.get("analysisInputFingerprint"));
+            try{
+                store.memeAnalysisComplete(story.id,analysis,"meme-worker","bad-claim",claimed,prepared);
+                throw new AssertionError("Stale meme completion accepted");
+            }catch(IllegalStateException expected){ok(true,"stale meme claim rejected");}
+            store.memeAnalysisComplete(story.id,analysis,"meme-worker",String.valueOf(job.get("claimId")),claimed,prepared);
+            store.memeAnalysisComplete(story.id,analysis,"meme-worker",String.valueOf(job.get("claimId")),claimed,prepared);
+            var scored=store.storyDetail(story.id);
+            ok(((Number)scored.get("memeScore")).intValue()>=85
+                    &&"COMPLETE".equals(scored.get("memeAnalysisStatus"))
+                    &&!Boolean.TRUE.equals(scored.get("worthy")),
+                    "high meme suitability never modifies standard news worth");
+            ok(((Number)store.boardStories(1,25,"MEME_WORTHY","",0).get("total")).intValue()==1,
+                    "one underlying candidate appears in server-side meme tab");
+            store.applyDiscovery(discovery);
+            ok("COMPLETE".equals(store.storyDetail(story.id).get("memeAnalysisStatus"))
+                    &&calls.get()==1,"routine RSS rescan reuses cached meme assessment");
+            store.memeDecision(story.id,"NOT_WORTH","reject-meme");
+            ok(((Number)store.boardStories(1,25,"MEME_WORTHY","",0).get("total")).intValue()==0,
+                    "manual meme rejection only affects meme tab");
+            store.memeDecision(story.id,"AUTO","clear-meme");
+            CommandCenterStore restored=new CommandCenterStore(dir.resolve("state.json"),
+                    BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,e->{});
+            restored.configureMeme(cfg);
+            ok("COMPLETE".equals(restored.storyDetail(story.id).get("memeAnalysisStatus"))
+                    &&"AUTO".equals(restored.storyDetail(story.id).get("memeManualDecision")),
+                    "meme score and editorial decisions persist across controller restart");
+            Article changed=new Article(a.id(),a.publisher(),a.title(),a.url(),a.canonicalUrl(),
+                    a.publishedAt(),a.discoveredAt(),a.author(),a.category(),a.description()+" Updated.",
+                    a.bodyText(),a.language(),a.sourceTrustTier(),a.authoritativePrimary());
+            StoryCluster revised=new StoryCluster(story.id,story.topic,List.of(changed),
+                    story.entities,story.fingerprint);
+            var revisedItem=new NewsPipeline.DiscoveryItem(revised,fp,false,"One news source",.12,false);
+            restored.applyDiscovery(new NewsPipeline.DiscoveryResult(List.of(revisedItem),
+                    1,1,0,1,1,1,1,now));
+            ok(!"COMPLETE".equals(restored.storyDetail(story.id).get("memeAnalysisStatus")),
+                    "changed evidence invalidates previous meme assessment");
+            modelResponse.set(Json.stringify(Map.of("dimensions",dims,"confidence",.87,
+                    "reasons",List.of("Retail surprise"),
+                    "suggestedAngles",List.of(Map.of("angle","Example","hook","Example hook",
+                            "factIds",List.of("F404"),"visualConcept","Potato")),
+                    "editorialWarnings",List.of(),"severeRisk",false)));
+            try{
+                new MemeWorthinessAnalyzer(dir,cfg).analyze(story);
+                throw new AssertionError("Unsupported fact ID accepted");
+            }catch(IllegalArgumentException expected){ok(true,"Ollama invented fact ID rejected");}
+            StoryCluster headlineOnly=new StoryCluster("headline-only","Mystery",
+                    List.of(new Article("h","Reporter","Mysterious event",
+                            "https://fixture.example/h","https://fixture.example/h",now,now,
+                            "","local","","","en",3,false)),Set.of(),"headline-only");
+            Map<String,Object>insufficient=new MemeWorthinessAnalyzer(dir,cfg).analyze(headlineOnly);
+            ok(insufficient.get("memeScore")==null&&"INSUFFICIENT_EVIDENCE".equals(insufficient.get("evidenceStatus")),
+                    "headline-only stories receive no invented meme score");
+        }finally{ollama.stop(0);}
+    }
 
     private void testMemePipeline()throws Exception{
         Instant now=Instant.now();

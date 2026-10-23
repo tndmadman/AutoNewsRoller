@@ -119,7 +119,7 @@ jobs:
           grep -q '"ok":true' /tmp/health.json
 
   dashboard-browser-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:

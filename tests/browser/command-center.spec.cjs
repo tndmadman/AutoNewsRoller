@@ -41,18 +41,21 @@ function fixture(appOverride=null){
         if(filter==="UPLOADED")return !!s.uploaded&&!s.scrapped;
         if(filter==="SCRAPPED")return !!s.scrapped;
         if(filter==="WORTHY")return !!s.worthy&&["DISCOVERED","VERIFIED","WORTHY"].includes(stat);
+        if(filter==="MEME_WORTHY")return s.memeManualDecision!=="NOT_WORTH"&&
+          (s.memeManualDecision==="WORTH"||(s.memeAnalysisStatus==="COMPLETE"&&Number(s.memeScore)>=72));
         return stat===filter;
       };
       const recent=s=>!hours||(Date.now()-Date.parse(s.latestPublishedAt))/3600000<=hours;
       const facets={};
-      for(const key of ["ALL","DISCOVERED","WORTHY","VERIFIED","QUEUED","PRODUCING","HOLD","FAILED","COMPLETE","TO_POST","UPLOADED","SCRAPPED","SKIPPED"])
+      for(const key of ["ALL","DISCOVERED","WORTHY","MEME_WORTHY","VERIFIED","QUEUED","PRODUCING","HOLD","FAILED","COMPLETE","TO_POST","UPLOADED","SCRAPPED","SKIPPED"])
         facets[key]=state.stories.filter(s=>match(s,key)&&(recent(s)||operational.has(key))).length;
       const all=state.stories.filter(s=>match(s,status)&&(recent(s)||operational.has(status))
         &&[s.topic,s.category,s.uploadedPlatform,s.uploadNote,s.scrapReason,s.lastFailure,
           s.failureType,s.assignedWorker,s.lastAssignedWorker,...(s.publishers||[])].join(" ").toLowerCase().includes(query))
-        .sort((a,b)=>(b.score||0)-(a.score||0)||String(a.id).localeCompare(String(b.id)));
+        .sort((a,b)=>(status==="MEME_WORTHY"?(b.memeScore||0)-(a.memeScore||0):(b.score||0)-(a.score||0))||
+          String(a.id).localeCompare(String(b.id)));
       const totalPages=Math.max(1,Math.ceil(all.length/pageSize)),page=Math.min(Math.max(1,wanted),totalPages);
-      const payload=JSON.stringify({stories:all.slice((page-1)*pageSize,page*pageSize),
+      const payload=JSON.stringify({stories:all.slice((page-1)*pageSize,page*pageSize).map(s=>status==="MEME_WORTHY"?{...s,memeCandidate:true,boardEntryId:s.id+"::MEME_CANDIDATE"}:s),
         page,pageSize,total:all.length,totalPages,facets});
       const delay=boardDelay;
       setTimeout(()=>{if(!res.writableEnded){res.writeHead(200,{"Content-Type":"application/json"});res.end(payload)}},delay);
@@ -76,6 +79,10 @@ function fixture(appOverride=null){
         else if(a==="SKIP"){target.status="SKIPPED";target.stage="SKIPPED"}
         else if(a==="AUTO"){target.status="VERIFIED";target.stage="DISCOVERED"}
         storyResult={...target};
+      }else if(url.pathname.endsWith("/analyze-meme")){
+        target.memeAnalysisStatus="QUEUED";
+      }else if(url.pathname.endsWith("/meme-decision")){
+        target.memeManualDecision=body.decision;
       }else if(url.pathname.endsWith("/upload-status")){
         const chosen=state.videos.find(v=>v.versionId===body.versionId)||version;
         chosen.uploaded=!!body.uploaded;
@@ -633,4 +640,33 @@ test("terminal screenshots and horizontal overflow across reference viewports",a
     await expect(page.locator(".failurePanel")).toBeVisible();
     await page.screenshot({path:path.join(dir,"console-failed-390x844.png"),fullPage:true,animations:"disabled"});
   }finally{await f.stop()}
+});
+
+test("meme worthy rail displays independent scores, safely escaped details and meme-only actions",async({page})=>{
+  const f=fixture();
+  f.story.worthy=false;f.story.score=.12;
+  f.story.memeAnalysisStatus="COMPLETE";f.story.memeScore=93;f.story.memeConfidence=.91;
+  f.story.memeClassification="EXCELLENT";f.story.memeManualDecision="AUTO";
+  f.story.sourceUrls=["https://fixture.example/article"];
+  f.story.memeAnalysis={model:"llama3.1:8b",analyzedAt:new Date().toISOString(),
+    evidenceStatus:"SUFFICIENT",reasons:["Surprising shopping <script>window.__xss=1</script>"],
+    suggestedAngles:[{angle:"The big potato",hook:"Potato panic!",visualConcept:"Giant potato beside checkout"}],
+    editorialWarnings:["Verify the local source"]};
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    await page.locator('[data-filter="MEME_WORTHY"]').click();
+    const card=page.locator("#stories .storyCard");
+    await expect(card).toHaveCount(1);
+    await expect(card.locator(".memeScoreMeter")).toContainText("93");
+    await expect(card.locator(".memePanel")).toContainText("Potato panic!");
+    await expect(page.locator("#railMemeWorthy")).toHaveText("1");
+    await expect(card.locator('[data-command="WORTH"]')).toHaveCount(0);
+    expect(await page.evaluate(()=>window.__xss||false)).toBe(false);
+    await card.locator('[data-command="MEME_ACCEPT"]').click();
+    await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/meme-decision")).length).toBe(1);
+    expect(f.posts.find(p=>p.path.endsWith("/meme-decision")).body.decision).toBe("WORTH");
+    await card.locator('[data-command="REANALYZE_MEME"]').click();
+    await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/analyze-meme")).length).toBe(1);
+  }finally{await f.stop();}
 });
