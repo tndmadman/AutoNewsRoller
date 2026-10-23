@@ -1932,14 +1932,14 @@ public final class SelfTest {
                 "video renderer adds restrained photo motion beneath fixed broadcast overlays");
         String pipelineSource=Files.readString(root.resolve("src/autonewsroller/orchestration/NewsPipeline.java"));
         String profilesSource=Files.readString(root.resolve("src/autonewsroller/visuals/ComfyPromptProfiles.java"));
-        ok(pipelineSource.contains("audit.put(\\"hook\\",script.hook())")&&
+        ok(pipelineSource.contains("audit.put(\"hook\",script.hook())")&&
                         pipelineSource.contains("openingVisualType")&&
                         pipelineSource.contains("BroadcastTheme.PACKAGE_ID")&&
                         pipelineSource.contains("ComfyPromptProfiles.positive(chosen,memeImage,attempt)")&&
                         pipelineSource.contains("ComfyPromptProfiles.negative(cfg,chosen,memeImage)")&&
                         profilesSource.contains("assertNoExcludedConceptInPositive(item,prompt)")&&
                         profilesSource.contains("neutral white balance")&&
-                        pipelineSource.contains("imageSource.put(\\"negativePrompt\\",negativePrompt)")&&
+                        pipelineSource.contains("imageSource.put(\"negativePrompt\",negativePrompt)")&&
                         !profilesSource.contains("no blue wash"),
                 "pipeline separates positive and negative image conditioning and records the negative prompt");
         String commandCenterHtml=Files.readString(root.resolve("web/command-center/index.html"));
