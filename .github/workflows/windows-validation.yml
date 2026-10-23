@@ -1,7 +1,7 @@
 name: Cross-platform validation
 on:
   push:
-    branches: [main, feature/news-video-pipeline, feature/political-framing-exposure-video]
+    branches: [main, feature/news-video-pipeline, feature/political-framing-exposure-video, feature/rss-meme-ragebait-pipeline]
   pull_request:
     branches: [main]
 

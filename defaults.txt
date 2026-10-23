@@ -110,3 +110,13 @@ politicalExposureIntroSoundGainDb=-4.46
 politicalExposureRequiredAnalysisFraction=0.65
 politicalExposureAllowSingleSource=true
 politicalExposureRequireComfy=false
+
+# Independent meme roast pipeline. Opt-in per story by default.
+memePipelineEnabled=true
+commandCenterAutoMeme=false
+memeDurationHintSeconds=30
+memeUseComfy=true
+memeRequireComfy=true
+memeComfyImages=3
+memeIntroSoundEnabled=true
+memeIntroSoundGainDb=-10
