@@ -72,8 +72,21 @@ memeIntroSoundGainDb=-10
 ```
 
 ComfyUI defaults to required; when it is unavailable or cannot produce acceptable images,
-the job fails rather than silently claiming it generated AI illustrations. Local device
-paths and checkpoint settings are inherited from `defaults.txt`.
+the job fails rather than silently claiming it generated AI illustrations. The meme
+pipeline uses the same full-step SDXL/RealVisXL baseline (832×1472, 32 steps, CFG 5.5,
+DPM++ SDE/Karras) as standard news, with a **separate satire illustration prompt
+profile and negative prompt**. Captions are painted by Java rather than requested
+as lettering from the image model.
+
+Set `memeImageNegative` in `defaults.txt` to tune the comic style exclusions.
+Set `memeImageCheckpoint` to the filename of a compatible **non-Lightning SDXL
+illustration checkpoint** when one is installed in ComfyUI. If left blank, the
+meme pipeline inherits `imageCheckpoint` (the default RealVisXL realism model,
+which can be less effective for cartoons). The chosen model must be discoverable
+from ComfyUI; a bad explicit name fails clearly rather than switching silently.
+Sampler, dimensions, steps, CFG, seeds and generation attempts remain logged per
+image in final sidecar provenance. FRAMING_EXPOSURE is deliberately excluded from
+AI illustration generation and keeps its deterministic evidence cards.
 
 ## Failure handling and provenance
 
