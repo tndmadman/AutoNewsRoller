@@ -10,6 +10,10 @@ import java.util.*;
 
 /** Optional ComfyUI SDXL-style text-to-image generation with graceful caller fallback. */
 public final class ComfyImageGenerator {
+    // Recommended RTX 3090 + SDXL defaults; callers may override via defaults.txt.
+    public static final int DEFAULT_WIDTH=832, DEFAULT_HEIGHT=1472, DEFAULT_STEPS=32;
+    public static final double DEFAULT_CFG=5.5;
+    public static final String SAMPLER="dpmpp_2m_sde", SCHEDULER="karras";
     private final Path root;private final String baseUrl,qwenUrl;private final HttpClient client;
     public ComfyImageGenerator(Path root,String baseUrl,String qwenUrl){this.root=root;this.baseUrl=baseUrl.replaceAll("/+$","");this.qwenUrl=qwenUrl.replaceAll("/+$","");this.client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();}
     public boolean reachable(){try{return get("/system_stats",3).statusCode()/100==2;}catch(Exception e){return false;}}
@@ -30,7 +34,7 @@ public final class ComfyImageGenerator {
             wf.put("3",node("CLIPTextEncode",Map.of("text",negative,"clip",List.of("1",1))));
             wf.put("4",node("EmptyLatentImage",Map.of("width",width,"height",height,"batch_size",1)));
             Map<String,Object>ksampler=new LinkedHashMap<>();
-            ksampler.put("seed",seed);ksampler.put("steps",steps);ksampler.put("cfg",cfg);ksampler.put("sampler_name","dpmpp_2m_sde");ksampler.put("scheduler","karras");ksampler.put("denoise",1.0);ksampler.put("model",List.of("1",0));ksampler.put("positive",List.of("2",0));ksampler.put("negative",List.of("3",0));ksampler.put("latent_image",List.of("4",0));
+            ksampler.put("seed",seed);ksampler.put("steps",steps);ksampler.put("cfg",cfg);ksampler.put("sampler_name",SAMPLER);ksampler.put("scheduler",SCHEDULER);ksampler.put("denoise",1.0);ksampler.put("model",List.of("1",0));ksampler.put("positive",List.of("2",0));ksampler.put("negative",List.of("3",0));ksampler.put("latent_image",List.of("4",0));
             wf.put("5",node("KSampler",ksampler));wf.put("6",node("VAEDecode",Map.of("samples",List.of("5",0),"vae",List.of("1",2))));wf.put("7",node("SaveImage",Map.of("filename_prefix","AutoNewsRoller","images",List.of("6",0))));
             Map<String,Object>request=new LinkedHashMap<>();request.put("prompt",wf);request.put("client_id","autonewsroller-"+UUID.randomUUID());
             HttpResponse<String>submit=postJson("/prompt",Json.stringify(request),20);if(submit.statusCode()/100!=2)throw new IllegalStateException("ComfyUI /prompt HTTP "+submit.statusCode()+": "+compact(submit.body()));

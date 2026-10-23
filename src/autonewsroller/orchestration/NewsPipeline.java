@@ -352,7 +352,9 @@ public final class NewsPipeline {
                 }
 
                 int maxRetries=Math.max(0,Math.min(4,cfg.getInt("visualImageReviewRetries",2)));
-                int requestedWidth=cfg.getInt("imageWidth",768),requestedHeight=cfg.getInt("imageHeight",1344);
+                int requestedWidth=cfg.getInt("imageWidth",ComfyImageGenerator.DEFAULT_WIDTH),requestedHeight=cfg.getInt("imageHeight",ComfyImageGenerator.DEFAULT_HEIGHT);
+                int requestedSteps=cfg.getInt("imageSteps",ComfyImageGenerator.DEFAULT_STEPS);
+                double requestedCfg=cfg.getDouble("imageCfg",ComfyImageGenerator.DEFAULT_CFG);
                 for(int replace:eligible){
                     if(comfyGenerated>=limit)break;
                     VisualPlan.Item chosen=plan.items().get(replace);
@@ -372,13 +374,13 @@ public final class NewsPipeline {
                         events.emit(worker,slot,PipelineStage.VISUALS,generating);
                         try{
                             comfy.generate(prompt,negativePrompt,usedCheckpoint,generated,requestedWidth,requestedHeight,
-                                    cfg.getInt("imageSteps",24),cfg.getDouble("imageCfg",5.0),seed);
+                                    requestedSteps,requestedCfg,seed);
                         }catch(Exception imageError){
                             if(!ComfyImageGenerator.looksLikeCudaOom(imageError))throw imageError;
                             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI OOM RECOVERY: retrying after VRAM release");
                             comfy.recoverFromOom();
                             comfy.generate(prompt,negativePrompt,usedCheckpoint,generated,requestedWidth,requestedHeight,
-                                    cfg.getInt("imageSteps",24),cfg.getDouble("imageCfg",5.0),seed);
+                                    requestedSteps,requestedCfg,seed);
                         }
                         ImageQualityInspector.Result inspection=inspector.inspect(generated,requestedWidth,requestedHeight,
                                 cfg.getBool("visualPostGenerationChecks",true)?acceptedHashes:List.of());
@@ -421,8 +423,8 @@ public final class NewsPipeline {
                         imageSource.put("backgroundPath",background.toString());imageSource.put("overlayPath",overlay.toString());
                         imageSource.put("motion",storyboard.scenes().get(replace).motion());
                         imageSource.put("checkpoint",usedCheckpoint);imageSource.put("prompt",prompt);imageSource.put("negativePrompt",negativePrompt);
-                        imageSource.put("seed",seed);imageSource.put("steps",cfg.getInt("imageSteps",24));imageSource.put("cfg",cfg.getDouble("imageCfg",5.0));
-                        imageSource.put("sampler","dpmpp_2m_sde");imageSource.put("scheduler","karras");
+                        imageSource.put("seed",seed);imageSource.put("steps",requestedSteps);imageSource.put("cfg",requestedCfg);
+                        imageSource.put("sampler",ComfyImageGenerator.SAMPLER);imageSource.put("scheduler",ComfyImageGenerator.SCHEDULER);
                         imageSource.put("resolution",requestedWidth+"x"+requestedHeight);
                         imageSource.put("inspection",inspection.toMap());imageSource.put("visionReview",semantic.toMap());imageSource.put("retryCount",attempt);
                         imageSource.put("aiIllustrationDisclosure",true);
