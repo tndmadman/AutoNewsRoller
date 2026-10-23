@@ -90,6 +90,7 @@ public final class SelfTest {
                 "independent meme generator admits short variable-beat output");
         new MemeScriptValidator().validate(script,evidence);
         ok(true,"short meme narration passes mode-specific evidence validation");
+        testMemeOllamaHookSelection(fp,evidence);
         VisualPlan plan=new MemeVisualPlanner().plan(script);
         ok(plan.items().size()==script.segments().size()
                 &&"MEME_HOOK".equals(plan.items().get(0).type())
@@ -184,6 +185,85 @@ public final class SelfTest {
         ok("QUEUED".equals(resumed.storyDetail(cluster.id).get("status"))
                 &&"MEME_RAGEBAIT".equals(resumed.storyDetail(cluster.id).get("productionMode")),
                 "REMAKE_MEME queues only meme mode and preserves archive");
+    }
+
+
+    private void testMemeOllamaHookSelection(FactPackage facts,
+            MemeEvidenceBuilder.Evidence evidence)throws Exception{
+        AtomicInteger calls=new AtomicInteger();
+        HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/api/generate",exchange->{
+            int call=calls.incrementAndGet();
+            try{
+                Map<String,Object>output=new LinkedHashMap<>();
+                if(call==1){
+                    output.put("candidates",List.of(
+                            Map.of("angle","Street sign absurdity","factualBasis","F1",
+                                    "visualIdea","Cartoon street signs","surprise","Real novelty signs","score",8),
+                            Map.of("angle","Paperwork comedy","factualBasis","F1",
+                                    "visualIdea","Animated paperwork","surprise","Novelty procurement","score",7),
+                            Map.of("angle","Sign-shaped roast","factualBasis","F1",
+                                    "visualIdea","Signing gag","surprise","Downtown signs","score",6)));
+                    output.put("selectedAngle","Street sign absurdity");
+                }else if(call==2){
+                    output.put("candidates",List.of(
+                            Map.of("caption","THEY DID WHAT?","spoken","Seriously, what just happened?",
+                                    "factIds",List.of("F1"),"score",10.0),
+                            Map.of("caption","CITY BOUGHT COMEDY SIGNS",
+                                    "spoken","The city bought novelty signs.",
+                                    "factIds",List.of("F1"),"score",9.5,"reason","Concrete city purchase"),
+                            Map.of("caption","DOWNTOWN HAS NOVELTY SIGNS",
+                                    "spoken","Downtown got novelty signs.",
+                                    "factIds",List.of("F1"),"score",7.0),
+                            Map.of("caption","THE SIGNS ARE TALKING",
+                                    "spoken","The signs are alive.",
+                                    "factIds",List.of("F99"),"score",9.0)));
+                }else if(call==3){
+                    output.put("angle","Street sign absurdity");
+                    output.put("hookText","CITY BOUGHT COMEDY SIGNS");
+                    output.put("spokenHook","The city bought novelty signs.");
+                    output.put("beats",List.of(
+                            Map.of("speech","The city bought novelty signs.",
+                                    "caption","CITY BOUGHT COMEDY SIGNS",
+                                    "visualPrompt","Cartoon city street with novelty signs",
+                                    "purpose","HOOK","factIds",List.of("F1")),
+                            Map.of("speech","The reported city purchase put novelty signs in the downtown plaza. Apparently the street signs have more personality than the meeting.",
+                                    "caption","SIGNS WITH PERSONALITY",
+                                    "visualPrompt","Satirical cartoon of signs auditioning for comedy",
+                                    "purpose","PAYOFF","factIds",List.of("F1"))));
+                }
+                byte[]bytes=Json.stringify(Map.of(
+                        "response",Json.stringify(output),"done_reason","stop")).getBytes(
+                            java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type","application/json");
+                exchange.sendResponseHeaders(200,bytes.length);
+                try(OutputStream out=exchange.getResponseBody()){out.write(bytes);}
+            }catch(Exception e){
+                exchange.sendResponseHeaders(500,-1);
+            }finally{exchange.close();}
+        });
+        server.start();
+        try{
+            Path dir=Files.createTempDirectory("autonews-meme-ollama-fixture-");
+            OllamaClient client=new OllamaClient("http://127.0.0.1:"+
+                    server.getAddress().getPort()+"/api/generate",
+                    "fixture-model","1m",dir.resolve("ollama.lock"),4096,2000,.5);
+            NewsScript generated=new MemeScriptGenerator(client,1).generate(
+                    facts,evidence,false);
+            ok(calls.get()==3&&"CITY BOUGHT COMEDY SIGNS".equals(
+                    generated.hook().get("hookText")),
+                    "mocked Ollama selects a source-specific short hook over generic high score");
+            ok(generated.hook().get("hookCandidates") instanceof List<?>c
+                    &&c.size()==4
+                    &&"F1".equals(((List<?>)generated.hook().get("hookFactIds")).get(0)),
+                    "meme hook retains candidate diagnostics and supported fact IDs");
+            new MemeScriptValidator().validate(generated,evidence);
+            ok(generated.segments().size()==2
+                    &&generated.segments().get(0).narration().equals(
+                        generated.hook().get("spokenHook"))
+                    &&"PAYOFF".equals(generated.segments().get(1).purpose()),
+                    "complete mocked Ollama meme script preserves locked hook and final punchline");
+        }finally{server.stop(0);}
     }
 
     private void testSourceConfig(Path root)throws Exception{
