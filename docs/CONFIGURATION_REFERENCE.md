@@ -648,3 +648,7 @@ Blank visual-specific model/URL settings intentionally reuse the normal Ollama s
 
 Automated image checks are limited to deterministic technical quality;
 they must not be treated as confirmation of depicted facts.
+
+## Independent meme-worthiness discovery
+
+New `memeWorthiness*` settings and their defaults are described in [MEME_WORTHINESS_ENGINE.md](MEME_WORTHINESS_ENGINE.md). This background RSS evaluation is separate from normal news ranking and does **not** enable automated meme production. The `commandCenterAutoMeme=false` setting is reserved and currently does not queue videos.

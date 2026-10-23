@@ -1,6 +1,8 @@
 package autonewsroller.commandcenter;
 
 import autonewsroller.config.SourceConfig;
+import autonewsroller.config.NewsConfig;
+import autonewsroller.meme.MemeWorthinessAnalyzer;
 import autonewsroller.model.Article;
 import autonewsroller.model.StoryCluster;
 import autonewsroller.model.PoliticalVisualData;
@@ -38,6 +40,19 @@ public final class CommandCenterStore {
     private boolean stateDirty;
     private Map<String,Object>lastScan=new LinkedHashMap<>();
     private boolean scanning;
+    private boolean memeEnabled=false,memeAutoAnalyze=false;
+    private int memeThreshold=72,memePrefilterMinimum=35,memeMaxAnalysisPerScan=20,memeMaxPending=60,memeMaxRetries=2;
+
+    /** Called by the server after construction; legacy constructor users remain unchanged. */
+    public synchronized void configureMeme(NewsConfig cfg){
+        memeEnabled=cfg.getBool("memeWorthinessEnabled",true);
+        memeAutoAnalyze=cfg.getBool("memeWorthinessAutoAnalyze",true);
+        memeThreshold=Math.max(0,Math.min(100,cfg.getInt("memeWorthinessThreshold",72)));
+        memePrefilterMinimum=Math.max(0,Math.min(100,cfg.getInt("memeWorthinessPrefilterMinimum",35)));
+        memeMaxAnalysisPerScan=Math.max(0,Math.min(500,cfg.getInt("memeWorthinessMaxAnalysisPerScan",20)));
+        memeMaxPending=Math.max(1,Math.min(1000,cfg.getInt("memeWorthinessMaxPending",60)));
+        memeMaxRetries=Math.max(0,Math.min(10,cfg.getInt("memeWorthinessMaxRetries",2)));
+    }
 
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink){
         this(statePath,bias,autoQueue,autoThreshold,maxQueued,eventSink,180,0.74,0.82,3,20,3);
@@ -130,6 +145,18 @@ public final class CommandCenterStore {
             m.put("latestPublishedAt",item.cluster().articles.stream().map(Article::publishedAt).filter(Objects::nonNull).max(Comparator.naturalOrder()).map(Instant::toString).orElse(""));
             NewsPipeline.Candidate stable=retainEnrichedEvidence(item.candidate(),m.get("candidate"));
             m.put("candidate",stable.toMap());
+            String memeHash=MemeWorthinessAnalyzer.fingerprint(stable.cluster());
+            String oldMemeHash=String.valueOf(m.getOrDefault("memeAnalysisInputHash",""));
+            m.put("memeAnalysisInputHash",memeHash);
+            m.put("memePrefilterScore",MemeWorthinessAnalyzer.prefilter(stable.cluster()));
+            if(!memeHash.equals(oldMemeHash)){
+                m.put("memeAnalysisStatus",oldMemeHash.isEmpty()?"NOT_SCORED":"STALE");
+                m.put("memeAnalysisAttempts",0);
+                m.remove("memeRetryNotBefore");
+                m.remove("memeAnalysisClaimId");m.remove("memeAssignedWorker");
+                m.remove("memeAnalysisLeaseUntil");m.remove("memeClaimInputHash");
+                if(!oldMemeHash.isEmpty())m.put("memeAnalysisError","Source evidence changed; prior score is stale.");
+            }else m.putIfAbsent("memeAnalysisStatus","NOT_SCORED");
             m.put("sourceMix",bias.mix(item.cluster().publishers()));
             boolean politicalCandidate=PoliticalFramingAnalyzer.likelyPolitical(item.cluster())||
                     Boolean.TRUE.equals(m.get("manualFramingRequested"));
@@ -191,6 +218,7 @@ public final class CommandCenterStore {
                 depth++;emit("story",publicStory(m));
             }
         }
+        if(memeEnabled&&memeAutoAnalyze)scheduleMemeAnalyses();
         persistQuiet();
         emit("scan",new LinkedHashMap<>(lastScan));
     }
@@ -421,7 +449,7 @@ public final class CommandCenterStore {
                 .filter(x->x.get("candidate") instanceof Map<?,?>)
                 .sorted(Comparator.comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed())
                 .findFirst();
-        if(bestBias.isEmpty())return null;
+        if(bestBias.isEmpty())return claimMemeAnalysis(workerId);
         Map<String,Object>m=bestBias.get();
         m.put("biasAnalysisStatus","ANALYZING");m.put("biasAssignedWorker",workerId);
         m.put("biasClaimInputHash",m.getOrDefault("biasAnalysisInputHash",""));
@@ -457,6 +485,10 @@ public final class CommandCenterStore {
             if(story!=null&&"PRODUCING".equals(String.valueOf(story.get("status")))&&workerId.equals(String.valueOf(story.get("assignedWorker")))
                     &&claimMatches(story,String.valueOf(payload.getOrDefault("claimId","")))){
                 renewLease(story);
+            }else if(story!=null&&"ANALYZING".equals(String.valueOf(story.get("memeAnalysisStatus")))
+                    &&workerId.equals(String.valueOf(story.get("memeAssignedWorker")))
+                    &&String.valueOf(payload.getOrDefault("claimId","")).equals(String.valueOf(story.get("memeAnalysisClaimId")))){
+                story.put("memeAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());
             }else if(story!=null&&"ANALYZING".equals(String.valueOf(story.get("biasAnalysisStatus")))&&workerId.equals(String.valueOf(story.get("biasAssignedWorker")))){
                 story.put("biasAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());
             }
@@ -556,8 +588,168 @@ public final class CommandCenterStore {
         persistQuiet();emit("story",publicStory(m));
     }
 
+
+    private void scheduleMemeAnalyses(){
+        long pending=stories.values().stream().filter(x->Set.of("QUEUED","ANALYZING").contains(
+                String.valueOf(x.get("memeAnalysisStatus")))).count();
+        int budget=Math.min(memeMaxAnalysisPerScan,Math.max(0,memeMaxPending-(int)pending));
+        if(budget<=0)return;
+        List<Map<String,Object>>eligible=stories.values().stream()
+                .filter(x->Set.of("NOT_SCORED","STALE").contains(String.valueOf(x.get("memeAnalysisStatus"))))
+                .filter(x->x.get("candidate") instanceof Map<?,?>)
+                .filter(x->x.get("sourceUrls") instanceof List<?> urls&&!urls.isEmpty())
+                .sorted(Comparator.comparingInt((Map<String,Object>x)->integer(x.get("memePrefilterScore"))).reversed())
+                .toList();
+        int reserve=budget>=5?Math.max(1,budget/10):0;
+        int selected=0;
+        for(Map<String,Object>m:eligible){
+            if(selected>=budget-reserve)break;
+            if(integer(m.get("memePrefilterScore"))<memePrefilterMinimum)continue;
+            queueMemeInternal(m);selected++;
+        }
+        // Discovery sampling: weak heuristics do not permanently exclude unusual stories.
+        if(selected<budget)for(Map<String,Object>m:eligible){
+            if(selected>=budget)break;
+            if("QUEUED".equals(m.get("memeAnalysisStatus")))continue;
+            queueMemeInternal(m);selected++;
+        }
+    }
+    private void queueMemeInternal(Map<String,Object>m){
+        m.put("memeAnalysisStatus","QUEUED");
+        m.put("memeAnalysisQueuedAt",Instant.now().toString());
+        m.remove("memeAnalysisError");
+        emit("story",publicStory(m));
+    }
+    public synchronized Map<String,Object> queueMemeAnalysis(String storyId,String operationId){
+        if(!memeEnabled)throw new IllegalStateException("Meme analysis is disabled.");
+        Map<String,Object>m=requireStory(storyId);
+        if(!(m.get("candidate") instanceof Map<?,?>))throw new IllegalStateException("No source candidate");
+        if(alreadyHandled(operationId,"meme-analyze:"+storyId))return publicStory(m);
+        if("ANALYZING".equals(m.get("memeAnalysisStatus"))||"QUEUED".equals(m.get("memeAnalysisStatus")))
+            return publicStory(m);
+        m.put("memeAnalysisAttempts",0);m.remove("memeRetryNotBefore");
+        queueMemeInternal(m);remember(operationId,"meme-analyze:"+storyId);
+        persistRequired();return publicStory(m);
+    }
+    public synchronized Map<String,Object> memeDecision(String storyId,String decision,String operationId){
+        Map<String,Object>m=requireStory(storyId);
+        if(!Set.of("WORTH","NOT_WORTH","AUTO").contains(decision))
+            throw new IllegalArgumentException("Unknown meme manual decision");
+        if(alreadyHandled(operationId,"meme-decision:"+storyId+":"+decision))return publicStory(m);
+        m.put("memeManualDecision",decision);
+        remember(operationId,"meme-decision:"+storyId+":"+decision);
+        persistRequired();emit("story",publicStory(m));return publicStory(m);
+    }
+    private Map<String,Object>claimMemeAnalysis(String workerId){
+        if(!memeEnabled)return null;
+        Map<String,Object>worker=workers.get(workerId);
+        if(worker==null||!(worker.get("capabilities") instanceof List<?> capabilities)
+                ||!capabilities.contains("meme_analysis_v1"))return null;
+        Instant now=Instant.now();
+        Optional<Map<String,Object>>next=stories.values().stream()
+                .filter(x->"QUEUED".equals(x.get("memeAnalysisStatus")))
+                .filter(x->x.get("candidate") instanceof Map<?,?>)
+                .filter(x->{try{String at=String.valueOf(x.getOrDefault("memeRetryNotBefore",""));
+                    return at.isBlank()||!Instant.parse(at).isAfter(now);}catch(Exception e){return true;}})
+                .sorted(Comparator.comparingInt((Map<String,Object>x)->integer(x.get("memePrefilterScore"))).reversed())
+                .findFirst();
+        if(next.isEmpty())return null;
+        Map<String,Object>m=next.get();
+        String claim=UUID.randomUUID().toString();
+        m.put("memeAnalysisStatus","ANALYZING");m.put("memeAssignedWorker",workerId);
+        m.put("memeAnalysisClaimId",claim);
+        m.put("memeClaimInputHash",m.get("memeAnalysisInputHash"));
+        m.put("memeAnalysisAttempts",integer(m.get("memeAnalysisAttempts"))+1);
+        m.put("memeAnalysisStartedAt",now.toString());
+        m.put("memeAnalysisLeaseUntil",now.plusSeconds(leaseSeconds).toString());
+        m.remove("memeRetryNotBefore");m.remove("memeAnalysisError");
+        persistQuiet();emit("story",publicStory(m));
+        Map<String,Object>job=new LinkedHashMap<>();
+        job.put("jobType","MEME_ANALYSIS");job.put("jobId",m.get("id"));
+        job.put("candidate",m.get("candidate"));job.put("topic",m.get("topic"));
+        job.put("claimId",claim);job.put("leaseSeconds",leaseSeconds);
+        job.put("analysisInputFingerprint",m.get("memeClaimInputHash"));
+        return job;
+    }
+    public synchronized void memeAnalysisComplete(String storyId,Map<String,Object>result,
+            String workerId,String claimId,String claimedHash,NewsPipeline.Candidate prepared){
+        Map<String,Object>m=requireStory(storyId);
+        if("COMPLETE".equals(m.get("memeAnalysisStatus"))
+                &&claimId.equals(m.get("memeLastClaimId"))&&claimedHash.equals(m.get("memeLastClaimHash")))
+            return; // idempotent acknowledgement
+        verifyMemeClaim(m,workerId,claimId,claimedHash);
+        if(!(m.get("candidate") instanceof Map<?,?>))throw new IllegalStateException("Missing meme source candidate");
+        NewsPipeline.Candidate existing=NewsPipeline.Candidate.fromMap(Json.object(m.get("candidate")));
+        StoryCluster before=existing.cluster(),after=prepared.cluster();
+        if(!before.id.equals(after.id)||!before.topic.equals(after.topic)
+                ||!before.fingerprint.equals(after.fingerprint)
+                ||before.articles.size()!=after.articles.size())
+            throw new IllegalStateException("STALE_MEME_ANALYSIS: Story identity changed during enrichment");
+        for(int i=0;i<before.articles.size();i++){
+            Article old=before.articles.get(i),next=after.articles.get(i);
+            Map<String,Object>a=new LinkedHashMap<>(old.toMap()),b=new LinkedHashMap<>(next.toMap());
+            a.remove("bodyText");b.remove("bodyText");
+            if(!a.equals(b)||(!old.bodyText().isBlank()&&!old.bodyText().equals(next.bodyText())))
+                throw new IllegalStateException("STALE_MEME_ANALYSIS: Article identity or original text changed");
+        }
+        String actual=MemeWorthinessAnalyzer.fingerprint(after);
+        MemeWorthinessAnalyzer.validateResult(result,storyId,actual);
+        m.put("candidate",prepared.toMap());
+        m.put("memeAnalysisInputHash",actual);
+        m.put("memeAnalysis",deepCopyMap(result));
+        m.put("memeScore",result.get("memeScore"));
+        m.put("memeConfidence",result.get("confidence"));
+        m.put("memeClassification",result.get("classification"));
+        m.put("memeAnalyzedAt",result.get("analyzedAt"));
+        m.put("memeAnalyzedInputHash",actual);
+        m.put("memeAnalysisStatus","COMPLETE");m.put("memeLastClaimId",claimId);
+        m.put("memeLastClaimHash",claimedHash);
+        clearMemeClaim(m);m.remove("memeAnalysisError");
+        persistQuiet();emit("story",publicStory(m));
+    }
+    private static void verifyMemeClaim(Map<String,Object>m,String worker,String token,String hash){
+        if(!"ANALYZING".equals(m.get("memeAnalysisStatus"))||token==null||token.isBlank()
+                ||!token.equals(m.get("memeAnalysisClaimId"))||!worker.equals(m.get("memeAssignedWorker"))
+                ||hash==null||hash.isBlank()||!hash.equals(m.get("memeClaimInputHash"))
+                ||!hash.equals(m.get("memeAnalysisInputHash")))
+            throw new IllegalStateException("STALE_MEME_ANALYSIS: Claim or input changed");
+    }
+    private static void clearMemeClaim(Map<String,Object>m){
+        for(String key:List.of("memeAssignedWorker","memeAnalysisClaimId","memeClaimInputHash","memeAnalysisLeaseUntil"))
+            m.remove(key);
+    }
+    public synchronized void memeAnalysisFail(String storyId,String error,String workerId,String claimId,String claimedHash){
+        Map<String,Object>m=requireStory(storyId);
+        if("FAILED".equals(m.get("memeAnalysisStatus"))&&claimId.equals(m.get("memeLastClaimId")))return;
+        verifyMemeClaim(m,workerId,claimId,claimedHash);
+        m.put("memeAnalysisError",safe(error));m.put("memeAnalysisFailedAt",Instant.now().toString());
+        m.put("memeLastClaimId",claimId);m.put("memeLastClaimHash",claimedHash);
+        boolean retry=integer(m.get("memeAnalysisAttempts"))<=memeMaxRetries;
+        m.put("memeAnalysisStatus",retry?"QUEUED":"FAILED");
+        if(retry)m.put("memeRetryNotBefore",Instant.now()
+                .plusSeconds(20L*integer(m.get("memeAnalysisAttempts"))).toString());
+        clearMemeClaim(m);persistQuiet();emit("story",publicStory(m));
+    }
+    private int recoverExpiredMemeLeases(boolean announce){
+        int count=0;
+        for(Map<String,Object>m:stories.values()){
+            if(!"ANALYZING".equals(m.get("memeAnalysisStatus")))continue;
+            boolean expired;
+            try{expired=!Instant.parse(String.valueOf(m.get("memeAnalysisLeaseUntil"))).isAfter(Instant.now());}
+            catch(Exception e){expired=true;}
+            if(!expired)continue;
+            m.put("memeAnalysisError","Meme analysis worker lease expired.");
+            boolean retry=integer(m.get("memeAnalysisAttempts"))<=memeMaxRetries;
+            m.put("memeAnalysisStatus",retry?"QUEUED":"FAILED");
+            if(retry)m.put("memeRetryNotBefore",Instant.now().plusSeconds(20).toString());
+            clearMemeClaim(m);count++;
+            if(announce)emit("story",publicStory(m));
+        }
+        return count;
+    }
+
     public synchronized void maintenance(){
-        int recovered=recoverExpiredLeases(true)+recoverExpiredBiasLeases(true);
+        int recovered=recoverExpiredLeases(true)+recoverExpiredBiasLeases(true)+recoverExpiredMemeLeases(true);
         if(recovered>0)persistQuiet();
     }
 
@@ -846,12 +1038,16 @@ public final class CommandCenterStore {
         counts.put("biasQueued",stories.values().stream().filter(x->"QUEUED".equals(x.get("biasAnalysisStatus"))).count());
         counts.put("biasAnalyzing",stories.values().stream().filter(x->"ANALYZING".equals(x.get("biasAnalysisStatus"))).count());
         counts.put("biasComplete",stories.values().stream().filter(x->"COMPLETE".equals(x.get("biasAnalysisStatus"))).count());
-        Map<String,Object>out=new LinkedHashMap<>();out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
+        counts.put("memeWorthy",stories.values().stream().filter(this::memeWorthy).count());
+        for(String status:List.of("QUEUED","ANALYZING","COMPLETE","FAILED"))
+            counts.put("meme"+status.charAt(0)+status.substring(1).toLowerCase(Locale.ROOT),
+                    stories.values().stream().filter(x->status.equals(x.get("memeAnalysisStatus"))).count());
+        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
     }
 
 
     private static final Set<String> BOARD_STATUSES=Set.of(
-            "ALL","DISCOVERED","WORTHY","VERIFIED","QUEUED","PRODUCING",
+            "ALL","DISCOVERED","WORTHY","MEME_WORTHY","VERIFIED","QUEUED","PRODUCING",
             "HOLD","FAILED","COMPLETE","TO_POST","UPLOADED","SCRAPPED","SKIPPED");
 
     // Search, filtering and pagination operate on raw in-memory records; only the page
@@ -865,22 +1061,34 @@ public final class CommandCenterStore {
         List<Map<String,Object>>matches=new ArrayList<>();
         Map<String,Object>facets=new LinkedHashMap<>();
         for(String key:BOARD_STATUSES)facets.put(key,0L);
-        for(Map<String,Object>story:boardEntries()){
+        Iterable<Map<String,Object>>source="MEME_WORTHY".equals(status)?stories.values():boardEntries();
+        for(Map<String,Object>story:source){
             String rawStatus=String.valueOf(story.getOrDefault("status",""));
             boolean recent=withinBoardAge(story,cutoff);
             // Rail counts ignore search and mirror the existing browser's age
             // behavior. Queue/producing/hold counts are intentionally age-exempt.
             for(String key:BOARD_STATUSES){
-                if((recent||isOperationalBoardStatus(key))&&matchesBoardStatus(story,rawStatus,key))
+                if(!"MEME_WORTHY".equals(key)&&(recent||isOperationalBoardStatus(key))&&matchesBoardStatus(story,rawStatus,key))
                     facets.put(key,((Long)facets.get(key))+1);
             }
             if(!matchesBoardStatus(story,rawStatus,status))continue;
             if(!isOperationalBoardStatus(status)&&!recent)continue;
             if(!query.isEmpty()&&!boardSearchText(story).contains(query))continue;
-            matches.add(story);
+            matches.add("MEME_WORTHY".equals(status)?new LinkedHashMap<>(story):story);
+        }
+        {
+            long count=stories.values().stream().filter(this::memeWorthy)
+                    .filter(x->withinBoardAge(x,cutoff)).count();
+            facets.put("MEME_WORTHY",count);
+        }
+        if("MEME_WORTHY".equals(status)){
+            for(Map<String,Object>m:matches){
+                m.put("memeCandidate",true);
+                m.put("boardEntryId",String.valueOf(m.get("id"))+"::MEME_CANDIDATE");
+            }
         }
         matches.sort(Comparator
-                .comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed()
+                .comparingDouble((Map<String,Object>x)->number(x.get("MEME_WORTHY".equals(status)?"memeScore":"score"))).reversed()
                 .thenComparing(x->String.valueOf(x.getOrDefault("id","")))
                 .thenComparingInt(x->"FRAMING_EXPOSURE".equals(x.get("entryMode"))?1:
                         "MEME_RAGEBAIT".equals(x.get("entryMode"))?2:0));
@@ -1034,7 +1242,7 @@ public final class CommandCenterStore {
     private static boolean isOperationalBoardStatus(String status){
         return "QUEUED".equals(status)||"PRODUCING".equals(status)||"HOLD".equals(status);
     }
-    private static boolean matchesBoardStatus(Map<String,Object>m,String rawStatus,String filter){
+    private boolean matchesBoardStatus(Map<String,Object>m,String rawStatus,String filter){
         return switch(filter){
             case "ALL"->true;
             case "COMPLETE"->rawStatus.startsWith("COMPLETE");
@@ -1043,8 +1251,22 @@ public final class CommandCenterStore {
             case "UPLOADED"->Boolean.TRUE.equals(m.get("uploaded"))&&!Boolean.TRUE.equals(m.get("scrapped"));
             case "SCRAPPED"->Boolean.TRUE.equals(m.get("scrapped"));
             case "WORTHY"->isActionableWorthy(m);
+            case "MEME_WORTHY"->memeWorthy(m);
             default->rawStatus.equals(filter);
         };
+    }
+    private boolean memeWorthy(Map<String,Object>m){return memeWorthyStatic(m,memeThreshold);}
+    private static boolean memeWorthyStatic(Map<String,Object>m){
+        return memeWorthyStatic(m,72);
+    }
+    private static boolean memeWorthyStatic(Map<String,Object>m,int threshold){
+        if(!(m.get("candidate") instanceof Map<?,?>))return false;
+        String decision=String.valueOf(m.getOrDefault("memeManualDecision","AUTO"));
+        if("NOT_WORTH".equals(decision))return false;
+        if("WORTH".equals(decision))return true;
+        return "COMPLETE".equals(m.get("memeAnalysisStatus"))
+                &&m.get("memeScore") instanceof Number n&&n.doubleValue()>=threshold
+                &&Objects.equals(m.get("memeAnalyzedInputHash"),m.get("memeAnalysisInputHash"));
     }
     private static boolean withinBoardAge(Map<String,Object>m,Instant cutoff){
         if(cutoff==null)return true;
@@ -1339,7 +1561,7 @@ public final class CommandCenterStore {
             if(root.get("autoQueue") instanceof Boolean b)autoQueue=b;
             Object scan=root.get("lastScan");if(scan instanceof Map<?,?>)lastScan=new LinkedHashMap<>(Json.object(scan));
             boolean migrated=migrateVideoArchive();
-            if(migrated||recoverExpiredLeases(false)+recoverExpiredBiasLeases(false)>0)persistQuiet();
+            if(migrated||recoverExpiredLeases(false)+recoverExpiredBiasLeases(false)+recoverExpiredMemeLeases(false)>0)persistQuiet();
         }catch(Exception e){System.err.println("Command center state load failed: "+e.getMessage());}
     }
 

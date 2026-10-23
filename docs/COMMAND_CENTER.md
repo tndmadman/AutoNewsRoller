@@ -851,3 +851,7 @@ pipeline event history, dependency diagnostics, and worker preferences.
 The Command Center at port 8787 remains authoritative for queue state,
 claims, lease recovery, uploads and publication; the browser does **not**
 claim controller jobs independently. See [GPU Worker Web UI](GPU_WORKER_WEB_UI.md).
+
+## MEME WORTHY rail
+
+The MEME WORTHY rail uses independent, source-based local Ollama evaluation rather than the WORTHY news score. It shows one entry per RSS story, sorted by memeScore descending; normal videos, narrative reviews and meme versions remain in the operations board/archive. Cards display a separate 0–100 meme meter, reasoning, confidence, source URLs, hooks, visual concepts, model information and warnings. REANALYZE MEME requests evaluation, MEME WORTH IT / NOT MEME WORTHY / AUTO change **only** the meme decision, and MAKE MEME uses the existing meme queue without altering news-worth decisions. Counts, search and pagination are server-side. See [MEME_WORTHINESS_ENGINE.md](MEME_WORTHINESS_ENGINE.md) for budgets, worker protocol and failure recovery.
