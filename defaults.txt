@@ -127,3 +127,16 @@ memeRequireComfy=true
 memeComfyImages=3
 memeIntroSoundEnabled=true
 memeIntroSoundGainDb=-10
+
+# Independent RSS meme suitability scoring (does not queue videos).
+memeWorthinessEnabled=true
+memeWorthinessAutoAnalyze=true
+memeWorthinessModel=llama3.1:8b
+memeWorthinessTemperature=0.2
+memeWorthinessThreshold=72
+memeWorthinessExcellentThreshold=85
+memeWorthinessPrefilterMinimum=35
+memeWorthinessMaxAnalysisPerScan=20
+memeWorthinessMaxPending=60
+memeWorthinessMaxRetries=2
+commandCenterAutoMeme=false
