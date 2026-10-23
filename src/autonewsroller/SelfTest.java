@@ -85,6 +85,7 @@ public final class SelfTest {
         NewsScript script=new MemeScriptGenerator(null,1).generate(fp,evidence,true);
         ok(script.segments().size()==2
                 &&"MEME_RAGEBAIT".equals(script.hook().get("type"))
+                &&"PAYOFF".equals(script.segments().get(script.segments().size()-1).purpose())
                 &&script.estimatedDuration()<61,
                 "independent meme generator admits short variable-beat output");
         new MemeScriptValidator().validate(script,evidence);

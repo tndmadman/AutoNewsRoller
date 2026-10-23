@@ -16,9 +16,10 @@ fallback), local ComfyUI and FFmpeg/ffprobe. Updated workers advertise
 1. Existing RSS scanning, article enrichment and SourceVerifier gather attributable text.
 2. `MemeEvidenceBuilder` bounds article excerpts and facts, preserving source URLs,
    uncertainty and a source fingerprint. Content from web publishers is **untrusted data**.
-3. `MemeScriptGenerator` uses a two-stage Ollama process: brainstorm and select comedy
-   angles, then write variable-length hook-first scene beats with cited fact IDs and
-   explicit satirical visual descriptions. Use an ordinary safe fallback only for **dry runs**.
+3. `MemeScriptGenerator` uses Ollama to brainstorm/select comedy angles, then calls
+   `MemeHookPlanner` to rank four or more fact-ID-grounded frame-zero caption/spoken
+   openings. The selected hook is locked into variable-length script generation
+   with cited fact IDs and explicit satirical visual descriptions. Use an ordinary safe fallback only for **dry runs**.
 4. `MemeScriptValidator` checks basic narration, first-hook brevity, cited fact ID
    presence, generic filler and unsupported numerical claims. Satire is not proof; operators
    still need human review for quotation fidelity, fairness and joke quality.
@@ -75,7 +76,7 @@ paths and checkpoint settings are inherited from `defaults.txt`.
 ## Failure handling and provenance
 
 Story and final-video sidecars preserve mode, source URLs, fingerprints, script and angle,
-hook candidate information when supplied by Ollama, scene timing, actual voice, encoder,
+hook candidate scores and rejection diagnostics, scene timing, actual voice, encoder,
 Comfy checkpoint/seeds/image paths, the original synthesized sound identity and gain, and
 auditing results. The controller counts both historic `comfyui-generated` and current
 `comfyui-generated-ai-illustration` image provenance types.

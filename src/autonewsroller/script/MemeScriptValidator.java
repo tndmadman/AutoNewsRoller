@@ -19,6 +19,8 @@ public final class MemeScriptValidator {
         String first=script.segments().get(0).narration();
         if(first.isBlank()||Text.words(first)>13||first.toLowerCase(Locale.ROOT).startsWith("breaking news"))
             throw new IllegalArgumentException("MEME_SCRIPT_VALIDATION_FAILED: Spoken hook too long or generic");
+        if(!"PAYOFF".equalsIgnoreCase(script.segments().get(script.segments().size()-1).purpose()))
+            throw new IllegalArgumentException("MEME_SCRIPT_VALIDATION_FAILED: Ending lacks a payoff beat");
         if(script.segments().stream().anyMatch(s->s.narration().isBlank()
                 ||s.visualPrompt()==null||s.visualPrompt().isBlank()))
             throw new IllegalArgumentException("MEME_SCRIPT_VALIDATION_FAILED: Empty beat or visual");
