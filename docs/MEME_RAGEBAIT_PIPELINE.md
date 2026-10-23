@@ -130,3 +130,7 @@ comedy audio levels.
 - Structured meme script output checks core evidence and numerals, but is not a full
   semantic or legal fact-checker.
 - The intro is an original synthesized rimshot, not a sampled comedian or laugh track.
+
+## Independent preproduction suitability
+
+The [MEME_WORTHINESS_ENGINE.md](MEME_WORTHINESS_ENGINE.md) scorer is an optional discovery stage that ranks RSS candidates for comedic potential before a user requests production. It does not replace the MEME_RAGEBAIT script/visual pipeline or its fact checks. High meme scores do not automatically trigger video creation; the user must still select MAKE MEME. The selected source-grounded angle is advisory, not a mandate for the production hook planner.
