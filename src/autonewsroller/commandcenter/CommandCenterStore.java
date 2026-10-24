@@ -43,6 +43,7 @@ public final class CommandCenterStore {
     private boolean memeEnabled=false,memeAutoAnalyze=false;
     private int memeThreshold=72,memeExcellent=85,memePrefilterMinimum=35,memeMaxAnalysisPerScan=40,memeMaxPending=60,memeMaxRetries=2;
     private int memeRecentLookbackHours=8,memeRecentSharePercent=90,memeExplorationPercent=25;
+    private int memeOtherJobsPerAnalysis=2,highPriorityClaimsSinceMeme=0;
 
     /** Called by the server after construction; legacy constructor users remain unchanged. */
     public synchronized void configureMeme(NewsConfig cfg){
@@ -57,6 +58,7 @@ public final class CommandCenterStore {
         memeRecentLookbackHours=Math.max(1,Math.min(168,cfg.getInt("memeWorthinessRecentLookbackHours",8)));
         memeRecentSharePercent=Math.max(0,Math.min(100,cfg.getInt("memeWorthinessRecentSharePercent",90)));
         memeExplorationPercent=Math.max(0,Math.min(100,cfg.getInt("memeWorthinessExplorationPercent",25)));
+        memeOtherJobsPerAnalysis=Math.max(1,Math.min(20,cfg.getInt("memeWorthinessOtherJobsPerAnalysis",2)));
     }
 
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink){
@@ -405,6 +407,16 @@ public final class CommandCenterStore {
     public synchronized Map<String,Object> claim(String workerId,Map<String,Object>settings){
         recoverExpiredLeases(true);
         recoverExpiredBiasLeases(true);
+        // A permanently occupied video/political queue previously starved meme
+        // discovery entirely. Give one meme assessment a bounded turn after
+        // N higher-priority claims, while preserving the usual video-first order.
+        if(highPriorityClaimsSinceMeme>=memeOtherJobsPerAnalysis){
+            Map<String,Object>fairMeme=claimMemeAnalysis(workerId);
+            if(fairMeme!=null){
+                highPriorityClaimsSinceMeme=0;
+                return fairMeme;
+            }
+        }
 
         Optional<Map<String,Object>>bestVideo=stories.values().stream()
                 .filter(x->"QUEUED".equals(String.valueOf(x.get("status"))))
@@ -416,6 +428,8 @@ public final class CommandCenterStore {
                 })
                 .findFirst();
         if(bestVideo.isPresent()){
+            if(highPriorityClaimsSinceMeme<memeOtherJobsPerAnalysis)
+                highPriorityClaimsSinceMeme++;
             Map<String,Object>m=bestVideo.get();
             Instant claimedAt=Instant.now();
             if("STANDARD_QUEUED".equals(m.get("pairedVideoState"))
@@ -454,7 +468,13 @@ public final class CommandCenterStore {
                 .filter(x->x.get("candidate") instanceof Map<?,?>)
                 .sorted(Comparator.comparingDouble((Map<String,Object>x)->number(x.get("score"))).reversed())
                 .findFirst();
-        if(bestBias.isEmpty())return claimMemeAnalysis(workerId);
+        if(bestBias.isEmpty()){
+            Map<String,Object>onlyMeme=claimMemeAnalysis(workerId);
+            if(onlyMeme!=null)highPriorityClaimsSinceMeme=0;
+            return onlyMeme;
+        }
+        if(highPriorityClaimsSinceMeme<memeOtherJobsPerAnalysis)
+            highPriorityClaimsSinceMeme++;
         Map<String,Object>m=bestBias.get();
         m.put("biasAnalysisStatus","ANALYZING");m.put("biasAssignedWorker",workerId);
         m.put("biasClaimInputHash",m.getOrDefault("biasAnalysisInputHash",""));
