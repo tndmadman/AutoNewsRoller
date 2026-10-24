@@ -72,7 +72,7 @@
             <option value="ALL">ALL STATUS</option>
             <option value="DISCOVERED">DISCOVERED</option>
             <option value="WORTHY">WORTHY</option>
-            <option value="MEME_WORTHY">MEME WORTHY</option>
+            <option value="MEME_DISCOVERY">MEME DISCOVERY</option>
             <option value="VERIFIED">VERIFIED</option>
             <option value="QUEUED">QUEUED</option>
             <option value="PRODUCING">PRODUCING</option>
@@ -90,7 +90,7 @@
         <button class="rail active" data-filter="ALL">ALL <b id="railAll">0</b></button>
         <button class="rail" data-filter="DISCOVERED">FOUND <b id="railFound">0</b></button>
         <button class="rail" data-filter="WORTHY">WORTHY <b id="railVerified">0</b></button>
-        <button class="rail" data-filter="MEME_WORTHY">MEME WORTHY <b id="railMemeWorthy">0</b></button>
+        <button class="rail" data-filter="MEME_DISCOVERY">MEME DISCOVERY <b id="railMemeDiscovery">0</b></button>
         <button class="rail" data-filter="QUEUED">QUEUE <b id="railQueued">0</b></button>
         <button class="rail" data-filter="PRODUCING">MAKING <b id="railProducing">0</b></button>
         <button class="rail failedRail" data-filter="FAILED">FAILED <b id="railFailed">0</b></button>
@@ -98,6 +98,20 @@
         <button class="rail" data-filter="TO_POST">TO POST <b id="railToPost">0</b></button>
         <button class="rail" data-filter="UPLOADED">UPLOADED <b id="railUploaded">0</b></button>
         <button class="rail" data-filter="SCRAPPED">SCRAPPED <b id="railScrapped">0</b></button>
+      </div>
+      <div id="memeDiscoveryControls" class="memeDiscoveryControls" hidden>
+        <label for="memeDiscoveryFilter">MEME ANALYSIS FILTER</label>
+        <select id="memeDiscoveryFilter" aria-label="Show meme evaluations">
+          <option value="ALL_ANALYZED">ALL ANALYZED</option>
+          <option value="EXCELLENT">EXCELLENT (85+)</option>
+          <option value="WORTHY">WORTHY (72+)</option>
+          <option value="POSSIBLE">POSSIBLE (55–71)</option>
+          <option value="LOW">LOW (0–54)</option>
+          <option value="INSUFFICIENT_EVIDENCE">INSUFFICIENT EVIDENCE</option>
+          <option value="PENDING">QUEUED / ANALYZING</option>
+          <option value="FAILED">FAILED ANALYSES</option>
+        </select>
+        <span class="memeDiscoveryHint">Independent Ollama scores · all analyzed shown by default · nothing is auto-produced</span>
       </div>
       <div id="statusDistribution" class="statusDistribution" aria-label="Current story status counts"></div>
       <div class="boardPagingHeader">

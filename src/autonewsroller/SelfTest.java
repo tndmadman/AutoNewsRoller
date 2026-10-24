@@ -158,9 +158,41 @@ public final class SelfTest {
             store.applyDiscovery(discovery);
             ok("COMPLETE".equals(store.storyDetail(story.id).get("memeAnalysisStatus"))
                     &&calls.get()==1,"routine RSS rescan reuses cached meme assessment");
+            ok(((Number)store.boardStories(1,25,"MEME_DISCOVERY","",0).get("total")).intValue()==1
+                    &&((Number)store.boardStories(1,25,"MEME_DISCOVERY","",0,"EXCELLENT").get("total")).intValue()==1,
+                    "discovery defaults to completed Ollama evaluations and filters excellent scores");
             store.memeDecision(story.id,"NOT_WORTH","reject-meme");
             ok(((Number)store.boardStories(1,25,"MEME_WORTHY","",0).get("total")).intValue()==0,
-                    "manual meme rejection only affects meme tab");
+                    "manual meme rejection only affects original qualification");
+            ok(((Number)store.boardStories(1,25,"MEME_DISCOVERY","",0).get("total")).intValue()==1,
+                    "rejected meme remains visible for inspection in discovery");
+
+            store.queueMemeAnalysis(story.id,"reevaluate-lower-score");
+            ok(((Number)store.boardStories(1,25,"MEME_DISCOVERY","",0,"PENDING").get("total")).intValue()==1
+                    &&((Number)store.boardStories(1,25,"MEME_DISCOVERY","",0).get("total")).intValue()==0,
+                    "queued analyses remain separately discoverable, not falsely complete");
+            Map<String,Object>lowJob=store.claim("meme-worker",Map.of());
+            ok(lowJob!=null&&"MEME_ANALYSIS".equals(lowJob.get("jobType")),
+                    "worker can claim manual rescore");
+            Map<String,Object>low=new LinkedHashMap<>(analysis);
+            Map<String,Object>six=Map.of("hook",6,"absurdity",6,"visual",6,"relatability",6,
+                    "originality",6,"factualClarity",6,"timeliness",6,"engagement",6);
+            low.put("dimensions",six);low.put("memeScore",MemeWorthinessAnalyzer.weightedScore(six));
+            low.put("classification","POSSIBLE");low.put("automaticEligible",false);
+            store.memeAnalysisComplete(story.id,low,"meme-worker",
+                    String.valueOf(lowJob.get("claimId")),
+                    String.valueOf(lowJob.get("analysisInputFingerprint")),
+                    NewsPipeline.Candidate.fromMap(Json.object(lowJob.get("candidate"))));
+            ok(((Number)store.boardStories(1,25,"MEME_DISCOVERY","",0).get("total")).intValue()==1
+                    &&((Number)store.boardStories(1,25,"MEME_DISCOVERY","",0,"POSSIBLE").get("total")).intValue()==1
+                    &&((Number)store.boardStories(1,25,"MEME_DISCOVERY","",0,"WORTHY").get("total")).intValue()==0,
+                    "subthreshold completed scores stay visible in discovery, sorted independently");
+            ok(((Number)store.boardStories(1,25,"MEME_DISCOVERY","cardboard",0,"POSSIBLE").get("total")).intValue()==1
+                    &&((Number)store.boardStories(1,25,"MEME_DISCOVERY","not-a-story",0).get("total")).intValue()==0,
+                    "discovery filters combine with server-side search");
+            store.memeDecision(story.id,"WORTH","accept-low-meme");
+            ok(((Number)store.boardStories(1,25,"MEME_WORTHY","",0).get("total")).intValue()==1,
+                    "manual meme worth override survives low score");
             store.memeDecision(story.id,"AUTO","clear-meme");
             CommandCenterStore restored=new CommandCenterStore(dir.resolve("state.json"),
                     BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,e->{});

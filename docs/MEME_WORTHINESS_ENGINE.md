@@ -1,6 +1,6 @@
 # Independent meme-worthiness engine
 
-The **MEME WORTHY** Command Center rail is an editorial discovery view, not a news truth score and not a prediction of virality. This engine operates independently of the existing StoryRanker, WORTHY decisions, political framing analysis, and the MEME_RAGEBAIT video pipeline.
+The **MEME DISCOVERY** Command Center rail is an editorial discovery view, not a news truth score and not a prediction of virality. This engine operates independently of the existing StoryRanker, WORTHY decisions, political framing analysis, and the MEME_RAGEBAIT video pipeline.
 
 ## Discovery and evaluation
 
@@ -36,7 +36,7 @@ Configure in `defaults.txt` or your loaded configuration:
 | `memeWorthinessModel` | `llama3.1:8b` | Worker-local Ollama model |
 | `memeWorthinessOllamaUrl` | inherits `ollamaUrl` | Optional alternate local Ollama endpoint |
 | `memeWorthinessTemperature` | `0.2` | Structured scoring temperature |
-| `memeWorthinessThreshold` | `72` | Minimum score shown in MEME WORTHY without manual override |
+| `memeWorthinessThreshold` | `72` | Minimum score for the WORTHY category; no longer hides completed analyses from discovery |
 | `memeWorthinessExcellentThreshold` | `85` | EXCELLENT classification threshold |
 | `memeWorthinessPrefilterMinimum` | `35` | Priority heuristic before bounded sample |
 | `memeWorthinessMaxAnalysisPerScan` | `20` | Maximum newly queued evaluations per completed scan |
@@ -56,10 +56,13 @@ Authenticated controller operations:
 - `POST /api/stories/{id}/meme-decision`: set `WORTH`, `NOT_WORTH`, or `AUTO`
 - `POST /api/jobs/{id}/meme-complete`: commit worker result and prepared evidence
 - `POST /api/jobs/{id}/meme-fail`: report a failed analysis
-- `GET /api/board/stories?status=MEME_WORTHY`: paginated source-story candidates
+- `GET /api/board/stories?status=MEME_DISCOVERY&memeFilter=ALL_ANALYZED`: paginated source-story evaluations (new default discovery UI)
+- `GET /api/board/stories?status=MEME_WORTHY`: legacy qualifying-only query remains supported
 - `GET /api/state`: independent meme assessment counts
 
-Every story displays once in this discovery view regardless of whether original, narrative review and meme video versions exist. It sorts by meme score descending with stable story-ID ties, combines with the existing age and search controls, and supports MAKE MEME, REANALYZE MEME, MEME WORTH IT, NOT MEME WORTHY and AUTO. A manual meme decision **never** changes ordinary WORTHY state. The MAKE MEME action uses the existing MEME_RAGEBAIT production queue, evidence builder, ComfyUI, TTS and video archive; scoring alone **never** queues any video. Production-time factual guards remain authoritative.
+Each completed evaluation appears once in MEME DISCOVERY, **even when the score is below 72 or manually rejected**. Select ALL ANALYZED (default), EXCELLENT (85+), WORTHY (72+), POSSIBLE (55–71), LOW (0–54), INSUFFICIENT EVIDENCE, QUEUED / ANALYZING, or FAILED ANALYSES. Only completed assessments appear in ALL ANALYZED; pending and failed work have separate filters. The displayed thresholds use the active configuration. Nothing is automatically approved for meme production by appearing here. A missing score is sorted after scored stories; stale assessments do not masquerade as completed results. The rail count is the number of completed evaluations within the age filter, not just above-threshold hits.
+
+Every story displays once regardless of whether original, narrative review and meme video versions exist. The view sorts by meme score descending with stable story-ID ties, combines with the existing age and search controls, and supports MAKE MEME, REANALYZE MEME, MEME WORTH IT, NOT MEME WORTHY and AUTO. Each result shows all eight underlying Ollama dimensions and supporting reasons. A manual meme decision **never** changes ordinary WORTHY state. The MAKE MEME action uses the existing MEME_RAGEBAIT production queue, evidence builder, ComfyUI, TTS and video archive; scoring alone **never** queues any video. Production-time factual guards remain authoritative.
 
 ## Validation and operational limits
 

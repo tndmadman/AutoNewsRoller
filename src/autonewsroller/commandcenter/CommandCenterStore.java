@@ -41,13 +41,14 @@ public final class CommandCenterStore {
     private Map<String,Object>lastScan=new LinkedHashMap<>();
     private boolean scanning;
     private boolean memeEnabled=false,memeAutoAnalyze=false;
-    private int memeThreshold=72,memePrefilterMinimum=35,memeMaxAnalysisPerScan=20,memeMaxPending=60,memeMaxRetries=2;
+    private int memeThreshold=72,memeExcellent=85,memePrefilterMinimum=35,memeMaxAnalysisPerScan=20,memeMaxPending=60,memeMaxRetries=2;
 
     /** Called by the server after construction; legacy constructor users remain unchanged. */
     public synchronized void configureMeme(NewsConfig cfg){
         memeEnabled=cfg.getBool("memeWorthinessEnabled",true);
         memeAutoAnalyze=cfg.getBool("memeWorthinessAutoAnalyze",true);
         memeThreshold=Math.max(0,Math.min(100,cfg.getInt("memeWorthinessThreshold",72)));
+        memeExcellent=Math.max(memeThreshold,Math.min(100,cfg.getInt("memeWorthinessExcellentThreshold",85)));
         memePrefilterMinimum=Math.max(0,Math.min(100,cfg.getInt("memeWorthinessPrefilterMinimum",35)));
         memeMaxAnalysisPerScan=Math.max(0,Math.min(500,cfg.getInt("memeWorthinessMaxAnalysisPerScan",20)));
         memeMaxPending=Math.max(1,Math.min(1000,cfg.getInt("memeWorthinessMaxPending",60)));
@@ -1047,48 +1048,62 @@ public final class CommandCenterStore {
 
 
     private static final Set<String> BOARD_STATUSES=Set.of(
-            "ALL","DISCOVERED","WORTHY","MEME_WORTHY","VERIFIED","QUEUED","PRODUCING",
+            "ALL","DISCOVERED","WORTHY","MEME_WORTHY","MEME_DISCOVERY","VERIFIED","QUEUED","PRODUCING",
             "HOLD","FAILED","COMPLETE","TO_POST","UPLOADED","SCRAPPED","SKIPPED");
+    private static final Set<String> MEME_DISCOVERY_FILTERS=Set.of(
+            "ALL_ANALYZED","EXCELLENT","WORTHY","POSSIBLE","LOW","INSUFFICIENT_EVIDENCE","PENDING","FAILED");
 
     // Search, filtering and pagination operate on raw in-memory records; only the page
     // is deep-copied into public story objects. Stable ID tie-breaking avoids page drift.
     public synchronized Map<String,Object> boardStories(int requestedPage,int pageSize,String status,String search,int ageHours){
+        return boardStories(requestedPage,pageSize,status,search,ageHours,"ALL_ANALYZED");
+    }
+    public synchronized Map<String,Object> boardStories(int requestedPage,int pageSize,String status,String search,int ageHours,String memeFilter){
         if(requestedPage<1||!Set.of(10,25,50,100).contains(pageSize)
-                ||!BOARD_STATUSES.contains(status)||!Set.of(0,1,2,3,4,6,8,12,24,48,72).contains(ageHours))
+                ||!BOARD_STATUSES.contains(status)||!Set.of(0,1,2,3,4,6,8,12,24,48,72).contains(ageHours)
+                ||!MEME_DISCOVERY_FILTERS.contains(memeFilter))
             throw new IllegalArgumentException("Invalid board pagination or filter parameter");
+        boolean discovery="MEME_DISCOVERY".equals(status);
+        boolean memeView=discovery||"MEME_WORTHY".equals(status);
         String query=search==null?"":search.trim().toLowerCase(Locale.ROOT);
         Instant cutoff=ageHours>0?Instant.now().minus(Duration.ofHours(ageHours)):null;
         List<Map<String,Object>>matches=new ArrayList<>();
         Map<String,Object>facets=new LinkedHashMap<>();
         for(String key:BOARD_STATUSES)facets.put(key,0L);
-        Iterable<Map<String,Object>>source="MEME_WORTHY".equals(status)?stories.values():boardEntries();
+        Iterable<Map<String,Object>>source=memeView?stories.values():boardEntries();
         for(Map<String,Object>story:source){
             String rawStatus=String.valueOf(story.getOrDefault("status",""));
             boolean recent=withinBoardAge(story,cutoff);
             // Rail counts ignore search and mirror the existing browser's age
             // behavior. Queue/producing/hold counts are intentionally age-exempt.
             for(String key:BOARD_STATUSES){
-                if(!"MEME_WORTHY".equals(key)&&(recent||isOperationalBoardStatus(key))&&matchesBoardStatus(story,rawStatus,key))
+                if(!Set.of("MEME_WORTHY","MEME_DISCOVERY").contains(key)
+                        &&(recent||isOperationalBoardStatus(key))&&matchesBoardStatus(story,rawStatus,key))
                     facets.put(key,((Long)facets.get(key))+1);
             }
-            if(!matchesBoardStatus(story,rawStatus,status))continue;
+            if(discovery?!matchesMemeDiscovery(story,memeFilter):!matchesBoardStatus(story,rawStatus,status))continue;
             if(!isOperationalBoardStatus(status)&&!recent)continue;
             if(!query.isEmpty()&&!boardSearchText(story).contains(query))continue;
-            matches.add("MEME_WORTHY".equals(status)?new LinkedHashMap<>(story):story);
+            matches.add(memeView?new LinkedHashMap<>(story):story);
         }
         {
             long count=stories.values().stream().filter(this::memeWorthy)
                     .filter(x->withinBoardAge(x,cutoff)).count();
             facets.put("MEME_WORTHY",count);
+            facets.put("MEME_DISCOVERY",stories.values().stream()
+                    .filter(x->matchesMemeDiscovery(x,"ALL_ANALYZED"))
+                    .filter(x->withinBoardAge(x,cutoff)).count());
         }
-        if("MEME_WORTHY".equals(status)){
+        if(memeView){
             for(Map<String,Object>m:matches){
                 m.put("memeCandidate",true);
                 m.put("boardEntryId",String.valueOf(m.get("id"))+"::MEME_CANDIDATE");
             }
         }
         matches.sort(Comparator
-                .comparingDouble((Map<String,Object>x)->number(x.get("MEME_WORTHY".equals(status)?"memeScore":"score"))).reversed()
+                .comparingDouble((Map<String,Object>x)->memeView
+                        ?(x.get("memeScore") instanceof Number n?n.doubleValue():-1.0)
+                        :number(x.get("score"))).reversed()
                 .thenComparing(x->String.valueOf(x.getOrDefault("id","")))
                 .thenComparingInt(x->"FRAMING_EXPOSURE".equals(x.get("entryMode"))?1:
                         "MEME_RAGEBAIT".equals(x.get("entryMode"))?2:0));
@@ -1254,6 +1269,34 @@ public final class CommandCenterStore {
             case "MEME_WORTHY"->memeWorthy(m);
             default->rawStatus.equals(filter);
         };
+    }
+    /** Browse completed Ollama judgments without hiding scores below the publishing threshold. */
+    private boolean matchesMemeDiscovery(Map<String,Object>m,String filter){
+        if(!(m.get("candidate") instanceof Map<?,?>))return false;
+        String status=String.valueOf(m.getOrDefault("memeAnalysisStatus","NOT_SCORED"));
+        if("PENDING".equals(filter))return Set.of("QUEUED","ANALYZING").contains(status);
+        if("FAILED".equals(filter))return "FAILED".equals(status);
+        if(!"COMPLETE".equals(status)
+                ||!Objects.equals(m.get("memeAnalyzedInputHash"),m.get("memeAnalysisInputHash")))return false;
+        if("ALL_ANALYZED".equals(filter))return true;
+        boolean insufficient="INSUFFICIENT_EVIDENCE".equals(m.get("memeClassification"))
+                ||"INSUFFICIENT_EVIDENCE".equals(m.get("memeAnalysis") instanceof Map<?,?> a
+                        ?a.get("evidenceStatus"):null);
+        if("INSUFFICIENT_EVIDENCE".equals(filter))return insufficient;
+        if(insufficient||!(m.get("memeScore") instanceof Number n))return false;
+        double score=n.doubleValue();
+        return switch(filter){
+            case "EXCELLENT"->score>=Math.max(memeThreshold,memeExcellentThreshold());
+            case "WORTHY"->score>=memeThreshold;
+            case "POSSIBLE"->score>=55&&score<memeThreshold;
+            case "LOW"->score<55;
+            default->false;
+        };
+    }
+    private int memeExcellentThreshold(){
+        // Classifications from Ollama are stored at scoring time; use the current
+        // configured threshold for browsing without mutating the stored decision.
+        return memeExcellent;
     }
     private boolean memeWorthy(Map<String,Object>m){return memeWorthyStatic(m,memeThreshold);}
     private static boolean memeWorthyStatic(Map<String,Object>m){
