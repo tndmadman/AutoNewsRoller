@@ -31,6 +31,7 @@ function fixture(appOverride=null){
       boardCount++;
       const pageSize=Number(url.searchParams.get("pageSize")||25),wanted=Number(url.searchParams.get("page")||1);
       const status=url.searchParams.get("status")||"ALL",query=(url.searchParams.get("search")||"").toLowerCase();
+      const memeFilter=url.searchParams.get("memeFilter")||"ALL_ANALYZED";
       const hours=Number(url.searchParams.get("ageHours")||0);
       const operational=new Set(["QUEUED","PRODUCING","HOLD"]);
       const match=(s,filter)=>{
@@ -43,19 +44,37 @@ function fixture(appOverride=null){
         if(filter==="WORTHY")return !!s.worthy&&["DISCOVERED","VERIFIED","WORTHY"].includes(stat);
         if(filter==="MEME_WORTHY")return s.memeManualDecision!=="NOT_WORTH"&&
           (s.memeManualDecision==="WORTH"||(s.memeAnalysisStatus==="COMPLETE"&&Number(s.memeScore)>=72));
+        if(filter==="MEME_DISCOVERY")return s.memeAnalysisStatus==="COMPLETE";
         return stat===filter;
+      };
+      const matchMeme=(s,filter)=>{
+        if(filter==="PENDING")return ["QUEUED","ANALYZING"].includes(s.memeAnalysisStatus);
+        if(filter==="FAILED")return s.memeAnalysisStatus==="FAILED";
+        if(s.memeAnalysisStatus!=="COMPLETE")return false;
+        if(filter==="ALL_ANALYZED")return true;
+        const insufficient=s.memeClassification==="INSUFFICIENT_EVIDENCE"||
+          s.memeAnalysis?.evidenceStatus==="INSUFFICIENT_EVIDENCE";
+        if(filter==="INSUFFICIENT_EVIDENCE")return insufficient;
+        if(insufficient||s.memeScore==null)return false;
+        if(filter==="EXCELLENT")return s.memeScore>=85;
+        if(filter==="WORTHY")return s.memeScore>=72;
+        if(filter==="POSSIBLE")return s.memeScore>=55&&s.memeScore<72;
+        if(filter==="LOW")return s.memeScore<55;
+        return false;
       };
       const recent=s=>!hours||(Date.now()-Date.parse(s.latestPublishedAt))/3600000<=hours;
       const facets={};
-      for(const key of ["ALL","DISCOVERED","WORTHY","MEME_WORTHY","VERIFIED","QUEUED","PRODUCING","HOLD","FAILED","COMPLETE","TO_POST","UPLOADED","SCRAPPED","SKIPPED"])
+      for(const key of ["ALL","DISCOVERED","WORTHY","MEME_WORTHY","MEME_DISCOVERY","VERIFIED","QUEUED","PRODUCING","HOLD","FAILED","COMPLETE","TO_POST","UPLOADED","SCRAPPED","SKIPPED"])
         facets[key]=state.stories.filter(s=>match(s,key)&&(recent(s)||operational.has(key))).length;
-      const all=state.stories.filter(s=>match(s,status)&&(recent(s)||operational.has(status))
+      const isMemeView=["MEME_DISCOVERY","MEME_WORTHY"].includes(status);
+      const all=state.stories.filter(s=>(status==="MEME_DISCOVERY"?matchMeme(s,memeFilter):match(s,status))
+        &&(recent(s)||operational.has(status))
         &&[s.topic,s.category,s.uploadedPlatform,s.uploadNote,s.scrapReason,s.lastFailure,
           s.failureType,s.assignedWorker,s.lastAssignedWorker,...(s.publishers||[])].join(" ").toLowerCase().includes(query))
-        .sort((a,b)=>(status==="MEME_WORTHY"?(b.memeScore||0)-(a.memeScore||0):(b.score||0)-(a.score||0))||
+        .sort((a,b)=>(isMemeView?(b.memeScore??-1)-(a.memeScore??-1):(b.score||0)-(a.score||0))||
           String(a.id).localeCompare(String(b.id)));
       const totalPages=Math.max(1,Math.ceil(all.length/pageSize)),page=Math.min(Math.max(1,wanted),totalPages);
-      const payload=JSON.stringify({stories:all.slice((page-1)*pageSize,page*pageSize).map(s=>status==="MEME_WORTHY"?{...s,memeCandidate:true,boardEntryId:s.id+"::MEME_CANDIDATE"}:s),
+      const payload=JSON.stringify({stories:all.slice((page-1)*pageSize,page*pageSize).map(s=>isMemeView?{...s,memeCandidate:true,boardEntryId:s.id+"::MEME_CANDIDATE"}:s),
         page,pageSize,total:all.length,totalPages,facets});
       const delay=boardDelay;
       setTimeout(()=>{if(!res.writableEnded){res.writeHead(200,{"Content-Type":"application/json"});res.end(payload)}},delay);
@@ -642,7 +661,70 @@ test("terminal screenshots and horizontal overflow across reference viewports",a
   }finally{await f.stop()}
 });
 
-test("meme worthy rail displays independent scores, safely escaped details and meme-only actions",async({page})=>{
+
+test("meme discovery defaults to every completed evaluation and filters server-side across pages",async({page})=>{
+  const f=fixture();
+  const now=new Date().toISOString();
+  const records=[];
+  for(let i=0;i<43;i++){
+    const score=i===42?null:i===0?93:i<=10?75:i<=30?62:30;
+    records.push({...f.story,id:"discovery-"+String(i).padStart(2,"0"),
+      topic:"Meme candidate "+i,latestPublishedAt:now,score:.10,worthy:false,
+      memeAnalysisStatus:"COMPLETE",memeScore:score,memeConfidence:.7,
+      memeClassification:score==null?"INSUFFICIENT_EVIDENCE":score>=85?"EXCELLENT":
+        score>=72?"WORTHY":score>=55?"POSSIBLE":"LOW",
+      memeManualDecision:i===0?"NOT_WORTH":"AUTO",
+      memeAnalysis:{evidenceStatus:score==null?"INSUFFICIENT_EVIDENCE":"SUFFICIENT",
+        dimensions:score==null?{}:{hook:8,absurdity:7,visual:6,relatability:5,originality:7,
+          factualClarity:6,timeliness:4,engagement:5},
+        reasons:["Source based explanation for "+i],suggestedAngles:[],
+        editorialWarnings:[]},sourceUrls:["https://fixture.example/article"]});
+  }
+  f.state.stories=[...records,
+    {...f.story,id:"queued-analysis",topic:"Meme waiting",memeAnalysisStatus:"QUEUED"},
+    {...f.story,id:"failed-analysis",topic:"Meme failed",memeAnalysisStatus:"FAILED",memeAnalysisError:"Model failed"}];
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    await page.locator('[data-filter="MEME_DISCOVERY"]').click();
+    const cards=page.locator("#stories .storyCard");
+    await expect(page.locator("#memeDiscoveryControls")).toBeVisible();
+    await expect(page.locator("#memeDiscoveryFilter")).toHaveValue("ALL_ANALYZED");
+    await expect(page.locator("#railMemeDiscovery")).toHaveText("43");
+    await expect(cards).toHaveCount(25);
+    await expect(page.locator("#boardResultCount")).toContainText("43");
+    await expect(cards.first()).toContainText("Meme candidate 0");
+    await expect(cards.first().locator(".memeScoreMeter")).toContainText("93");
+    await expect(cards.first().locator(".memeDimensions")).toContainText("HOOK");
+    await page.locator("#boardBottomPager button[aria-label='Next page']").click();
+    await expect(cards).toHaveCount(18);
+    await page.locator("#memeDiscoveryFilter").selectOption("EXCELLENT");
+    await expect(cards).toHaveCount(1);
+    await page.locator("#memeDiscoveryFilter").selectOption("WORTHY");
+    await expect(cards).toHaveCount(11);
+    await page.locator("#memeDiscoveryFilter").selectOption("POSSIBLE");
+    await expect(cards).toHaveCount(20);
+    await page.locator("#memeDiscoveryFilter").selectOption("LOW");
+    await expect(cards).toHaveCount(11);
+    await page.locator("#memeDiscoveryFilter").selectOption("INSUFFICIENT_EVIDENCE");
+    await expect(cards).toHaveCount(1);
+    await expect(cards.first()).toContainText("INSUFFICIENT EVIDENCE");
+    await page.locator("#memeDiscoveryFilter").selectOption("PENDING");
+    await expect(cards).toHaveCount(1);
+    await expect(cards.first()).toContainText("Meme waiting");
+    await page.locator("#memeDiscoveryFilter").selectOption("FAILED");
+    await expect(cards).toHaveCount(1);
+    await expect(cards.first()).toContainText("Model failed");
+    await page.locator("#memeDiscoveryFilter").selectOption("ALL_ANALYZED");
+    await page.locator("#search").fill("candidate 35");
+    await expect(cards).toHaveCount(1);
+    await expect(cards.first()).toContainText("Meme candidate 35");
+    await page.locator("#statusFilter").selectOption("WORTHY");
+    await expect(page.locator("#memeDiscoveryControls")).toBeHidden();
+  }finally{await f.stop();}
+});
+
+test("meme discovery rail displays independent scores, safely escaped details and meme-only actions",async({page})=>{
   const f=fixture();
   f.story.worthy=false;f.story.score=.12;
   f.story.memeAnalysisStatus="COMPLETE";f.story.memeScore=93;f.story.memeConfidence=.91;
@@ -655,12 +737,12 @@ test("meme worthy rail displays independent scores, safely escaped details and m
   const url=await f.start();
   try{
     await page.goto(url);
-    await page.locator('[data-filter="MEME_WORTHY"]').click();
+    await page.locator('[data-filter="MEME_DISCOVERY"]').click();
     const card=page.locator("#stories .storyCard");
     await expect(card).toHaveCount(1);
     await expect(card.locator(".memeScoreMeter")).toContainText("93");
     await expect(card.locator(".memePanel")).toContainText("Potato panic!");
-    await expect(page.locator("#railMemeWorthy")).toHaveText("1");
+    await expect(page.locator("#railMemeDiscovery")).toHaveText("1");
     await expect(card.locator('[data-command="WORTH"]')).toHaveCount(0);
     expect(await page.evaluate(()=>window.__xss||false)).toBe(false);
     await card.locator('[data-command="MEME_ACCEPT"]').click();
