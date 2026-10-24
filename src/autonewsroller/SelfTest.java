@@ -139,7 +139,7 @@ public final class SelfTest {
             ok(((List<?>)restored.history().get("messages")).size()==2,
                     "persisted conversation restores across Command Center restart");
             restored.ask("What changed?");
-            ok(calls.get()==2&&last.get().contains("current job is queued") == false,
+            ok(calls.get()==2&&last.get().contains("current job is queued"),
                     "subsequent turn reuses previous conversation alongside live context");
             restored.clear();
             ok(((List<?>)new CommandCenterAssistant(root,cfg,store).history().get("messages")).isEmpty(),
