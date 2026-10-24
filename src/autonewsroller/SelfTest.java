@@ -364,6 +364,7 @@ public final class SelfTest {
     private void testMemeOllamaHookSelection(FactPackage facts,
             MemeEvidenceBuilder.Evidence evidence)throws Exception{
         AtomicInteger calls=new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean rejectFirstReview=new java.util.concurrent.atomic.AtomicBoolean(false);
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         server.createContext("/api/generate",exchange->{
             int call=calls.incrementAndGet();
@@ -371,40 +372,50 @@ public final class SelfTest {
                 Map<String,Object>output=new LinkedHashMap<>();
                 if(call==1){
                     output.put("candidates",List.of(
-                            Map.of("angle","Street sign absurdity","factualBasis","F1",
-                                    "visualIdea","Cartoon street signs","surprise","Real novelty signs","score",8),
+                            Map.of("angle","Signs as salaried staff","factualBasis","F1",
+                                    "visualIdea","Cartoon street signs demanding pay",
+                                    "surprise","Novelty signs downtown","score",9),
                             Map.of("angle","Paperwork comedy","factualBasis","F1",
                                     "visualIdea","Animated paperwork","surprise","Novelty procurement","score",7),
                             Map.of("angle","Sign-shaped roast","factualBasis","F1",
                                     "visualIdea","Signing gag","surprise","Downtown signs","score",6)));
-                    output.put("selectedAngle","Street sign absurdity");
-                }else if(call==2){
+                    output.put("selectedAngle","Signs as salaried staff");
+                }else if(call==2||call==5){
                     output.put("candidates",List.of(
                             Map.of("caption","THEY DID WHAT?","spoken","Seriously, what just happened?",
                                     "factIds",List.of("F1"),"score",10.0),
-                            Map.of("caption","CITY BOUGHT COMEDY SIGNS",
-                                    "spoken","The city bought novelty signs.",
-                                    "factIds",List.of("F1"),"score",9.5,"reason","Concrete city purchase"),
+                            Map.of("caption","NOVELTY SIGNS WANT PAYCHECKS",
+                                    "spoken","Novelty signs demand a salary.",
+                                    "factIds",List.of("F1"),"score",9.5,
+                                    "reason","Source-specific anthropomorphic joke"),
                             Map.of("caption","DOWNTOWN HAS NOVELTY SIGNS",
                                     "spoken","Downtown got novelty signs.",
                                     "factIds",List.of("F1"),"score",7.0),
                             Map.of("caption","THE SIGNS ARE TALKING",
                                     "spoken","The signs are alive.",
                                     "factIds",List.of("F99"),"score",9.0)));
-                }else if(call==3){
-                    output.put("angle","Street sign absurdity");
-                    output.put("hookText","CITY BOUGHT COMEDY SIGNS");
-                    output.put("spokenHook","The city bought novelty signs.");
+                }else if(call==3||call==6){
+                    output.put("angle","Signs as salaried staff");
+                    output.put("hookText","NOVELTY SIGNS WANT PAYCHECKS");
+                    output.put("spokenHook","Novelty signs demand a salary.");
                     output.put("beats",List.of(
-                            Map.of("speech","The city bought novelty signs.",
-                                    "caption","CITY BOUGHT COMEDY SIGNS",
-                                    "visualPrompt","Cartoon city street with novelty signs",
+                            Map.of("speech","Novelty signs demand a salary.",
+                                    "caption","NOVELTY SIGNS WANT PAYCHECKS",
+                                    "visualPrompt","Cartoon downtown novelty traffic signs at a payroll desk",
                                     "purpose","HOOK","factIds",List.of("F1")),
-                            Map.of("speech","The reported city purchase put novelty signs in the downtown plaza. Apparently the street signs have more personality than the meeting.",
-                                    "caption","SIGNS WITH PERSONALITY",
-                                    "visualPrompt","Satirical cartoon of signs auditioning for comedy",
+                            Map.of("speech","The city bought novelty signs for downtown. "+
+                                            "The signs want overtime for standing around all day.",
+                                    "caption","OVERTIME FOR STANDING STILL",
+                                    "visualPrompt","Satirical street sign holding an overtime payslip",
                                     "purpose","PAYOFF","factIds",List.of("F1"))));
-                }
+                }else if(call==4||call==7){
+                    boolean weak=rejectFirstReview.get()&&call==4;
+                    output.put("hookImpact",weak?3:9);output.put("specificity",8);
+                    output.put("jokeDensity",weak?4:8);output.put("payoff",weak?3:8);
+                    output.put("spokenFlow",9);output.put("factualIntegrity",9);
+                    output.put("problems",weak?List.of("Replace a flat headline with a funny contradiction"):
+                            List.of());
+                }else throw new IllegalStateException("Unexpected mocked Ollama call "+call);
                 byte[]bytes=Json.stringify(Map.of(
                         "response",Json.stringify(output),"done_reason","stop")).getBytes(
                             java.nio.charset.StandardCharsets.UTF_8);
@@ -423,19 +434,27 @@ public final class SelfTest {
                     "fixture-model","1m",dir.resolve("ollama.lock"),4096,2000,.5);
             NewsScript generated=new MemeScriptGenerator(client,1).generate(
                     facts,evidence,false);
-            ok(calls.get()==3&&"CITY BOUGHT COMEDY SIGNS".equals(
+            ok(calls.get()==4&&"NOVELTY SIGNS WANT PAYCHECKS".equals(
                     generated.hook().get("hookText")),
-                    "mocked Ollama selects a source-specific short hook over generic high score");
+                    "mock Ollama chooses source-specific joke over generic self-rated hook");
             ok(generated.hook().get("hookCandidates") instanceof List<?>c
                     &&c.size()==4
                     &&"F1".equals(((List<?>)generated.hook().get("hookFactIds")).get(0)),
-                    "meme hook retains candidate diagnostics and supported fact IDs");
+                    "meme hook retains diagnostics and supported fact IDs");
+            ok(generated.hook().get("comedyReview") instanceof Map<?,?>review
+                    &&"PASS".equals(review.get("verdict")),
+                    "final spoken TTS script is independently comedy-reviewed");
             new MemeScriptValidator().validate(generated,evidence);
             ok(generated.segments().size()==2
                     &&generated.segments().get(0).narration().equals(
-                        generated.hook().get("spokenHook"))
+                    generated.hook().get("spokenHook"))
                     &&"PAYOFF".equals(generated.segments().get(1).purpose()),
-                    "complete mocked Ollama meme script preserves locked hook and final punchline");
+                    "mock meme script retains frame-zero hook and final payoff");
+
+            calls.set(0);rejectFirstReview.set(true);
+            NewsScript repaired=new MemeScriptGenerator(client,2).generate(facts,evidence,false);
+            ok(calls.get()==7&&repaired.hook().get("comedyReview") instanceof Map<?,?>,
+                    "weak spoken jokes trigger reviewer feedback, new hook pitch, and script revision");
         }finally{server.stop(0);}
     }
 
