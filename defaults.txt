@@ -122,6 +122,10 @@ politicalExposureRequireComfy=false
 memePipelineEnabled=true
 commandCenterAutoMeme=false
 memeDurationHintSeconds=30
+# Review the actual TTS spoken lines for specific jokes, opening impact and punchline.
+# Weak jokes are rewritten (up to the existing ollamaRetries budget), not sent to video.
+memeComedyReviewEnabled=true
+memeComedyMinimumScore=7
 memeUseComfy=true
 memeRequireComfy=true
 memeComfyImages=3
