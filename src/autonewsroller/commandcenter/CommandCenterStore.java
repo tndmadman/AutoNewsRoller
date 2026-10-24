@@ -43,7 +43,7 @@ public final class CommandCenterStore {
     private boolean memeEnabled=false,memeAutoAnalyze=false;
     private int memeThreshold=72,memeExcellent=85,memePrefilterMinimum=35,memeMaxAnalysisPerScan=40,memeMaxPending=60,memeMaxRetries=2;
     private int memeRecentLookbackHours=8,memeRecentSharePercent=90,memeExplorationPercent=25;
-    private int memeOtherJobsPerAnalysis=2,highPriorityClaimsSinceMeme=0;
+    private int memeOtherJobsPerAnalysis=2,highPriorityClaimsSinceMeme=0,recentMemeClaimsSinceOlder=0;
 
     /** Called by the server after construction; legacy constructor users remain unchanged. */
     public synchronized void configureMeme(NewsConfig cfg){
@@ -721,19 +721,27 @@ public final class CommandCenterStore {
         if(worker==null||!(worker.get("capabilities") instanceof List<?> capabilities)
                 ||!capabilities.contains("meme_analysis_v1"))return null;
         Instant now=Instant.now();
-        Optional<Map<String,Object>>next=stories.values().stream()
+        Comparator<Map<String,Object>>oldestQueued=Comparator
+                .comparing((Map<String,Object>x)->String.valueOf(x.getOrDefault("memeAnalysisQueuedAt","")))
+                .thenComparing(x->String.valueOf(x.getOrDefault("id","")));
+        List<Map<String,Object>>ready=stories.values().stream()
                 .filter(x->"QUEUED".equals(x.get("memeAnalysisStatus")))
                 .filter(x->x.get("candidate") instanceof Map<?,?>)
                 .filter(x->{try{String at=String.valueOf(x.getOrDefault("memeRetryNotBefore",""));
                     return at.isBlank()||!Instant.parse(at).isAfter(now);}catch(Exception e){return true;}})
-                // Process established queue order instead of starving earlier
-                // analyses whenever a newer high-prefilter candidate arrives.
-                .sorted(Comparator
-                        .comparing((Map<String,Object>x)->String.valueOf(x.getOrDefault("memeAnalysisQueuedAt","")))
-                        .thenComparing(x->String.valueOf(x.getOrDefault("id",""))))
-                .findFirst();
-        if(next.isEmpty())return null;
-        Map<String,Object>m=next.get();
+                .sorted(oldestQueued).toList();
+        Instant recentCutoff=now.minus(Duration.ofHours(memeRecentLookbackHours));
+        Optional<Map<String,Object>>fresh=ready.stream()
+                .filter(x->withinBoardAge(x,recentCutoff)).findFirst();
+        Optional<Map<String,Object>>older=ready.stream()
+                .filter(x->!withinBoardAge(x,recentCutoff)).findFirst();
+        // Existing older queued work should not block newly discovered stories.
+        // After four fresh claims, reserve an older claim to prevent starvation.
+        boolean takeOlder=older.isPresent()&&(fresh.isEmpty()||recentMemeClaimsSinceOlder>=4);
+        Map<String,Object>m=takeOlder?older.orElseThrow():fresh.orElseGet(()->older.orElse(null));
+        if(m==null)return null;
+        if(takeOlder)recentMemeClaimsSinceOlder=0;
+        else recentMemeClaimsSinceOlder=Math.min(4,recentMemeClaimsSinceOlder+1);
         String claim=UUID.randomUUID().toString();
         m.put("memeAnalysisStatus","ANALYZING");m.put("memeAssignedWorker",workerId);
         m.put("memeAnalysisClaimId",claim);
