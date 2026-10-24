@@ -456,7 +456,7 @@ function memePanelHtml(s){
   const busyProduction=!!s.pendingMemeRequest||
     (String(s.productionMode||"")==="MEME_RAGEBAIT"&&["PRODUCING","QUEUED"].includes(String(s.status||"")));
   return '<section class="memePanel" aria-label="Independent meme worthiness">'+
-    '<div class="memePanelTitle">MEME-WORTHINESS // INDEPENDENT OLLAMA ASSESSMENT <b>'+esc(String(s.memeClassification||status))+'</b></div>'+
+    '<div class="memePanelTitle">MEME-WORTHINESS // INDEPENDENT OLLAMA ASSESSMENT <b>'+esc(String(s.memeClassification||status).replaceAll("_"," "))+'</b></div>'+
     '<div class="memeMetrics"><div class="memeScoreMeter" role="meter" aria-label="Meme suitability score" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+(score===null?0:score)+'"><b>'+(score===null?"—":score)+'</b><span>MEME SCORE</span><i style="width:'+(score===null?0:pct(score))+'%"></i></div>'+
     '<span>CONFIDENCE: '+(Math.round(num(s.memeConfidence)*100))+'%</span>'+
     '<span>MODEL: '+esc(info.model||"pending")+'</span>'+
