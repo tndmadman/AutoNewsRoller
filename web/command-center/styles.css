@@ -284,6 +284,17 @@ main {position:relative;z-index:1;padding:22px clamp(10px,1.8vw,28px) 30px;max-w
   *,*::before,*::after {animation-duration:.01ms !important;transition-duration:.01ms !important;scroll-behavior:auto !important}
 }
 
+/* Browsing controls for completed, pending and failed local Ollama evaluations. */
+.memeDiscoveryControls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 15px;
+  border-bottom:1px solid var(--line);background:rgba(30,24,12,.72);color:#f0bd67}
+.memeDiscoveryControls[hidden]{display:none}
+.memeDiscoveryControls label{font-size:11px;letter-spacing:.08em;font-weight:700}
+.memeDiscoveryControls select{background:#0a120b;border:1px solid rgba(245,178,70,.6);
+  color:#f5cb83;padding:9px 10px;min-height:36px;font:inherit;font-size:12px;max-width:100%}
+.memeDiscoveryHint{color:var(--muted);font-size:11px}
+.memeDimensions{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.memeDimension{padding:5px 7px;border:1px solid rgba(245,178,70,.24);font-size:10px;color:#cbbfa9}
+.memeDimension b{color:#f2c576;margin-left:5px}
 /* Independent meme-worthiness discovery: separate from the normal WORTH score. */
 .memePanel{margin:12px 0;padding:13px;border:1px solid rgba(245,178,70,.44);background:rgba(32,25,12,.54);border-radius:8px;font-size:.88rem}
 .memePanelTitle{display:flex;justify-content:space-between;gap:10px;color:#f0bd67;font-weight:700;letter-spacing:.07em}
