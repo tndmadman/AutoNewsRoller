@@ -249,6 +249,16 @@ function render(){
   }
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
+  const funnel=$("#memeRecentFunnel");
+  if(funnel){
+    const hours=Number(state.memeRecentLookbackHours)||8;
+    funnel.textContent=hours+"H FOUND: "+(c.memeRecentFound??"—")+
+      " · ANALYZED: "+(c.memeRecentAnalyzed??"—")+
+      " · PENDING: "+(c.memeRecentQueued??"—")+
+      " · UNSCORED: "+(c.memeRecentUnscored??"—")+
+      " · FAILED: "+(c.memeRecentFailed??"—")+
+      " · QUALIFIED: "+(c.memeRecentWorthy??"—");
+  }
   syncStoryAgeControl();syncMemeDiscoveryControl();renderWorkers();renderFeeds();renderFeedMatrix();renderVideos();drawRadar();
 }
 function renderRails(){

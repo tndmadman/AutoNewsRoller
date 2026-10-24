@@ -140,7 +140,16 @@ memeWorthinessTemperature=0.2
 memeWorthinessThreshold=72
 memeWorthinessExcellentThreshold=85
 memeWorthinessPrefilterMinimum=35
-memeWorthinessMaxAnalysisPerScan=20
+# Larger but still bounded; actual throughput depends on Ollama and other GPU jobs.
+memeWorthinessMaxAnalysisPerScan=40
 memeWorthinessMaxPending=60
+# Reserve 90% of new analyses for the recent 8-hour FOUND pool; older
+# candidates still get capacity, including during large fresh-news bursts.
+memeWorthinessRecentLookbackHours=8
+memeWorthinessRecentSharePercent=90
+# Explore low-preliminary-score candidates even if high-scoring ones abound.
+memeWorthinessExplorationPercent=25
+# One analysis turn after two higher-priority video/framing claims.
+memeWorthinessOtherJobsPerAnalysis=2
 memeWorthinessMaxRetries=2
 commandCenterAutoMeme=false

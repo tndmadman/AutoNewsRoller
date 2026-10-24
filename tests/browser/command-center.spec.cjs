@@ -662,6 +662,30 @@ test("terminal screenshots and horizontal overflow across reference viewports",a
 });
 
 
+test("meme discovery shows an honest recent FOUND-to-analysis funnel",async({page})=>{
+  const f=fixture();
+  f.state.memeRecentLookbackHours=8;
+  Object.assign(f.state.counts,{
+    memeRecentFound:1100,memeRecentAnalyzed:43,memeRecentQueued:40,
+    memeRecentUnscored:1015,memeRecentFailed:2,memeRecentWorthy:1
+  });
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    await page.locator('[data-filter="MEME_DISCOVERY"]').click();
+    const funnel=page.locator("#memeRecentFunnel");
+    await expect(funnel).toBeVisible();
+    await expect(funnel).toContainText("8H FOUND: 1100");
+    await expect(funnel).toContainText("ANALYZED: 43");
+    await expect(funnel).toContainText("PENDING: 40");
+    await expect(funnel).toContainText("UNSCORED: 1015");
+    await expect(funnel).toContainText("FAILED: 2");
+    await expect(funnel).toContainText("QUALIFIED: 1");
+    await page.locator("#statusFilter").selectOption("WORTHY");
+    await expect(page.locator("#memeRecentFunnel")).toBeHidden();
+  }finally{await f.stop();}
+});
+
 test("meme discovery defaults to every completed evaluation and filters server-side across pages",async({page})=>{
   const f=fixture();
   const now=new Date().toISOString();
