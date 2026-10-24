@@ -196,6 +196,37 @@ Output JSON ONLY: {"answer":"your helpful response here"}.
             }
         }
         view.put("latestVideoVersions",videos);
+        // The controller keeps worker-submitted production provenance next to
+        // completed MP4s. Include bounded, actual per-video spoken scripts and
+        // scene prompts when they exist, not only static generator templates.
+        List<Map<String,Object>>actualScripts=new ArrayList<>();
+        Path sidecars=root.resolve("output/command_center/videos").normalize();
+        for(Map<String,Object>v:videos){
+            String filename=String.valueOf(v.getOrDefault("filename",""));
+            if(!filename.matches("[A-Za-z0-9._-]+\\.mp4"))continue;
+            Path file=sidecars.resolve(filename+".json").normalize();
+            if(!file.startsWith(sidecars)||!Files.isRegularFile(file))continue;
+            try{
+                if(Files.size(file)>3_000_000)continue;
+                Map<String,Object>data=Json.object(Json.read(file));
+                Map<String,Object>summary=new LinkedHashMap<>();
+                summary.put("filename",filename);
+                summary.put("mode",v.getOrDefault("productionMode",""));
+                for(String key:List.of("script","hook","comedyAngle","ollamaModel","comfyCheckpoint",
+                        "visualPromptModel")){
+                    Object value=data.get(key);
+                    if(value==null)continue;
+                    // Bounded artifact selection; the full JSON is preserved
+                    // on disk by the video pipeline, not in the Ollama context.
+                    String serialized=Json.stringify(value);
+                    if(serialized.length()>5000)serialized=serialized.substring(0,5000)+" [TRUNCATED]";
+                    summary.put(key,serialized);
+                }
+                if(summary.size()>2)actualScripts.add(summary);
+            }catch(Exception ignored){/* Missing/corrupt sidecar is not evidence of a completed script. */}
+            if(actualScripts.size()>=4)break;
+        }
+        view.put("recentActualGeneratedScripts",actualScripts);
         List<Map<String,Object>>stories=new ArrayList<>();
         if(state.get("stories") instanceof List<?> ss){
             List<Map<String,Object>>ranked=new ArrayList<>();
