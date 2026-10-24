@@ -50,7 +50,7 @@ public final class SelfTest {
         testPairedSequentialVideoProduction();
         testMemePipeline();
         testMemeWorthinessEngine(root);
-        testMemeRecentFoundScheduling();
+        testMemeRecentFoundScheduling(root);
         testPoliticalExposureLengthRecovery();
         testPoliticalVisualGraphics(root,a);
         testAuthoritative(root);
@@ -231,9 +231,9 @@ public final class SelfTest {
     }
 
     /** Regression: FOUND stories are sampled independently of ordinary WORTHY scoring. */
-    private void testMemeRecentFoundScheduling()throws Exception{
+    private void testMemeRecentFoundScheduling(Path root)throws Exception{
         Path dir=Files.createTempDirectory("meme-found-scheduler-");
-        NewsConfig cfg=NewsConfig.load(Path.of("."));
+        NewsConfig cfg=NewsConfig.load(root);
         cfg.set("memeWorthinessEnabled","true");
         cfg.set("memeWorthinessAutoAnalyze","true");
         cfg.set("memeWorthinessMaxAnalysisPerScan","20");
