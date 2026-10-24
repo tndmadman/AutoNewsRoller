@@ -5,6 +5,8 @@ let boardPageSize=Number(localStorage.getItem("autonewsBoardPageSize")||25);
 if(!BOARD_PAGE_SIZES.has(boardPageSize))boardPageSize=25;
 let boardPage=1, boardData={stories:[],page:1,pageSize:boardPageSize,total:0,totalPages:1,facets:{}};
 let boardGeneration=0, boardInFlight=false, boardSearchTimer=null, boardRenderDeferred=false;
+const MEME_DISCOVERY_FILTERS=new Set(["ALL_ANALYZED","EXCELLENT","WORTHY","POSSIBLE","LOW","INSUFFICIENT_EVIDENCE","PENDING","FAILED"]);
+let memeDiscoveryFilter="ALL_ANALYZED";
 let refreshInFlight=null, refreshAgain=false, stateEpoch=0, pointerTarget=null;
 const pendingActions=new Map();
 let liveSequence=0;
@@ -43,6 +45,12 @@ function isActionableWorthy(s){
   return !!s.worthy&&ACTIONABLE_WORTHY_STATUSES.has(String(s.status||""));
 }
 function currentStoryFilter(){return $("#statusFilter").value!=="ALL"?$("#statusFilter").value:activeFilter}
+function syncMemeDiscoveryControl(){
+  const panel=$("#memeDiscoveryControls");
+  if(!panel)return;
+  panel.hidden=currentStoryFilter()!=="MEME_DISCOVERY";
+  $("#memeDiscoveryFilter").value=memeDiscoveryFilter;
+}
 function storyAgeHours(s){
   const t=Date.parse(String((s&&s.latestPublishedAt)||""));
   if(!Number.isFinite(t))return null;
@@ -241,11 +249,11 @@ function render(){
   }
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
-  syncStoryAgeControl();renderWorkers();renderFeeds();renderFeedMatrix();renderVideos();drawRadar();
+  syncStoryAgeControl();syncMemeDiscoveryControl();renderWorkers();renderFeeds();renderFeedMatrix();renderVideos();drawRadar();
 }
 function renderRails(){
   const f=boardData.facets||{};
-  const fields={railAll:"ALL",railFound:"DISCOVERED",railVerified:"WORTHY",railMemeWorthy:"MEME_WORTHY",railQueued:"QUEUED",
+  const fields={railAll:"ALL",railFound:"DISCOVERED",railVerified:"WORTHY",railMemeDiscovery:"MEME_DISCOVERY",railQueued:"QUEUED",
     railProducing:"PRODUCING",railFailed:"FAILED",railComplete:"COMPLETE",
     railToPost:"TO_POST",railUploaded:"UPLOADED",railScrapped:"SCRAPPED"};
   for(const [id,status] of Object.entries(fields))$("#"+id).textContent=f[status]||0;
@@ -326,8 +334,10 @@ function renderFeedMatrix(){
 // Board requests are independent of dashboard polls. A later generation invalidates
 // every older response, including those started before a successful mutation.
 function boardQuery(){
+  const status=currentStoryFilter();
   return new URLSearchParams({page:String(boardPage),pageSize:String(boardPageSize),
-    status:currentStoryFilter(),search:$("#search").value.trim(),ageHours:String(storyAgeLimitHours)}).toString();
+    status,search:$("#search").value.trim(),ageHours:String(storyAgeLimitHours),
+    ...(status==="MEME_DISCOVERY"?{memeFilter:memeDiscoveryFilter}:{})}).toString();
 }
 async function loadBoard(force=false){
   if(boardInFlight&&!force)return;
@@ -358,6 +368,7 @@ function selectBoardPage(page){
   loadBoard(true);
 }
 function boardFilterChanged(){
+  syncMemeDiscoveryControl();
   boardPage=1;boardGeneration++;
   $("#stories").replaceChildren();
   loadBoard(true);
@@ -429,6 +440,12 @@ function memePanelHtml(s){
   const score=s.memeScore===null||s.memeScore===undefined?null:Math.max(0,Math.min(100,num(s.memeScore)));
   const reasons=(Array.isArray(info.reasons)?info.reasons:[]).slice(0,4)
     .map(x=>'<li>'+esc(x)+'</li>').join("");
+  const dimensions=info.dimensions||{};
+  const ratings=[["hook","HOOK"],["absurdity","ABSURDITY"],["visual","VISUAL"],
+    ["relatability","RELATABLE"],["originality","ORIGINALITY"],["factualClarity","FACTS"],
+    ["timeliness","TIMELINESS"],["engagement","ENGAGEMENT"]]
+    .filter(([key])=>Number.isInteger(dimensions[key])&&dimensions[key]>=0&&dimensions[key]<=10)
+    .map(([key,label])=>'<span class="memeDimension">'+label+' <b>'+esc(dimensions[key])+'/10</b></span>').join("");
   const angle=(Array.isArray(info.suggestedAngles)?info.suggestedAngles:[])[0]||{};
   const warnings=(Array.isArray(info.editorialWarnings)?info.editorialWarnings:[]).slice(0,6)
     .map(x=>'<div class="memeWarning">'+esc(x)+'</div>').join("");
@@ -445,6 +462,7 @@ function memePanelHtml(s){
     '<span>MODEL: '+esc(info.model||"pending")+'</span>'+
     '<span>ANALYZED: '+esc(info.analyzedAt||"not yet")+'</span></div>'+
     (reasons?'<ul class="memeReasons">'+reasons+'</ul>':'<p>Analysis: '+esc(s.memeAnalysisError||status.replaceAll("_"," "))+'</p>')+
+    (ratings?'<div class="memeDimensions" aria-label="Eight Ollama meme score dimensions">'+ratings+'</div>':'')+
     (angle.angle?'<div class="memeAngle"><b>COMEDIC ANGLE:</b> '+esc(angle.angle)+'</div>':'')+
     (angle.hook?'<div class="memeAngle"><b>FIRST-SECOND HOOK:</b> '+esc(angle.hook)+'</div>':'')+
     (angle.visualConcept?'<div class="memeAngle"><b>VISUAL:</b> '+esc(angle.visualConcept)+'</div>':'')+
@@ -749,6 +767,11 @@ $("#statusFilter").addEventListener("change",()=>{
   activeFilter="ALL";
   document.querySelectorAll(".rail").forEach(x=>x.classList.remove("active"));
   syncStoryAgeControl();boardFilterChanged();
+});
+$("#memeDiscoveryFilter").addEventListener("change",()=>{
+  const chosen=$("#memeDiscoveryFilter").value;
+  memeDiscoveryFilter=MEME_DISCOVERY_FILTERS.has(chosen)?chosen:"ALL_ANALYZED";
+  boardFilterChanged();
 });
 $("#storyAgeFilter").value=String(storyAgeLimitHours);
 $("#storyAgeFilter").addEventListener("change",()=>{
