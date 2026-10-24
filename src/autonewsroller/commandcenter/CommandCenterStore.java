@@ -41,7 +41,8 @@ public final class CommandCenterStore {
     private Map<String,Object>lastScan=new LinkedHashMap<>();
     private boolean scanning;
     private boolean memeEnabled=false,memeAutoAnalyze=false;
-    private int memeThreshold=72,memeExcellent=85,memePrefilterMinimum=35,memeMaxAnalysisPerScan=20,memeMaxPending=60,memeMaxRetries=2;
+    private int memeThreshold=72,memeExcellent=85,memePrefilterMinimum=35,memeMaxAnalysisPerScan=40,memeMaxPending=60,memeMaxRetries=2;
+    private int memeRecentLookbackHours=8,memeRecentSharePercent=90,memeExplorationPercent=25;
 
     /** Called by the server after construction; legacy constructor users remain unchanged. */
     public synchronized void configureMeme(NewsConfig cfg){
@@ -50,9 +51,12 @@ public final class CommandCenterStore {
         memeThreshold=Math.max(0,Math.min(100,cfg.getInt("memeWorthinessThreshold",72)));
         memeExcellent=Math.max(memeThreshold,Math.min(100,cfg.getInt("memeWorthinessExcellentThreshold",85)));
         memePrefilterMinimum=Math.max(0,Math.min(100,cfg.getInt("memeWorthinessPrefilterMinimum",35)));
-        memeMaxAnalysisPerScan=Math.max(0,Math.min(500,cfg.getInt("memeWorthinessMaxAnalysisPerScan",20)));
+        memeMaxAnalysisPerScan=Math.max(0,Math.min(500,cfg.getInt("memeWorthinessMaxAnalysisPerScan",40)));
         memeMaxPending=Math.max(1,Math.min(1000,cfg.getInt("memeWorthinessMaxPending",60)));
         memeMaxRetries=Math.max(0,Math.min(10,cfg.getInt("memeWorthinessMaxRetries",2)));
+        memeRecentLookbackHours=Math.max(1,Math.min(168,cfg.getInt("memeWorthinessRecentLookbackHours",8)));
+        memeRecentSharePercent=Math.max(0,Math.min(100,cfg.getInt("memeWorthinessRecentSharePercent",90)));
+        memeExplorationPercent=Math.max(0,Math.min(100,cfg.getInt("memeWorthinessExplorationPercent",25)));
     }
 
     public CommandCenterStore(Path statePath,BiasRegistry bias,boolean autoQueue,double autoThreshold,int maxQueued,Consumer<Map<String,Object>>eventSink){
@@ -590,30 +594,80 @@ public final class CommandCenterStore {
     }
 
 
+    /**
+     * FOUND-story meme discovery has a separate, bounded budget from ordinary video
+     * WORTHY ranking. Fresh candidates get reserved capacity; older stories still
+     * make progress and low-prefilter stories receive real exploration slots.
+     */
     private void scheduleMemeAnalyses(){
         long pending=stories.values().stream().filter(x->Set.of("QUEUED","ANALYZING").contains(
                 String.valueOf(x.get("memeAnalysisStatus")))).count();
         int budget=Math.min(memeMaxAnalysisPerScan,Math.max(0,memeMaxPending-(int)pending));
         if(budget<=0)return;
+        Instant cutoff=Instant.now().minus(Duration.ofHours(memeRecentLookbackHours));
         List<Map<String,Object>>eligible=stories.values().stream()
                 .filter(x->Set.of("NOT_SCORED","STALE").contains(String.valueOf(x.get("memeAnalysisStatus"))))
                 .filter(x->x.get("candidate") instanceof Map<?,?>)
                 .filter(x->x.get("sourceUrls") instanceof List<?> urls&&!urls.isEmpty())
-                .sorted(Comparator.comparingInt((Map<String,Object>x)->integer(x.get("memePrefilterScore"))).reversed())
                 .toList();
-        int reserve=budget>=5?Math.max(1,budget/10):0;
+        List<Map<String,Object>>recent=eligible.stream().filter(x->withinBoardAge(x,cutoff)).toList();
+        List<Map<String,Object>>older=eligible.stream().filter(x->!withinBoardAge(x,cutoff)).toList();
+        // Reserve backlog capacity when both pools are populated. Filling unused
+        // capacity prevents slots going idle just because one lane is empty.
+        int recentQuota=older.isEmpty()?budget:Math.min(budget,(int)Math.ceil(
+                budget*memeRecentSharePercent/100.0));
+        int selected=selectMemePool(recent,recentQuota);
+        selected+=selectMemePool(older,budget-selected);
+        if(selected<budget)selectMemePool(recent,budget-selected);
+    }
+
+    /**
+     * Always sample below the cheap prefilter when available, even if the
+     * high-priority list alone could exhaust the whole queue allocation.
+     * Both selections are deterministic and exclude jobs just queued.
+     */
+    private int selectMemePool(List<Map<String,Object>>pool,int budget){
+        if(budget<=0||pool.isEmpty())return 0;
+        Comparator<Map<String,Object>>strong=Comparator
+                .comparingInt((Map<String,Object>x)->integer(x.get("memePrefilterScore"))).reversed()
+                .thenComparing(x->String.valueOf(x.getOrDefault("latestPublishedAt","")),Comparator.reverseOrder())
+                .thenComparing(x->String.valueOf(x.get("id")));
+        Comparator<Map<String,Object>>explore=Comparator
+                .comparing((Map<String,Object>x)->String.valueOf(x.getOrDefault("latestPublishedAt","")),
+                        Comparator.reverseOrder())
+                .thenComparing(x->String.valueOf(x.get("id")));
+        List<Map<String,Object>>high=pool.stream()
+                .filter(x->integer(x.get("memePrefilterScore"))>=memePrefilterMinimum)
+                .sorted(strong).toList();
+        List<Map<String,Object>>low=pool.stream()
+                .filter(x->integer(x.get("memePrefilterScore"))<memePrefilterMinimum)
+                .sorted(explore).toList();
+        int sample=low.isEmpty()?0:Math.min(budget,Math.max(1,
+                (int)Math.ceil(budget*memeExplorationPercent/100.0)));
         int selected=0;
-        for(Map<String,Object>m:eligible){
-            if(selected>=budget-reserve)break;
-            if(integer(m.get("memePrefilterScore"))<memePrefilterMinimum)continue;
+        for(Map<String,Object>m:high){
+            if(selected>=budget-sample)break;
             queueMemeInternal(m);selected++;
         }
-        // Discovery sampling: weak heuristics do not permanently exclude unusual stories.
-        if(selected<budget)for(Map<String,Object>m:eligible){
+        int explored=0;
+        for(Map<String,Object>m:low){
+            if(explored>=sample)break;
+            queueMemeInternal(m);explored++;selected++;
+        }
+        // Backfill any unused reserved slots without queuing a story twice.
+        for(Map<String,Object>m:high){
             if(selected>=budget)break;
-            if("QUEUED".equals(m.get("memeAnalysisStatus")))continue;
-            queueMemeInternal(m);selected++;
+            if(!"QUEUED".equals(m.get("memeAnalysisStatus"))){
+                queueMemeInternal(m);selected++;
+            }
         }
+        for(Map<String,Object>m:low){
+            if(selected>=budget)break;
+            if(!"QUEUED".equals(m.get("memeAnalysisStatus"))){
+                queueMemeInternal(m);selected++;
+            }
+        }
+        return selected;
     }
     private void queueMemeInternal(Map<String,Object>m){
         m.put("memeAnalysisStatus","QUEUED");
@@ -652,7 +706,11 @@ public final class CommandCenterStore {
                 .filter(x->x.get("candidate") instanceof Map<?,?>)
                 .filter(x->{try{String at=String.valueOf(x.getOrDefault("memeRetryNotBefore",""));
                     return at.isBlank()||!Instant.parse(at).isAfter(now);}catch(Exception e){return true;}})
-                .sorted(Comparator.comparingInt((Map<String,Object>x)->integer(x.get("memePrefilterScore"))).reversed())
+                // Process established queue order instead of starving earlier
+                // analyses whenever a newer high-prefilter candidate arrives.
+                .sorted(Comparator
+                        .comparing((Map<String,Object>x)->String.valueOf(x.getOrDefault("memeAnalysisQueuedAt","")))
+                        .thenComparing(x->String.valueOf(x.getOrDefault("id",""))))
                 .findFirst();
         if(next.isEmpty())return null;
         Map<String,Object>m=next.get();
@@ -1040,10 +1098,25 @@ public final class CommandCenterStore {
         counts.put("biasAnalyzing",stories.values().stream().filter(x->"ANALYZING".equals(x.get("biasAnalysisStatus"))).count());
         counts.put("biasComplete",stories.values().stream().filter(x->"COMPLETE".equals(x.get("biasAnalysisStatus"))).count());
         counts.put("memeWorthy",stories.values().stream().filter(this::memeWorthy).count());
+        // Cheap current-window funnel; available even from includeStories=false.
+        Instant memeRecentCutoff=Instant.now().minus(Duration.ofHours(memeRecentLookbackHours));
+        List<Map<String,Object>>recentMemes=stories.values().stream()
+                .filter(x->x.get("candidate") instanceof Map<?,?>)
+                .filter(x->withinBoardAge(x,memeRecentCutoff)).toList();
+        counts.put("memeRecentFound",recentMemes.size());
+        counts.put("memeRecentAnalyzed",recentMemes.stream().filter(x->"COMPLETE".equals(x.get("memeAnalysisStatus"))
+                &&Objects.equals(x.get("memeAnalyzedInputHash"),x.get("memeAnalysisInputHash"))).count());
+        counts.put("memeRecentQueued",recentMemes.stream().filter(x->Set.of("QUEUED","ANALYZING")
+                .contains(String.valueOf(x.get("memeAnalysisStatus")))).count());
+        counts.put("memeRecentUnscored",recentMemes.stream().filter(x->Set.of("NOT_SCORED","STALE")
+                .contains(String.valueOf(x.get("memeAnalysisStatus")))).count());
+        counts.put("memeRecentFailed",recentMemes.stream()
+                .filter(x->"FAILED".equals(x.get("memeAnalysisStatus"))).count());
+        counts.put("memeRecentWorthy",recentMemes.stream().filter(this::memeWorthy).count());
         for(String status:List.of("QUEUED","ANALYZING","COMPLETE","FAILED"))
             counts.put("meme"+status.charAt(0)+status.substring(1).toLowerCase(Locale.ROOT),
                     stories.values().stream().filter(x->status.equals(x.get("memeAnalysisStatus"))).count());
-        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
+        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeRecentLookbackHours",memeRecentLookbackHours);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
     }
 
 
