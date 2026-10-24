@@ -43,6 +43,7 @@ public final class CommandCenterAssistant {
     private final OllamaClient ollama;
     private final String model;
     private final List<Map<String,Object>>history=new ArrayList<>();
+    private boolean historyWritable=true;
 
     public CommandCenterAssistant(Path root,NewsConfig cfg,CommandCenterStore store)throws IOException{
         this.root=root.toAbsolutePath().normalize();
@@ -69,8 +70,19 @@ public final class CommandCenterAssistant {
                     }
                 trimHistory();
             }catch(Exception e){
-                System.err.println("Assistant history unreadable; preserving file without overwrite: "+e.getClass().getSimpleName());
-                throw new IOException("Could not read assistant history; repair or backup data file",e);
+                // A damaged chat JSON must NEVER stop production or silently
+                // erase the operator's previous conversation.
+                history.clear();
+                Path backup=historyPath.resolveSibling(historyPath.getFileName()+
+                        ".invalid-"+System.currentTimeMillis());
+                try{
+                    Files.move(historyPath,backup);
+                    System.err.println("Assistant history was corrupt; preserved at "+backup.getFileName());
+                }catch(IOException backupFailure){
+                    historyWritable=false;
+                    System.err.println("Assistant history unreadable and could not be backed up. "+
+                            "Chat saving is disabled until the file is repaired.");
+                }
             }
         }
     }
@@ -154,6 +166,7 @@ Output JSON ONLY: {"answer":"your helpful response here"}.
         while(history.size()>MAX_HISTORY)history.remove(0);
     }
     private void save()throws IOException{
+        if(!historyWritable)throw new IOException("Saved chat history unavailable; repair or back up the original data file.");
         Json.write(historyPath,Map.of("schemaVersion",1,"messages",history));
     }
 
