@@ -310,3 +310,49 @@ main {position:relative;z-index:1;padding:22px clamp(10px,1.8vw,28px) 30px;max-w
 .memeSources{margin-top:10px;color:#a7b2bd;overflow-wrap:anywhere}
 .memeSources a{color:#79c4e3;margin-right:8px;text-decoration:underline}
 .memeActions{margin-top:12px;display:flex;gap:6px;flex-wrap:wrap}
+
+
+/* CH-07: local on-device Ollama copilot, matching the existing dark operator UI. */
+.assistantPanel{min-width:0}
+.assistantIntro{margin:14px 17px 10px;max-width:92ch;font-size:12px;line-height:1.65;color:var(--muted)}
+.assistantMessages{margin:8px 15px 0;min-height:180px;max-height:520px;overflow:auto;
+  padding:15px;display:flex;flex-direction:column;gap:11px;
+  border:1px solid rgba(245,178,70,.2);background:rgba(0,0,0,.36);scrollbar-width:thin}
+.assistantEmpty{color:var(--muted);font-size:12px;padding:24px 12px;text-align:center}
+.assistantBubble{max-width:min(92%,870px);padding:12px 14px;border-radius:5px;
+  border:1px solid rgba(245,178,70,.25);background:rgba(31,35,30,.78)}
+.assistantUser{align-self:flex-end;border-color:rgba(95,190,160,.36);background:rgba(8,39,32,.72)}
+.assistantBot{align-self:flex-start}
+.assistantBubbleHead{font-size:10px;letter-spacing:.07em;font-weight:700;
+  color:#e5bd79;margin-bottom:8px}
+.assistantUser .assistantBubbleHead{color:#8dd7b9}
+.assistantBubbleBody{font-size:13px;line-height:1.6;white-space:pre-wrap;
+  overflow-wrap:anywhere;color:var(--text)}
+.assistantComposer{padding:14px 15px 10px;display:flex;flex-direction:column;gap:8px}
+.assistantLabel,.assistantPromptActions label{color:#e5bd79;font-size:11px;
+  letter-spacing:.09em;font-weight:700}
+#assistantInput{width:100%;box-sizing:border-box;min-height:83px;resize:vertical;
+  border:1px solid rgba(245,178,70,.35);border-radius:4px;background:rgba(0,0,0,.46);
+  color:var(--text);padding:12px;font:inherit;font-size:13px;line-height:1.5}
+#assistantInput:focus{outline:2px solid rgba(245,178,70,.5);outline-offset:2px}
+.assistantActions{display:flex;align-items:center;gap:9px;justify-content:flex-end;flex-wrap:wrap}
+#assistantStatus{font-size:11px;color:var(--muted);margin-right:auto}
+#assistantStatus.assistantError{color:#ec9292}
+.assistantActions button:disabled{opacity:.48;cursor:progress}
+.assistantPromptLibrary{margin:0 15px 15px;border:1px solid rgba(245,178,70,.28);
+  padding:12px 14px;color:var(--text)}
+.assistantPromptLibrary summary{cursor:pointer;font-size:12px;letter-spacing:.08em;
+  color:#e5bd79;font-weight:700}
+.assistantPromptActions{display:flex;flex-direction:column;gap:7px;margin-top:13px}
+#assistantPromptSelect{max-width:100%;background:#091009;color:var(--text);
+  border:1px solid rgba(245,178,70,.42);padding:9px;font:inherit;font-size:12px}
+#assistantPromptNote{font-size:11px;color:var(--muted);line-height:1.5}
+.assistantPromptSource{white-space:pre;overflow:auto;max-height:450px;
+  background:rgba(0,0,0,.5);border:1px solid rgba(245,178,70,.15);
+  font:11px/1.6 Consolas,monospace;padding:12px;tab-size:4}
+@media(max-width:680px){
+  .assistantMessages{max-height:460px;padding:9px;margin-left:8px;margin-right:8px}
+  .assistantBubble{max-width:95%}
+  .assistantComposer{padding:12px 8px}
+  .assistantPromptLibrary{margin-left:8px;margin-right:8px}
+}

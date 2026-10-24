@@ -40,6 +40,7 @@ public final class SelfTest {
         testCommandCenterQueue(a);
         testStoryBoardPagination();
         testStoryBoardApi(root);
+        testCommandCenterAssistant();
         testCommandCenterMediaReporting(root,a);
         testCommandCenterLeaseRecovery(a);
         testPublisherBiasRegistry(root);
@@ -70,6 +71,83 @@ public final class SelfTest {
     }
 
 
+
+    private void testCommandCenterAssistant()throws Exception{
+        Path root=Files.createTempDirectory("anr-ops-chat-test");
+        Path script=root.resolve("src/autonewsroller/script/MemeScriptGenerator.java");
+        Files.createDirectories(script.getParent());
+        Files.writeString(script,"MOCK MEME SCRIPT SOURCE // testing trusted prompt library");
+        NewsConfig cfg=NewsConfig.load(root);
+        AtomicInteger calls=new AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<String>last=new java.util.concurrent.atomic.AtomicReference<>("");
+        HttpServer local=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        local.createContext("/api/generate",x->{
+            calls.incrementAndGet();
+            last.set(new String(x.getRequestBody().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8));
+            byte[]bytes=Json.stringify(Map.of("response",Json.stringify(Map.of(
+                    "answer","The current job is queued. This is a mock response.")),
+                    "done_reason","stop")).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            x.getResponseHeaders().set("Content-Type","application/json");
+            x.sendResponseHeaders(200,bytes.length);
+            try(OutputStream output=x.getResponseBody()){output.write(bytes);}
+        });
+        local.start();
+        try{
+            cfg.set("commandCenterAssistantOllamaUrl",
+                    "http://127.0.0.1:"+local.getAddress().getPort()+"/api/generate");
+            cfg.set("commandCenterAssistantModel","test-ops-llm");
+            var store=new CommandCenterStore(root.resolve("data/state.json"),
+                    BiasRegistry.load(root.resolve("config/bias.json")),false,.68,12,e->{});
+            Instant now=Instant.now();
+            Article article=new Article("ops-article","Local Wire",
+                    "Unexpected novelty signs","https://fixture.example/signs",
+                    "https://fixture.example/signs",now,now,"","local",
+                    "City commissioned novelty signs and published a public statement.",
+                    "The city ordered unusual signs to place at the plaza.","en",3,false);
+            StoryCluster cluster=new StoryCluster("ops-story","Unexpected novelty signs",
+                    List.of(article),Set.of("City"),"ops-fingerprint");
+            FactPackage facts=new FactPackage(cluster.id,cluster.topic,cluster.topic,
+                    List.of(new FactClaim(article.title(),List.of(article.url()),.7,false)),
+                    List.of(),List.of(Map.of("publisher",article.publisher())),1,1,.6,false);
+            store.applyDiscovery(new NewsPipeline.DiscoveryResult(
+                    List.of(new NewsPipeline.DiscoveryItem(cluster,facts,false,
+                            "one source",.25,false)),1,1,0,1,1,1,1,now));
+            store.action(cluster.id,"MAKE","mock-ops-queued");
+            var assistant=new CommandCenterAssistant(root,cfg,store);
+            ok(assistant.history().get("messages") instanceof List<?> l&&l.isEmpty(),
+                    "assistant starts with empty saved conversation");
+            ok(assistant.promptCatalog().stream().anyMatch(m->"meme-script".equals(m.get("id")))
+                    &&assistant.promptSource("meme-script").get("text").toString().contains("MOCK MEME"),
+                    "assistant loads allowlisted pipeline source templates");
+            try{
+                assistant.promptSource("../../data/state.json");
+                throw new AssertionError("Arbitrary file path accepted by prompt API");
+            }catch(IllegalArgumentException expected){
+                ok(true,"assistant prompt library refuses untrusted file paths");
+            }
+            var answer=assistant.ask("What is queued? Show the meme script prompts.");
+            ok(answer.get("answer").toString().contains("queued")&&calls.get()==1,
+                    "mock Ollama provides a structured local chat answer");
+            ok(last.get().contains("test-ops-llm")&&last.get().contains("Unexpected novelty signs")
+                    &&last.get().contains("mock-ops-queued")==false,
+                    "Ollama request gets model and current bounded operations context");
+            ok(last.get().contains("MOCK MEME SCRIPT SOURCE")&&last.get().contains("UNTRUSTED"),
+                    "local prompt templates are included as non-authoritative source context");
+            ok(Files.isRegularFile(root.resolve("data/command_center_assistant_history.json")),
+                    "chat turns are persisted atomically in local data storage");
+            var restored=new CommandCenterAssistant(root,cfg,store);
+            ok(((List<?>)restored.history().get("messages")).size()==2,
+                    "persisted conversation restores across Command Center restart");
+            restored.ask("What changed?");
+            ok(calls.get()==2&&last.get().contains("current job is queued"),
+                    "subsequent turn reuses previous conversation alongside live context");
+            restored.clear();
+            ok(((List<?>)new CommandCenterAssistant(root,cfg,store).history().get("messages")).isEmpty(),
+                    "clear chat removes saved conversation without deleting pipeline state");
+            ok("QUEUED".equals(store.storyDetail(cluster.id).get("status")),
+                    "chat and reset never mutate job state");
+        }finally{local.stop(0);}
+    }
 
     private void testMemeWorthinessEngine(Path root)throws Exception{
         Map<String,Object>dims=Map.of("hook",10,"absurdity",9,"visual",9,"relatability",8,

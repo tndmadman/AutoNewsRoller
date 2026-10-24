@@ -23,6 +23,7 @@ public final class CommandCenterServer {
     private final int requestedPort,scanMinutes;
     private final boolean scanOnStart;
     private final CommandCenterStore store;
+    private final CommandCenterAssistant assistant;
     private final ScheduledExecutorService scheduler=Executors.newScheduledThreadPool(2);
     private final CopyOnWriteArrayList<BlockingQueue<String>>subscribers=new CopyOnWriteArrayList<>();
     private final AtomicBoolean scanInFlight=new AtomicBoolean();
@@ -47,6 +48,8 @@ public final class CommandCenterServer {
                 cfg.getBool("commandCenterPairFramingVideos",true)
         );
         this.store.configureMeme(cfg);
+        try{this.assistant=new CommandCenterAssistant(root,cfg,this.store);}
+        catch(IOException e){throw new IllegalStateException("Unable to load saved assistant conversation",e);}
     }
 
     public int start() throws Exception {
@@ -55,6 +58,7 @@ public final class CommandCenterServer {
         server.createContext("/api/health",this::health);
         server.createContext("/api/state",this::state);
         server.createContext("/api/board/stories",this::boardStories);
+        server.createContext("/api/assistant",this::assistant);
         server.createContext("/api/events",this::events);
         server.createContext("/api/scan",this::scanNow);
         server.createContext("/api/settings/auto-video",this::autoVideoSetting);
@@ -130,6 +134,57 @@ public final class CommandCenterServer {
     private static int boardInt(String raw,int fallback){
         if(raw==null||raw.isBlank())return fallback;
         try{return Integer.parseInt(raw);}catch(NumberFormatException e){throw new IllegalArgumentException("Invalid integer",e);}
+    }
+
+    private void assistant(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        // The assistant can show real production state and prompt source.
+        // Unlike the public dashboard, it may not run open to the LAN.
+        if(!isLoopbackHost(host)&&token.isBlank()){
+            json(x,403,Map.of("error","Set AUTONEWS_TOKEN before enabling LAN assistant access."));
+            return;
+        }
+        String method=x.getRequestMethod().toUpperCase(Locale.ROOT);
+        String suffix=x.getRequestURI().getPath().substring("/api/assistant".length());
+        try{
+            switch(suffix){
+                case "", "/"->{
+                    if(!"GET".equals(method)){method(x);return;}
+                    json(x,200,assistant.history());
+                }
+                case "/chat"->{
+                    if(!"POST".equals(method)){method(x);return;}
+                    byte[]bytes=x.getRequestBody().readNBytes(16_385);
+                    if(bytes.length>16_384){json(x,413,Map.of("error","Message too large"));return;}
+                    Map<String,Object>body;
+                    try{body=Json.object(Json.parse(new String(bytes,StandardCharsets.UTF_8)));}
+                    catch(Exception e){json(x,400,Map.of("error","Invalid message JSON"));return;}
+                    if(!(body.get("message") instanceof String)){
+                        json(x,400,Map.of("error","message string required"));return;
+                    }
+                    json(x,200,assistant.ask((String)body.get("message")));
+                }
+                case "/history"->{
+                    if(!"DELETE".equals(method)){method(x);return;}
+                    assistant.clear();json(x,200,Map.of("ok",true,"messages",List.of()));
+                }
+                case "/prompts"->{
+                    if(!"GET".equals(method)){method(x);return;}
+                    json(x,200,Map.of("prompts",assistant.promptCatalog(),
+                            "note","Static source templates are not fully interpolated per-story Ollama requests."));
+                }
+                case "/prompt"->{
+                    if(!"GET".equals(method)){method(x);return;}
+                    json(x,200,assistant.promptSource(query(x.getRequestURI()).getOrDefault("id","")));
+                }
+                default->json(x,404,Map.of("error","Unknown assistant operation"));
+            }
+        }catch(IllegalArgumentException e){json(x,400,Map.of("error",safe(e.getMessage())));}
+        catch(IOException e){json(x,500,Map.of("error","Assistant storage/source unavailable; check logs."));}
+        catch(Exception e){
+            System.err.println("Command Center assistant error: "+e.getClass().getSimpleName()+" "+safe(e.getMessage()));
+            json(x,502,Map.of("error","Local Ollama assistant unavailable or returned an invalid response. Verify the configured Ollama endpoint and model."));
+        }
     }
 
     private void scanNow(HttpExchange x)throws IOException{

@@ -4,7 +4,7 @@ const fs=require("node:fs");
 const path=require("node:path");
 const {execFileSync}=require("node:child_process");
 const ROOT=path.resolve(__dirname,"../..");
-const files={"": "index.html","/":"index.html","/app.js":"app.js","/styles.css":"styles.css"};
+const files={"": "index.html","/":"index.html","/app.js":"app.js","/assistant.js":"assistant.js","/styles.css":"styles.css"};
 function fixture(appOverride=null){
   const story={id:"story-1",topic:"Selected text must survive updates and worker activity",status:"VERIFIED",stage:"DISCOVERED",progress:12,score:.9,verified:true,worthy:true,
     latestPublishedAt:new Date().toISOString(),publishers:["Associated Press","Reuters"],category:"local",politicalCandidate:false,independentSources:1,sourceMix:{left:0,center:2,right:0,unknown:0}};
@@ -14,13 +14,35 @@ function fixture(appOverride=null){
     feeds:Array.from({length:90},(_,i)=>({url:"https://feed.test/rss/"+i,name:"Publisher "+i,category:"general",status:"OK",entries:3})),
     counts:{stories:1,worthy:1,verified:1,feedsOk:90,feedsFailed:0,workersOnline:5,queued:0,producing:0,complete:1,videoVersions:1,toPost:1,uploaded:0,scrapped:0},
     autoQueue:false,autoThreshold:.75,scanning:false};
-  const clients=new Set(),posts=[];
+  const clients=new Set(),posts=[],assistantMessages=[
+    {role:"user",content:"What is queued?",at:new Date().toISOString()},
+    {role:"assistant",content:"One sample story in the current queue.",at:new Date().toISOString()}
+  ];
   let getDelay=0,boardDelay=0,postDelay=0,getCount=0,boardCount=0,postStatus=200,dropResponse=false;
   const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,"http://127.0.0.1");
     if(url.pathname==="/api/events"){
       res.writeHead(200,{"Content-Type":"text/event-stream","Cache-Control":"no-cache","Connection":"keep-alive"});
       res.write('data: {"type":"connected"}\n\n');clients.add(res);req.on("close",()=>clients.delete(res));return;
+    }
+    if(url.pathname==="/api/assistant"&&req.method==="GET"){
+      res.writeHead(200,{"Content-Type":"application/json"});
+      res.end(JSON.stringify({model:"fixture-ollama",messages:assistantMessages,persisted:true,readOnly:true}));return;
+    }
+    if(url.pathname==="/api/assistant/prompts"&&req.method==="GET"){
+      res.writeHead(200,{"Content-Type":"application/json"});
+      res.end(JSON.stringify({prompts:[{id:"meme-hook",label:"Meme hooks",path:"src/autonewsroller/script/MemeHookPlanner.java"}]}));return;
+    }
+    if(url.pathname==="/api/assistant/prompt"&&req.method==="GET"){
+      res.writeHead(200,{"Content-Type":"application/json"});
+      res.end(JSON.stringify({path:"src/autonewsroller/script/MemeHookPlanner.java",
+        text:"You are a comedy hook planner. Source <img src=x onerror=alert(1)>",
+        note:"Source template; not exact runtime prompt.",truncated:false}));return;
+    }
+    if(url.pathname==="/api/assistant/history"&&req.method==="DELETE"){
+      assistantMessages.splice(0);
+      res.writeHead(200,{"Content-Type":"application/json"});
+      res.end(JSON.stringify({ok:true,messages:[]}));return;
     }
     if(url.pathname==="/api/state"){
       getCount++;
@@ -84,6 +106,14 @@ function fixture(appOverride=null){
       let raw="";for await(const chunk of req)raw+=chunk;
       const body=raw?JSON.parse(raw):{};
       posts.push({path:url.pathname,body});
+      if(url.pathname==="/api/assistant/chat"){
+        const at=new Date().toISOString();
+        assistantMessages.push({role:"user",content:body.message,at},
+          {role:"assistant",content:"CURRENT: 1 tracked story. <script>alert(1)</script>",at});
+        res.writeHead(200,{"Content-Type":"application/json"});
+        res.end(JSON.stringify({model:"fixture-ollama",answer:assistantMessages.at(-1).content,
+          at,messages:assistantMessages.length,readOnly:true}));return;
+      }
       if(postStatus!==200){
         const status=postStatus, response=JSON.stringify({error:status===409?"Job is already producing":status===500?"State could not be saved":"authentication required"});
         setTimeout(()=>{if(!res.writableEnded){res.writeHead(status,{"Content-Type":"application/json"});res.end(response)}},postDelay);
@@ -136,6 +166,32 @@ function fixture(appOverride=null){
     async start(){await new Promise(ok=>server.listen(0,"127.0.0.1",ok));return "http://127.0.0.1:"+server.address().port},
     async stop(){for(const client of clients)client.destroy();await new Promise(ok=>server.close(ok))}};
 }
+test("local Ollama chat restores history, escapes untrusted answers, inspects prompts and clears safely",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator("#assistantMessages .assistantBubble")).toHaveCount(2);
+    await expect(page.locator("#assistantModel")).toContainText("fixture-ollama");
+    await page.locator("#assistantInput").fill("What is being made?");
+    await page.locator("#assistantSend").click();
+    await expect(page.locator("#assistantMessages .assistantBubble")).toHaveCount(4);
+    await expect(page.locator("#assistantMessages")).toContainText("CURRENT: 1 tracked story.");
+    await expect(page.locator("#assistantMessages script")).toHaveCount(0);
+    expect(f.posts.filter(x=>x.path==="/api/assistant/chat")).toHaveLength(1);
+    await page.reload();
+    await expect(page.locator("#assistantMessages .assistantBubble")).toHaveCount(4);
+    await page.locator(".assistantPromptLibrary summary").click();
+    await page.locator("#assistantPromptSelect").selectOption("meme-hook");
+    await expect(page.locator("#assistantPromptSource")).toContainText("comedy hook planner");
+    await expect(page.locator("#assistantPromptSource img")).toHaveCount(0);
+    page.on("dialog",dialog=>dialog.accept());
+    await page.locator("#assistantClear").click();
+    await expect(page.locator("#assistantMessages .assistantBubble")).toHaveCount(0);
+    await page.reload();
+    await expect(page.locator("#assistantMessages .assistantBubble")).toHaveCount(0);
+  }finally{await f.stop();}
+});
+
 test("any one-source story can request framing exposure without publisher comparison",async({page})=>{
   const f=fixture(),url=await f.start();
   try{
