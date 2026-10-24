@@ -140,6 +140,33 @@
       </div>
     </section>
 
+    <section class="panel assistantPanel" id="assistantPanel">
+      <div class="panelTitle"><span>LOCAL OLLAMA / OPERATIONS CHAT / CH-07</span>
+        <small id="assistantModel">READ-ONLY · PERSISTENT HISTORY</small></div>
+      <p class="assistantIntro">Ask about current workers, queues, completed videos, failed jobs, meme scoring or the actual code prompts used by the generation pipelines. Live operational context is refreshed with every answer. This chat cannot change production state.</p>
+      <div id="assistantMessages" class="assistantMessages" role="log" aria-live="polite" aria-label="Ollama assistant conversation">
+        <p class="assistantEmpty">Loading saved local conversation…</p>
+      </div>
+      <form id="assistantForm" class="assistantComposer">
+        <label for="assistantInput" class="assistantLabel">YOUR MESSAGE</label>
+        <textarea id="assistantInput" rows="3" maxlength="4000" placeholder="What is being made right now? Why did the last meme fail? Which prompts generate visuals?" aria-label="Ask the local Ollama assistant"></textarea>
+        <div class="assistantActions">
+          <span id="assistantStatus" role="status" aria-live="polite">LOCAL / READ-ONLY</span>
+          <button id="assistantClear" type="button" class="btn ghost" title="Delete this saved conversation">CLEAR CHAT</button>
+          <button id="assistantSend" type="submit" class="btn primary">SEND TO OLLAMA</button>
+        </div>
+      </form>
+      <details class="assistantPromptLibrary">
+        <summary>PROMPT LIBRARY / REAL PIPELINE SOURCE</summary>
+        <div class="assistantPromptActions">
+          <label for="assistantPromptSelect">SOURCE TEMPLATE</label>
+          <select id="assistantPromptSelect" aria-label="View pipeline prompt source"><option value="">Loading sources…</option></select>
+        </div>
+        <p id="assistantPromptNote">Source files are static templates; some runtime system prompts also include dynamic story evidence and configuration.</p>
+        <pre id="assistantPromptSource" class="assistantPromptSource" tabindex="0" aria-label="Selected system prompt source code">Select a prompt to inspect its implementation.</pre>
+      </details>
+    </section>
+
     <section class="panel eventPanel">
       <div class="panelTitle"><span>EVENT CONSOLE / CH-06</span><small>SSE STREAM</small></div>
       <div id="eventLog" class="eventLog"></div>
@@ -148,5 +175,6 @@
 
   <div id="toast" class="toast"></div>
   <script src="/app.js"></script>
+  <script src="/assistant.js"></script>
 </body>
 </html>
