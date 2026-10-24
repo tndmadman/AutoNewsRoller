@@ -248,7 +248,7 @@ public final class SelfTest {
         for(int i=0;i<100;i++){
             boolean recent=i<80,low=i%2==0;
             String id=String.format(Locale.ROOT,"found-%03d",i);
-            String title=low?"Council publishes calendar": 
+            String title=low?"Bakery publishes calendar": 
                     "Unexpected bizarre mistake backfire: unusual absurd store accident instead";
             Instant published=now.minus(Duration.ofMinutes(recent?(i%180):600+i));
             Article article=new Article(id,"Fixture Publisher",title,
@@ -257,7 +257,7 @@ public final class SelfTest {
                     "and attributable reporting used only to test selection of meme analysis candidates.",
                     "The reporter independently confirmed that this local event occurred as described "+
                     "in the notice and documented the immediate response.","en",3,false);
-            StoryCluster cluster=new StoryCluster(id,title,List.of(article),Set.of("Council"),
+            StoryCluster cluster=new StoryCluster(id,title,List.of(article),Set.of("Bakery"),
                     "fixture-"+id);
             FactPackage facts=new FactPackage(id,title,title,
                     List.of(new FactClaim(title,List.of(article.url()),.6,false)),
@@ -308,6 +308,31 @@ public final class SelfTest {
                 "perpetual video queue no longer starves meme analysis jobs");
         ok(((Number)store.storyDetail(String.valueOf(third.get("jobId"))).get("score")).doubleValue()==.12,
                 "meme analysis of FOUND candidates is independent of WORTHY video score");
+
+        // Simulate an upgrade with an old backlog already queued. New fresh
+        // stories should claim first but older jobs must still get progress.
+        cfg.set("memeWorthinessMaxAnalysisPerScan","10");
+        cfg.set("memeWorthinessMaxPending","30");
+        CommandCenterStore upgraded=new CommandCenterStore(dir.resolve("rollout-state.json"),
+                BiasRegistry.load(dir.resolve("rollout-bias.json")),false,.68,12,e->{});
+        upgraded.configureMeme(cfg);
+        List<NewsPipeline.DiscoveryItem>oldItems=items.subList(80,100);
+        upgraded.applyDiscovery(new NewsPipeline.DiscoveryResult(oldItems,
+                20,20,0,20,20,20,20,now));
+        upgraded.applyDiscovery(discovery);
+        upgraded.heartbeat("meme-analysis-worker",Map.of("id","meme-analysis-worker",
+                "capabilities",List.of("meme_analysis_v1")));
+        List<String>claims=new ArrayList<>();
+        for(int i=0;i<5;i++){
+            Map<String,Object>claimed=upgraded.claim("meme-analysis-worker",Map.of());
+            ok(claimed!=null&&"MEME_ANALYSIS".equals(claimed.get("jobType")),
+                    "mixed-age meme backlog is claimable");
+            claims.add(String.valueOf(claimed.get("jobId")));
+        }
+        ok(claims.subList(0,4).stream().allMatch(id->Integer.parseInt(id.substring(6))<80),
+                "recent FOUND jobs bypass an existing older queue");
+        ok(Integer.parseInt(claims.get(4).substring(6))>=80,
+                "older queued meme jobs get a fairness turn after four recent claims");
     }
 
     private void testMemePipeline()throws Exception{
