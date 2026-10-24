@@ -16,13 +16,18 @@ fallback), local ComfyUI and FFmpeg/ffprobe. Updated workers advertise
 1. Existing RSS scanning, article enrichment and SourceVerifier gather attributable text.
 2. `MemeEvidenceBuilder` bounds article excerpts and facts, preserving source URLs,
    uncertainty and a source fingerprint. Content from web publishers is **untrusted data**.
-3. `MemeScriptGenerator` uses Ollama to brainstorm/select comedy angles, then calls
-   `MemeHookPlanner` to rank four or more fact-ID-grounded frame-zero caption/spoken
-   openings. The selected hook is locked into variable-length script generation
-   with cited fact IDs and explicit satirical visual descriptions. Use an ordinary safe fallback only for **dry runs**.
-4. `MemeScriptValidator` checks basic narration, first-hook brevity, cited fact ID
-   presence, generic filler, unsupported numerals and invented direct quotations. Satire is not proof; operators
-   still need human review for quotation fidelity, fairness and joke quality.
+3. `MemeScriptGenerator` asks local Ollama for specific comedy mechanisms:
+   expectation reversal, absurdity, ironic escalation, literal analogies and callbacks.
+   `MemeHookPlanner` proposes six hooks and rejects generic or source-unanchored hooks
+   even if Ollama assigns them a high score; the selected hook is locked into the script.
+4. `MemeScriptValidator` rejects repeated TTS lines, cliches, overlong narration
+   beats, missing early jokes, unsupported numbers and direct quotations.
+   A separate `MemeComedyReviewer` uses Ollama to rate the exact spoken lines,
+   excluding images and music, for instant hook impact, specificity, joke density,
+   final payoff, spoken flow, and factual integrity. Weak ratings cause a full script
+   revision and, if the opening is weak, a new hook concept before any TTS or images.
+   A passing review is recorded with the script metadata. Human editorial judgment
+   is still necessary; Ollama can misjudge humor.
 5. `MemeVisualPlanner` maps beat captions and descriptions to scene timing.
    `MemeCardRenderer` produces 9:16 cartoon-oriented cards, Java-rendered captions and
    a distinct **SATIRE / AI ILLUSTRATION** disclosure. Captions are not delegated to ComfyUI.
@@ -64,6 +69,8 @@ posting status, upload/scrap flags, Comfy image count and openable MP4.
 memePipelineEnabled=true
 commandCenterAutoMeme=false
 memeDurationHintSeconds=30
+memeComedyReviewEnabled=true
+memeComedyMinimumScore=7
 memeUseComfy=true
 memeRequireComfy=true
 memeComfyImages=3
@@ -96,9 +103,13 @@ Comfy checkpoint/seeds/image paths, the original synthesized sound identity and 
 auditing results. The controller counts both historic `comfyui-generated` and current
 `comfyui-generated-ai-illustration` image provenance types.
 
-Existing automatic retries and lease protections apply. Invalid Ollama JSON or scripts
-produce explicit stage errors, rather than fabricated success. Human review should check
-that outrageous satire does not become a defamatory claim or present AI art as evidence.
+Existing automatic retries and lease protections apply. Invalid Ollama JSON, weak
+spoken comedy, or unsafe scripts produce explicit stage errors instead of a bland video.
+The review adds a local Ollama call per attempted script; retries and renewed hook pitches
+may increase generation time. Set `memeComedyMinimumScore` from 1 to 10 (default 7),
+or use `memeComedyReviewEnabled=false` for diagnostics; the deterministic factual
+validator always remains active. Human review is still essential for humor, fairness
+and anything that could be mistaken for factual evidence.
 
 ## Validation
 

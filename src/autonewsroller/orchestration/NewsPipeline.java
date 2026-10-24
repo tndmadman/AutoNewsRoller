@@ -176,7 +176,9 @@ public final class NewsPipeline {
             if(!cfg.getBool("memePipelineEnabled",true))throw new IllegalStateException("Meme pipeline disabled");
             memeEvidence=new MemeEvidenceBuilder().build(c,fp);
             Json.write(slotDir.resolve("meme_evidence.json"),memeEvidence.toMap());
-            memeGenerator=new MemeScriptGenerator(oc,cfg.getInt("ollamaRetries",5));
+            memeGenerator=new MemeScriptGenerator(oc,cfg.getInt("ollamaRetries",5),
+                    cfg.getBool("memeComedyReviewEnabled",true),
+                    cfg.getInt("memeComedyMinimumScore",7));
         }
         PoliticalFramingEvidenceBuilder.Evidence evidence=null;
         PoliticalFramingScriptGenerator exposureGenerator=null;

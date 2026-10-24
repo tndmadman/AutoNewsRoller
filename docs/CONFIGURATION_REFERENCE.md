@@ -652,3 +652,12 @@ they must not be treated as confirmation of depicted facts.
 ## Independent meme-worthiness discovery
 
 New `memeWorthiness*` settings and their defaults are described in [MEME_WORTHINESS_ENGINE.md](MEME_WORTHINESS_ENGINE.md). This background RSS evaluation is separate from normal news ranking and does **not** enable automated meme production. The `commandCenterAutoMeme=false` setting is reserved and currently does not queue videos.
+
+## Meme script comedy quality
+
+| Setting | Default | Effect |
+|---|---|---|
+| `memeComedyReviewEnabled` | `true` | Uses local Ollama to evaluate TTS-spoken joke quality before creating audio or ComfyUI imagery; weak drafts are revised |
+| `memeComedyMinimumScore` | `7` | Minimum 1–10 ratings for hook impact, joke specificity, density and payoff; spoken delivery and factual integrity have separate safety floors |
+
+The production meme script still uses the ordinary `ollamaRetries` budget for revisions. This evaluator does not affect independent pre-production meme-worthiness ranking or standard news scripts. Set the review toggle to false for diagnostic comparisons only; source-grounding and factual script checks stay active.
