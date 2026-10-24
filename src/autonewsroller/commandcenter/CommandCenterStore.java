@@ -662,7 +662,7 @@ public final class CommandCenterStore {
         List<Map<String,Object>>low=pool.stream()
                 .filter(x->integer(x.get("memePrefilterScore"))<memePrefilterMinimum)
                 .sorted(explore).toList();
-        int sample=low.isEmpty()?0:Math.min(budget,Math.max(1,
+        int sample=low.isEmpty()||memeExplorationPercent==0?0:Math.min(budget,Math.max(1,
                 (int)Math.ceil(budget*memeExplorationPercent/100.0)));
         int selected=0;
         for(Map<String,Object>m:high){
