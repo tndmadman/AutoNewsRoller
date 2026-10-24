@@ -118,9 +118,10 @@ public final class CommandCenterServer {
             int pageSize=boardInt(q.getOrDefault("pageSize","25"),25);
             int ageHours=boardInt(q.getOrDefault("ageHours","0"),0);
             String status=q.getOrDefault("status","ALL").trim().toUpperCase(Locale.ROOT);
+            String memeFilter=q.getOrDefault("memeFilter","ALL_ANALYZED").trim().toUpperCase(Locale.ROOT);
             String search=q.getOrDefault("search","").trim();
             if(search.length()>500){json(x,400,Map.of("error","search is too long"));return;}
-            json(x,200,store.boardStories(page,pageSize,status,search,ageHours));
+            json(x,200,store.boardStories(page,pageSize,status,search,ageHours,memeFilter));
         }catch(IllegalArgumentException e){
             json(x,400,Map.of("error","invalid board query parameters"));
         }
