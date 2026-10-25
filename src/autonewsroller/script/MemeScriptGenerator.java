@@ -158,7 +158,8 @@ Do not modify the approved opening or try to output it as a new beat.
                 if(attempt<retries&&ex instanceof MemeComedyReviewer.WeakComedyException weak
                         &&weak.weakHook()){
                     try{
-                        selectedHook=planner.select(evidence,anglePlan,weak.getMessage());
+                        selectedHook=planner.select(evidence,anglePlan,weak.getMessage(),
+                                selectedHook.caption());
                         validateSelectedHook(selectedHook,evidence);
                         recordHook(diagnostics,selectedHook);
                         hookReplaced=true;
