@@ -1579,6 +1579,7 @@ public final class CommandCenterStore {
                 ||lower.contains("meme_hook_failure")
                 ||lower.contains("meme_evidence_missing")
                 ||lower.contains("meme_evidence_failure")
+                ||lower.contains("meme_editorial_review_required")
                 ||lower.contains("framing_script_validation_failed")
                 ||lower.contains("framing_script_format_failed")
                 ||lower.contains("framing_ollama_output_limit")
@@ -1590,6 +1591,7 @@ public final class CommandCenterStore {
         String lower=message==null?"":message.toLowerCase(Locale.ROOT);
         if(lower.contains("meme_script_validation_failed"))return "MEME_SCRIPT_VALIDATION_FAILURE";
         if(lower.contains("meme_hook_failure"))return "MEME_HOOK_FAILURE";
+        if(lower.contains("meme_editorial_review_required"))return "MEME_EDITORIAL_REVIEW_REQUIRED";
         if(lower.contains("meme_evidence_missing")||lower.contains("meme_evidence_failure"))
             return "MEME_EVIDENCE_FAILURE";
         if(lower.contains("ollama_failure"))return "OLLAMA_FAILURE";
