@@ -55,6 +55,8 @@ public final class SelfTest {
                 "victim-centered fatality is held from meme production");
         ok(!MemeEditorialGuard.reason("Football manager grieving after father's death","").isBlank(),
                 "grief-centered story is held before video generation");
+        ok(MemeEditorialGuard.reason("Phone battery died during demo","Device stopped working").isBlank(),
+                "isolated death idiom does not overblock unrelated meme story");
         ok(MemeEditorialGuard.reason("New death metal album announced","A music review").isBlank(),
                 "unrelated metaphor is not treated as victim-centered tragedy");
         ok(MemeEditorialGuard.reason("City buys novelty signs","Signs were unveiled today").isBlank(),
