@@ -45,6 +45,7 @@ public final class SelfTest {
         testCommandCenterLeaseRecovery(a);
         testPublisherBiasRegistry(root);
         testPoliticalAnalysisQueue(a);
+        testPoliticalAnalysisTruncationRecovery();
         testEnrichedFramingSnapshot();
         testSelectedArticleEnrichment();
         testPoliticalExposureMode();
@@ -770,6 +771,74 @@ public final class SelfTest {
                     "schema-constrained output repairs a missing scene prompt once and validates");
             ok("PASS".equals(Json.object(fixed.hook().get("comedyReview")).get("verdict")),
                     "structural repair still undergoes independent comedy review");
+        }finally{server.stop(0);}
+    }
+
+    /** Mock Ollama length stop on first request; verify bounded budget escalation. */
+    private void testPoliticalAnalysisTruncationRecovery()throws Exception{
+        Path dir=Files.createTempDirectory("anr-political-budget-");
+        AtomicInteger calls=new AtomicInteger();
+        List<Integer>budgets=new ArrayList<>();
+        java.util.concurrent.atomic.AtomicBoolean alwaysTruncate=new java.util.concurrent.atomic.AtomicBoolean(false);
+        Article article=new Article("analysis-budget-1","Fixture Wire",
+                "City council debates election rules","https://fixture.example/budget",
+                "https://fixture.example/budget",Instant.now(),Instant.now(),"","politics",
+                "Council members debated changes to the voting rules.",
+                "The council debated the proposed changes before a public meeting.",
+                "en",2,false);
+        StoryCluster cluster=new StoryCluster("political-budget-story",article.title(),
+                List.of(article),Set.of("City Council"),"budget-fingerprint");
+        HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/api/generate",exchange->{
+            int call=calls.incrementAndGet();
+            try{
+                Map<String,Object>request=Json.object(Json.parse(new String(
+                        exchange.getRequestBody().readAllBytes(),
+                        java.nio.charset.StandardCharsets.UTF_8)));
+                int budget=((Number)Json.object(request.get("options")).get("num_predict")).intValue();
+                synchronized(budgets){budgets.add(budget);}
+                Map<String,Object>response;
+                if(call==1||alwaysTruncate.get()){
+                    response=Map.of("response","{}","done_reason","length");
+                }else{
+                    Map<String,Object>weights=Map.of("left",0.1,"center",0.8,"right",0.1);
+                    Map<String,Object>analysis=new LinkedHashMap<>();
+                    analysis.put("politicalRelevance",0.9);
+                    analysis.put("overallClassification","center");analysis.put("overallConfidence",0.8);
+                    analysis.put("overallWeights",weights);analysis.put("summary","Mostly neutral council coverage");
+                    analysis.put("articles",List.of(Map.of("id",article.id(),
+                            "classification","center","confidence",0.8,"weights",weights,
+                            "rationale","Descriptive coverage of the council debate",
+                            "signals",List.of("Neutral wording"))));
+                    response=Map.of("response",Json.stringify(analysis),"done_reason","stop");
+                }
+                byte[]bytes=Json.stringify(response).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200,bytes.length);
+                try(OutputStream out=exchange.getResponseBody()){out.write(bytes);}
+            }catch(Exception e){exchange.sendResponseHeaders(500,-1);}
+            finally{exchange.close();}
+        });
+        server.start();
+        try{
+            NewsConfig cfg=NewsConfig.load(dir);
+            cfg.set("politicalAnalysisOllamaUrl","http://127.0.0.1:"+
+                    server.getAddress().getPort()+"/api/generate");
+            cfg.set("politicalAnalysisMaxOutputTokens","3600");
+            PoliticalFramingAnalyzer analyzer=new PoliticalFramingAnalyzer(dir,cfg);
+            Map<String,Object>result=analyzer.analyze(cluster);
+            ok(calls.get()==2&&budgets.get(0)>=2200&&budgets.get(1)==3600
+                    &&"center".equals(result.get("overallClassification"))
+                    &&((Number)result.get("articlesAnalyzed")).intValue()==1,
+                    "framing analysis retries token truncation at larger dedicated budget");
+            calls.set(0);budgets.clear();alwaysTruncate.set(true);
+            try{
+                analyzer.analyze(cluster);
+                throw new AssertionError("Persistent truncation accepted");
+            }catch(IllegalStateException expected){
+                ok(expected.getMessage().contains("POLITICAL_ANALYSIS_OUTPUT_LIMIT")
+                        &&calls.get()==2,
+                        "persistent political analysis output limit produces bounded failure");
+            }
         }finally{server.stop(0);}
     }
 
