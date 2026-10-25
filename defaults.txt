@@ -135,6 +135,9 @@ memeDurationHintSeconds=30
 # Weak jokes are rewritten (up to the existing ollamaRetries budget), not sent to video.
 memeComedyReviewEnabled=true
 memeComedyMinimumScore=7
+# Keep comedy review, but do not discard source-validated videos solely on subjective scoring.
+# Failed comedy is preserved in diagnostics and requires editorial review before publishing.
+memeComedyStrictGate=false
 memeUseComfy=true
 memeRequireComfy=true
 memeComfyImages=3
