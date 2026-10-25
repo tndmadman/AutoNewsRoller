@@ -856,3 +856,41 @@ test("meme discovery rail displays independent scores, safely escaped details an
     await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/analyze-meme")).length).toBe(1);
   }finally{await f.stop();}
 });
+
+
+test("terminal meme script failure is explicit and historical error does not masquerade as active retry",async({page})=>{
+  const f=fixture();
+  f.story.productionMode="MEME_RAGEBAIT";
+  f.story.entryMode="MEME_RAGEBAIT";
+  f.story.status="FAILED";f.story.stage="FAILED";f.story.progress=0;
+  f.story.failureType="MEME_SCRIPT_VALIDATION_FAILURE";
+  f.story.failureCount=1;
+  f.story.lastFailure="MEME_SCRIPT_VALIDATION_FAILED: Invalid continuation beats <script>window.__memeXss=1</script>";
+  f.story.error=f.story.lastFailure;
+  f.story.productionAttempts=[{event:"FAILED",attempt:1,stage:"SCRIPT",
+    worker:"gpu-worker",failureType:"MEME_SCRIPT_VALIDATION_FAILURE",
+    error:f.story.lastFailure,at:new Date().toISOString()}];
+  const url=await f.start();
+  try{
+    await page.goto(url);
+    const card=page.locator("#stories .storyCard");
+    await expect(card).toHaveCount(1);
+    await expect(card.locator(".statusTag")).toContainText("FAILED");
+    await expect(card.locator(".failurePanel")).toContainText("MEME_SCRIPT_VALIDATION_FAILURE");
+    await expect(card.locator(".failurePanel")).toContainText("Invalid continuation beats");
+    await expect(card.locator(".failurePanel script")).toHaveCount(0);
+    expect(await page.evaluate(()=>window.__memeXss||false)).toBe(false);
+    await card.locator("details.attemptHistory summary").click();
+    await expect(card.locator(".attemptRow")).toContainText("gpu-worker");
+
+    f.story.status="QUEUED";f.story.stage="QUEUED";f.story.progress=15;
+    f.story.detail="Previous script attempt failed; retry 1/3 queued";
+    f.story.retryNotBefore=new Date(Date.now()+30000).toISOString();
+    delete f.story.error;
+    f.event("story");
+    await expect(card.locator(".statusTag")).toContainText("QUEUED");
+    await expect(card.locator(".failurePanel")).toHaveCount(0);
+    await expect(card.locator(".liveDetail")).toContainText("retry 1/3 queued");
+    await expect(card.locator(".liveDetail")).not.toContainText("Invalid continuation beats");
+  }finally{await f.stop();}
+});
