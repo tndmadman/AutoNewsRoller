@@ -645,8 +645,8 @@ public final class SelfTest {
                         exchange.getRequestBody().readAllBytes(),
                         java.nio.charset.StandardCharsets.UTF_8)));
                 if(call==3&&request.get("format") instanceof Map<?,?>schema){
-                    checkedSchema.set(Json.stringify(schema).contains("\\"visualPrompt\\"")
-                            &&Json.stringify(schema).contains("\\"minItems\\""));
+                    checkedSchema.set(Json.stringify(schema).contains("visualPrompt")
+                            &&Json.stringify(schema).contains("minItems"));
                 }
                 Map<String,Object>output=new LinkedHashMap<>();
                 if(call==1){
