@@ -11,11 +11,12 @@ import java.util.regex.Pattern;
  * It is not a semantic classifier; a human editor remains responsible for borderline cases.
  */
 public final class MemeEditorialGuard {
-    private static final Pattern EXPLICIT=Pattern.compile(
-            "(?i)\\b(?:died|killed|murdered|grief|grieving|mourning|bereavement"+
-            "|sexual assault|raped|rape victim|mass shooting|fatal crash|fatal collision"+
+    private static final Pattern HIGH_CONFIDENCE=Pattern.compile(
+            "(?i)\\b(?:sexual assault|rape victim|mass shooting|fatal crash|fatal collision"+
             "|child abuse|abuse victim|victims? of (?:violence|abuse|shooting|assault|attack)"+
             "|suicide|homicide)\\b");
+    private static final Pattern VICTIM_LANGUAGE=Pattern.compile(
+            "(?i)\\b(?:died|dies|killed|murdered|grief|grieving|mourning|bereavement)\\b");
     private static final Pattern DEATH_OR_INJURY=Pattern.compile(
             "(?i)\\b(?:death|fatal|serious injuries|seriously injured|severe injuries|injured victims?)\\b");
     private static final Pattern HUMAN_CONTEXT=Pattern.compile(
@@ -38,8 +39,9 @@ public final class MemeEditorialGuard {
         String title=headline==null?"":headline.trim();
         String desc=description==null?"":description.trim();
         String text=title+" "+desc;
-        if(METAPHOR.matcher(text).find()&&!EXPLICIT.matcher(text).find())return "";
-        if(EXPLICIT.matcher(text).find()
+        if(METAPHOR.matcher(text).find()&&!HIGH_CONFIDENCE.matcher(text).find())return "";
+        if(HIGH_CONFIDENCE.matcher(text).find()
+                ||(VICTIM_LANGUAGE.matcher(text).find()&&HUMAN_CONTEXT.matcher(text).find())
                 ||(DEATH_OR_INJURY.matcher(text).find()&&HUMAN_CONTEXT.matcher(text).find()))
             return "Victim-centered tragedy or serious harm indicated by source headline/description";
         return "";
