@@ -197,7 +197,8 @@ public final class NewsPipeline {
         NewsScript script=mode==ProductionMode.FRAMING_EXPOSURE
                 ?exposureGenerator.generate(fp,evidence,targetSeconds,dryRun)
                 :mode==ProductionMode.MEME_RAGEBAIT
-                    ?memeGenerator.generate(fp,memeEvidence,dryRun)
+                    ?memeGenerator.generate(fp,memeEvidence,dryRun,
+                            slotDir.resolve("meme_script_diagnostics.json"))
                     :scriptGenerator.generate(fp,targetSeconds,dryRun);
         Json.write(slotDir.resolve("script.json"),script.toMap());
         if(mode==ProductionMode.FRAMING_EXPOSURE)
