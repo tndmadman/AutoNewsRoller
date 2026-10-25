@@ -111,7 +111,7 @@ public final class MemeScriptContractSelfTest {
                 &&hook.caption().equals(script.segments().get(0).visualType())
                 &&hook.spoken().equals(script.segments().get(0).narration())
                 &&"HOOK".equals(script.segments().get(0).purpose())
-                &&hook.caption().equals(new MemeVisualPlanner().plan(script).items().get(0).visualType());
+                &&hook.caption().equals(new MemeVisualPlanner().plan(script).items().get(0).title());
     }
     private static void reject(Map<String,Object>output,FactPackage facts,
             MemeEvidenceBuilder.Evidence evidence,Map<String,Object>anglePlan,
