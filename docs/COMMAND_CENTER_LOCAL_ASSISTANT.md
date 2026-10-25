@@ -1,6 +1,6 @@
 # Command Center local Ollama assistant (CH-07)
 
-This adds a persistent, read-only chat to the Command Center. It runs against the local Ollama endpoint reachable from the COMMAND CENTER process. If the controller and GPU worker run on different machines, Ollama at the worker's 127.0.0.1 is not directly reachable from the controller; configure a trusted and protected network endpoint or run a local model on the controller.
+This adds a persistent, read-only chat to the Command Center. The assistant uses Ollama's native multi-turn `/api/chat` endpoint with the current question as the last user message; prior conversation turns and current operational context are separate. Enter sends, Shift+Enter inserts a newline, and the SEND button remains available. It runs against the local Ollama endpoint reachable from the COMMAND CENTER process. If the controller and GPU worker run on different machines, Ollama at the worker's 127.0.0.1 is not directly reachable from the controller; configure a trusted and protected network endpoint or run a local model on the controller.
 
 ## Setup
 
@@ -13,6 +13,8 @@ Default configuration (defaults.txt):
 
     commandCenterAssistantModel=llama3.1:8b
     commandCenterAssistantOllamaUrl=http://127.0.0.1:11434/api/generate
+
+The assistant automatically maps the configured `/api/generate` URL to `/api/chat` (or accepts an explicit `/api/chat` URL). The news, framing and meme generators still use their existing structured `/api/generate` requests. The chat does not change those pipelines.
     commandCenterAssistantContextTokens=16384
     commandCenterAssistantMaxOutputTokens=1400
 
@@ -41,3 +43,7 @@ The assistant cannot read arbitrary files, run shell commands, change config, qu
 ## Validation and known limits
 
 The Java self-test uses a mock local Ollama endpoint to check prompt construction, historical persistence/reload, source allowlisting, and clear. Browser tests exercise visible chat, reload and safe rendering. Neither test establishes actual local model runtime performance or humor quality. There is no semantic indexing of all old videos, no capture of every raw historical Ollama request, and no natural-language mutation of system state. Those can be considered separately with access-control and redaction work.
+
+## Diagnosing an unrelated repeated answer
+
+The chat now sends the latest user question as its final Ollama chat turn, with saved conversation roles and separately supplied live state. A small model may still repeat an old reply; an exact duplicate answer to a different user question triggers one targeted retry and returns a visible error instead of saving the same off-topic reply again. Questions about meme-worthiness analyses should reference the `memeComplete` total and `memeRecentAnalyzed` for the configured recent time window—not the RSS feed count or the number of generated video versions. The context remains bounded and is not an unlimited memory of all source data.
