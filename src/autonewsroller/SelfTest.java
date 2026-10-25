@@ -635,10 +635,19 @@ public final class SelfTest {
             MemeEvidenceBuilder.Evidence evidence)throws Exception{
         AtomicInteger calls=new AtomicInteger();
         java.util.concurrent.atomic.AtomicBoolean rejectFirstReview=new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean missingVisual=new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean checkedSchema=new java.util.concurrent.atomic.AtomicBoolean(false);
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         server.createContext("/api/generate",exchange->{
             int call=calls.incrementAndGet();
             try{
+                Map<String,Object>request=Json.object(Json.parse(new String(
+                        exchange.getRequestBody().readAllBytes(),
+                        java.nio.charset.StandardCharsets.UTF_8)));
+                if(call==3&&request.get("format") instanceof Map<?,?>schema){
+                    checkedSchema.set(Json.stringify(schema).contains("\\"visualPrompt\\"")
+                            &&Json.stringify(schema).contains("\\"minItems\\""));
+                }
                 Map<String,Object>output=new LinkedHashMap<>();
                 if(call==1){
                     output.put("candidates",List.of(
@@ -664,7 +673,23 @@ public final class SelfTest {
                             Map.of("caption","THE SIGNS ARE TALKING",
                                     "spoken","The signs are alive.",
                                     "factIds",List.of("F99"),"score",9.0)));
-                }else if(call==3||call==6){
+                }else if(missingVisual.get()&&call==3){
+                    output.put("angle","Signs as salaried staff");
+                    output.put("beats",List.of(Map.of(
+                            "speech","The city bought novelty signs for downtown. "+
+                                    "The signs want overtime for standing around all day.",
+                            "caption","OVERTIME FOR STANDING STILL",
+                            "visualPrompt","",
+                            "purpose","PAYOFF","factIds",List.of("F1"))));
+                }else if(missingVisual.get()&&call==4){
+                    output.put("angle","Signs as salaried staff");
+                    output.put("beats",List.of(Map.of(
+                            "speech","The city bought novelty signs for downtown. "+
+                                    "The signs want overtime for standing around all day.",
+                            "caption","OVERTIME FOR STANDING STILL",
+                            "visualPrompt","Satirical street sign holding an overtime payslip",
+                            "purpose","PAYOFF","factIds",List.of("F1"))));
+                }else if(call==3){
                     output.put("angle","Signs as salaried staff");
                     output.put("hookText","NOVELTY SIGNS WANT PAYCHECKS");
                     output.put("spokenHook","Novelty signs demand a salary.");
@@ -678,7 +703,14 @@ public final class SelfTest {
                                     "caption","OVERTIME FOR STANDING STILL",
                                     "visualPrompt","Satirical street sign holding an overtime payslip",
                                     "purpose","PAYOFF","factIds",List.of("F1"))));
-                }else if(call==4||call==7){
+                }else if(call==6){
+                    output.put("angle","Signs as salaried staff");
+                    output.put("beats",List.of(Map.of(
+                            "speech","The downtown novelty signs demand overtime for standing around.",
+                            "caption","DOWNTOWN SIGNS ON OVERTIME",
+                            "visualPrompt","Satirical novelty sign clocking in at a cartoon downtown office",
+                            "purpose","PAYOFF","factIds",List.of("F1"))));
+                }else if(call==4||call==7||(missingVisual.get()&&call==5)){
                     boolean weak=rejectFirstReview.get()&&call==4;
                     output.put("hookImpact",weak?3:9);output.put("specificity",8);
                     output.put("jokeDensity",weak?4:8);output.put("payoff",weak?3:8);
@@ -723,8 +755,21 @@ public final class SelfTest {
 
             calls.set(0);rejectFirstReview.set(true);
             NewsScript repaired=new MemeScriptGenerator(client,2).generate(facts,evidence,false);
-            ok(calls.get()==7&&repaired.hook().get("comedyReview") instanceof Map<?,?>,
-                    "weak spoken jokes trigger reviewer feedback, new hook pitch, and script revision");
+            ok(calls.get()==7&&repaired.hook().get("comedyReview") instanceof Map<?,?>
+                    &&"DOWNTOWN HAS NOVELTY SIGNS".equals(repaired.hook().get("hookText")),
+                    "weak comedy reranks to a different supported hook before revision");
+            calls.set(0);rejectFirstReview.set(false);missingVisual.set(true);
+            Path diagnostics=dir.resolve("meme_script_diagnostics.json");
+            NewsScript fixed=new MemeScriptGenerator(client,1).generate(
+                    facts,evidence,false,diagnostics);
+            Map<String,Object>record=Json.object(Json.read(diagnostics));
+            List<?>attempts=(List<?>)record.get("attempts");
+            ok(calls.get()==5&&checkedSchema.get()&&fixed.segments().size()==2
+                    &&"PASS".equals(record.get("finalDisposition"))
+                    &&"PASS".equals(Json.object(attempts.get(0)).get("formatRepair")),
+                    "schema-constrained output repairs a missing scene prompt once and validates");
+            ok("PASS".equals(Json.object(fixed.hook().get("comedyReview")).get("verdict")),
+                    "structural repair still undergoes independent comedy review");
         }finally{server.stop(0);}
     }
 
