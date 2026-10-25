@@ -875,7 +875,7 @@ test("terminal meme script failure is explicit and historical error does not mas
     await page.goto(url);
     const card=page.locator("#stories .storyCard");
     await expect(card).toHaveCount(1);
-    await expect(card.locator(".statusTag")).toContainText("FAILED");
+    await expect(card.locator(".statusTag").first()).toContainText("FAILED");
     await expect(card.locator(".failurePanel")).toContainText("MEME_SCRIPT_VALIDATION_FAILURE");
     await expect(card.locator(".failurePanel")).toContainText("Invalid continuation beats");
     await expect(card.locator(".failurePanel script")).toHaveCount(0);
@@ -888,7 +888,7 @@ test("terminal meme script failure is explicit and historical error does not mas
     f.story.retryNotBefore=new Date(Date.now()+30000).toISOString();
     delete f.story.error;
     f.event("story");
-    await expect(card.locator(".statusTag")).toContainText("QUEUED");
+    await expect(card.locator(".statusTag").first()).toContainText("QUEUED");
     await expect(card.locator(".failurePanel")).toHaveCount(0);
     await expect(card.locator(".liveDetail")).toContainText("retry 1/3 queued");
     await expect(card.locator(".liveDetail")).not.toContainText("Invalid continuation beats");
