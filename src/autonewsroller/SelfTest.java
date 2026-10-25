@@ -45,6 +45,7 @@ public final class SelfTest {
         testCommandCenterLeaseRecovery(a);
         testPublisherBiasRegistry(root);
         testPoliticalAnalysisQueue(a);
+        testPoliticalAnalysisTruncationRecovery();
         testEnrichedFramingSnapshot();
         testSelectedArticleEnrichment();
         testPoliticalExposureMode();
@@ -635,10 +636,19 @@ public final class SelfTest {
             MemeEvidenceBuilder.Evidence evidence)throws Exception{
         AtomicInteger calls=new AtomicInteger();
         java.util.concurrent.atomic.AtomicBoolean rejectFirstReview=new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean missingVisual=new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean checkedSchema=new java.util.concurrent.atomic.AtomicBoolean(false);
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         server.createContext("/api/generate",exchange->{
             int call=calls.incrementAndGet();
             try{
+                Map<String,Object>request=Json.object(Json.parse(new String(
+                        exchange.getRequestBody().readAllBytes(),
+                        java.nio.charset.StandardCharsets.UTF_8)));
+                if(call==3&&request.get("format") instanceof Map<?,?>schema){
+                    checkedSchema.set(Json.stringify(schema).contains("visualPrompt")
+                            &&Json.stringify(schema).contains("minItems"));
+                }
                 Map<String,Object>output=new LinkedHashMap<>();
                 if(call==1){
                     output.put("candidates",List.of(
@@ -650,7 +660,7 @@ public final class SelfTest {
                             Map.of("angle","Sign-shaped roast","factualBasis","F1",
                                     "visualIdea","Signing gag","surprise","Downtown signs","score",6)));
                     output.put("selectedAngle","Signs as salaried staff");
-                }else if(call==2||call==5){
+                }else if(call==2||(call==5&&!missingVisual.get())){
                     output.put("candidates",List.of(
                             Map.of("caption","THEY DID WHAT?","spoken","Seriously, what just happened?",
                                     "factIds",List.of("F1"),"score",10.0),
@@ -664,7 +674,23 @@ public final class SelfTest {
                             Map.of("caption","THE SIGNS ARE TALKING",
                                     "spoken","The signs are alive.",
                                     "factIds",List.of("F99"),"score",9.0)));
-                }else if(call==3||call==6){
+                }else if(missingVisual.get()&&call==3){
+                    output.put("angle","Signs as salaried staff");
+                    output.put("beats",List.of(Map.of(
+                            "speech","The city bought novelty signs for downtown. "+
+                                    "The signs want overtime for standing around all day.",
+                            "caption","OVERTIME FOR STANDING STILL",
+                            "visualPrompt","",
+                            "purpose","PAYOFF","factIds",List.of("F1"))));
+                }else if(missingVisual.get()&&call==4){
+                    output.put("angle","Signs as salaried staff");
+                    output.put("beats",List.of(Map.of(
+                            "speech","The city bought novelty signs for downtown. "+
+                                    "The signs want overtime for standing around all day.",
+                            "caption","OVERTIME FOR STANDING STILL",
+                            "visualPrompt","Satirical street sign holding an overtime payslip",
+                            "purpose","PAYOFF","factIds",List.of("F1"))));
+                }else if(call==3){
                     output.put("angle","Signs as salaried staff");
                     output.put("hookText","NOVELTY SIGNS WANT PAYCHECKS");
                     output.put("spokenHook","Novelty signs demand a salary.");
@@ -678,7 +704,14 @@ public final class SelfTest {
                                     "caption","OVERTIME FOR STANDING STILL",
                                     "visualPrompt","Satirical street sign holding an overtime payslip",
                                     "purpose","PAYOFF","factIds",List.of("F1"))));
-                }else if(call==4||call==7){
+                }else if(call==6){
+                    output.put("angle","Signs as salaried staff");
+                    output.put("beats",List.of(Map.of(
+                            "speech","The downtown novelty signs demand overtime for standing around.",
+                            "caption","DOWNTOWN SIGNS ON OVERTIME",
+                            "visualPrompt","Satirical novelty sign clocking in at a cartoon downtown office",
+                            "purpose","PAYOFF","factIds",List.of("F1"))));
+                }else if(call==4||call==7||(missingVisual.get()&&call==5)){
                     boolean weak=rejectFirstReview.get()&&call==4;
                     output.put("hookImpact",weak?3:9);output.put("specificity",8);
                     output.put("jokeDensity",weak?4:8);output.put("payoff",weak?3:8);
@@ -723,8 +756,89 @@ public final class SelfTest {
 
             calls.set(0);rejectFirstReview.set(true);
             NewsScript repaired=new MemeScriptGenerator(client,2).generate(facts,evidence,false);
-            ok(calls.get()==7&&repaired.hook().get("comedyReview") instanceof Map<?,?>,
-                    "weak spoken jokes trigger reviewer feedback, new hook pitch, and script revision");
+            ok(calls.get()==7&&repaired.hook().get("comedyReview") instanceof Map<?,?>
+                    &&"DOWNTOWN HAS NOVELTY SIGNS".equals(repaired.hook().get("hookText")),
+                    "weak comedy reranks to a different supported hook before revision");
+            calls.set(0);rejectFirstReview.set(false);missingVisual.set(true);
+            Path diagnostics=dir.resolve("meme_script_diagnostics.json");
+            NewsScript fixed=new MemeScriptGenerator(client,1).generate(
+                    facts,evidence,false,diagnostics);
+            Map<String,Object>record=Json.object(Json.read(diagnostics));
+            List<?>attempts=(List<?>)record.get("attempts");
+            ok(calls.get()==5&&checkedSchema.get()&&fixed.segments().size()==2
+                    &&"PASS".equals(record.get("finalDisposition"))
+                    &&"PASS".equals(Json.object(attempts.get(0)).get("formatRepair")),
+                    "schema-constrained output repairs a missing scene prompt once and validates");
+            ok("PASS".equals(Json.object(fixed.hook().get("comedyReview")).get("verdict")),
+                    "structural repair still undergoes independent comedy review");
+        }finally{server.stop(0);}
+    }
+
+    /** Mock Ollama length stop on first request; verify bounded budget escalation. */
+    private void testPoliticalAnalysisTruncationRecovery()throws Exception{
+        Path dir=Files.createTempDirectory("anr-political-budget-");
+        AtomicInteger calls=new AtomicInteger();
+        List<Integer>budgets=new ArrayList<>();
+        java.util.concurrent.atomic.AtomicBoolean alwaysTruncate=new java.util.concurrent.atomic.AtomicBoolean(false);
+        Article article=new Article("analysis-budget-1","Fixture Wire",
+                "City council debates election rules","https://fixture.example/budget",
+                "https://fixture.example/budget",Instant.now(),Instant.now(),"","politics",
+                "Council members debated changes to the voting rules.",
+                "The council debated the proposed changes before a public meeting.",
+                "en",2,false);
+        StoryCluster cluster=new StoryCluster("political-budget-story",article.title(),
+                List.of(article),Set.of("City Council"),"budget-fingerprint");
+        HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/api/generate",exchange->{
+            int call=calls.incrementAndGet();
+            try{
+                Map<String,Object>request=Json.object(Json.parse(new String(
+                        exchange.getRequestBody().readAllBytes(),
+                        java.nio.charset.StandardCharsets.UTF_8)));
+                int budget=((Number)Json.object(request.get("options")).get("num_predict")).intValue();
+                synchronized(budgets){budgets.add(budget);}
+                Map<String,Object>response;
+                if(call==1||alwaysTruncate.get()){
+                    response=Map.of("response","{}","done_reason","length");
+                }else{
+                    Map<String,Object>weights=Map.of("left",0.1,"center",0.8,"right",0.1);
+                    Map<String,Object>analysis=new LinkedHashMap<>();
+                    analysis.put("politicalRelevance",0.9);
+                    analysis.put("overallClassification","center");analysis.put("overallConfidence",0.8);
+                    analysis.put("overallWeights",weights);analysis.put("summary","Mostly neutral council coverage");
+                    analysis.put("articles",List.of(Map.of("id",article.id(),
+                            "classification","center","confidence",0.8,"weights",weights,
+                            "rationale","Descriptive coverage of the council debate",
+                            "signals",List.of("Neutral wording"))));
+                    response=Map.of("response",Json.stringify(analysis),"done_reason","stop");
+                }
+                byte[]bytes=Json.stringify(response).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200,bytes.length);
+                try(OutputStream out=exchange.getResponseBody()){out.write(bytes);}
+            }catch(Exception e){exchange.sendResponseHeaders(500,-1);}
+            finally{exchange.close();}
+        });
+        server.start();
+        try{
+            NewsConfig cfg=NewsConfig.load(dir);
+            cfg.set("politicalAnalysisOllamaUrl","http://127.0.0.1:"+
+                    server.getAddress().getPort()+"/api/generate");
+            cfg.set("politicalAnalysisMaxOutputTokens","3600");
+            PoliticalFramingAnalyzer analyzer=new PoliticalFramingAnalyzer(dir,cfg);
+            Map<String,Object>result=analyzer.analyze(cluster);
+            ok(calls.get()==2&&budgets.get(0)>=2200&&budgets.get(1)==3600
+                    &&"center".equals(result.get("overallClassification"))
+                    &&((Number)result.get("articlesAnalyzed")).intValue()==1,
+                    "framing analysis retries token truncation at larger dedicated budget");
+            calls.set(0);budgets.clear();alwaysTruncate.set(true);
+            try{
+                analyzer.analyze(cluster);
+                throw new AssertionError("Persistent truncation accepted");
+            }catch(IllegalStateException expected){
+                ok(expected.getMessage().contains("POLITICAL_ANALYSIS_OUTPUT_LIMIT")
+                        &&calls.get()==2,
+                        "persistent political analysis output limit produces bounded failure");
+            }
         }finally{server.stop(0);}
     }
 

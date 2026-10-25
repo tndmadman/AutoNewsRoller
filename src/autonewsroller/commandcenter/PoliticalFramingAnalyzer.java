@@ -23,14 +23,18 @@ public final class PoliticalFramingAnalyzer {
 
     private final OllamaClient ollama;
     private final String model;
+    private final int maxOutputTokens;
 
     public PoliticalFramingAnalyzer(Path root,NewsConfig cfg){
         this.model=cfg.get("politicalAnalysisModel",cfg.get("ollamaModel","llama3.1:8b"));
+        this.maxOutputTokens=Math.max(2400,Math.min(8000,
+                cfg.getInt("politicalAnalysisMaxOutputTokens",5500)));
         this.ollama=new OllamaClient(
                 cfg.get("politicalAnalysisOllamaUrl",cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate")),
                 model,
                 cfg.get("ollamaKeepAlive","30m"),
-                root.resolve("output/runtime/ollama.lock")
+                root.resolve("output/runtime/ollama.lock"),
+                cfg.getInt("ollamaContextTokens",8192),maxOutputTokens,0.15
         );
     }
 
@@ -88,9 +92,11 @@ Use "uncertain" when evidence is too weak or ambiguous.
 Use "not_political" when the text is not meaningfully political.
 The three weights are heuristic framing weights, not probabilities of truth, and should sum approximately to 1.0.
 Confidence must reflect the amount and clarity of supplied evidence.
+Keep each article rationale under 40 words, supply at most 2 brief signals per article,
+and keep the overall summary under 70 words. Do not waste tokens restating headlines.
 """;
 
-        String raw=ollama.generateJson(system,Json.stringify(payload),analysisSchema(cluster),0.15,1200);
+        String raw=generateBoundedAnalysis(system,payload,cluster);
         Map<String,Object>parsed=Json.object(Json.parse(raw));
         Map<String,Object>result=new LinkedHashMap<>();
         result.put("model",model);result.put("analyzedAt",Instant.now().toString());
@@ -137,6 +143,28 @@ Confidence must reflect the amount and clarity of supplied evidence.
         return result;
     }
 
+    /** Allow enough tokens for all article entries; retry truncation once with a larger budget. */
+    private String generateBoundedAnalysis(String system,Map<String,Object>payload,
+            StoryCluster cluster)throws Exception{
+        String request=Json.stringify(payload);
+        Object schema=analysisSchema(cluster);
+        int initial=Math.min(maxOutputTokens,Math.max(2200,1500+cluster.articles.size()*350));
+        try{
+            return ollama.generateJson(system,request,schema,0.15,initial);
+        }catch(IllegalStateException e){
+            if(!String.valueOf(e.getMessage()).contains("output hit its token limit")
+                    ||initial>=maxOutputTokens)throw e;
+            try{
+                return ollama.generateJson(system,request,schema,0.10,maxOutputTokens);
+            }catch(IllegalStateException retry){
+                if(String.valueOf(retry.getMessage()).contains("output hit its token limit"))
+                    throw new IllegalStateException("POLITICAL_ANALYSIS_OUTPUT_LIMIT: Schema output "+
+                            "still exceeds "+maxOutputTokens+" tokens",retry);
+                throw retry;
+            }
+        }
+    }
+
     private static Map<String,Object>analysisSchema(StoryCluster cluster){
         Map<String,Object>number=new LinkedHashMap<>();
         number.put("type","number");
@@ -163,14 +191,15 @@ Confidence must reflect the amount and clarity of supplied evidence.
 
         Map<String,Object>signals=new LinkedHashMap<>();
         signals.put("type","array");
-        signals.put("items",Map.of("type","string"));
+        signals.put("items",Map.of("type","string","maxLength",150));
+        signals.put("maxItems",3);
 
         Map<String,Object>articleProps=new LinkedHashMap<>();
         articleProps.put("id",id);
         articleProps.put("classification",classification);
         articleProps.put("confidence",number);
         articleProps.put("weights",weights);
-        articleProps.put("rationale",Map.of("type","string"));
+        articleProps.put("rationale",Map.of("type","string","maxLength",280));
         articleProps.put("signals",signals);
 
         Map<String,Object>article=new LinkedHashMap<>();
@@ -190,7 +219,7 @@ Confidence must reflect the amount and clarity of supplied evidence.
         rootProps.put("overallClassification",classification);
         rootProps.put("overallConfidence",number);
         rootProps.put("overallWeights",weights);
-        rootProps.put("summary",Map.of("type","string"));
+        rootProps.put("summary",Map.of("type","string","maxLength",500));
         rootProps.put("articles",articles);
 
         Map<String,Object>root=new LinkedHashMap<>();

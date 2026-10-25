@@ -103,6 +103,8 @@ newsIntroSoundGainDb=-4.46
 
 politicalAnalysisModel=llama3.1:8b
 politicalAnalysisOllamaUrl=http://127.0.0.1:11434/api/generate
+# Dedicated framing JSON output limit (the analyzer adapts first call and retries truncation).
+politicalAnalysisMaxOutputTokens=5500
 
 politicalGraphicsEnabled=true
 politicalGraphicsMinimumRelevance=0.60

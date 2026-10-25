@@ -195,3 +195,32 @@ The [MEME_WORTHINESS_ENGINE.md](MEME_WORTHINESS_ENGINE.md) scorer is an optional
 CI uses mock Ollama, CPU media and browser tests; it cannot prove local RTX,
 ComfyUI checkpoint, TTS voice or actual installed Ollama behavior. Human review
 of at least three different real stories and their first frames/audio remains required.
+
+## Recovery for real Ollama output failures (2026-10)
+
+The approved hook remains Java-owned. Continuation generation now requests a strict
+Ollama JSON schema requiring **nonempty** `speech`, `caption`, `visualPrompt`,
+`factIds` and an allowed beat `purpose`. Missing or invalid continuation fields
+trigger at most **one targeted Ollama structural repair inside each bounded script
+attempt**, using only the draft and supported evidence. Java does not invent dialogue,
+citations or visual details. The repaired script passes exactly the same deterministic
+fact checks and independent comedy review as any other generated script.
+
+If the reviewer scores a hook below `memeComedyMinimumScore` (default **7**),
+hook reselection rejects that exact caption, rather than choosing the same failed
+opening based on model self-scores. Scripts that remain weak or invalid after
+`ollamaRetries` still FAIL: production does not publish unreviewed joke quality.
+Attempt diagnostics include any field repair and its outcome.
+
+The separate `PoliticalFramingAnalyzer` also has a dedicated
+`politicalAnalysisMaxOutputTokens=5500` budget (range 2400–8000).
+The initial budget scales with the article count and truncated JSON is retried
+once with the configured maximum. JSON summaries, rationales and signals are
+bounded to keep output manageable. An exhausted second call reports
+`POLITICAL_ANALYSIS_OUTPUT_LIMIT` rather than looping indefinitely.
+
+Run `batch_create_news_videos_windows.bat --self-test` after updating both
+controller and worker. Synthetic/mock CI cannot prove real local Ollama generation
+quality, especially on the configured model and stories. Examine
+`meme_script_diagnostics.json`, the first caption/TTS hook and the complete
+article-level framing result before publishing.
