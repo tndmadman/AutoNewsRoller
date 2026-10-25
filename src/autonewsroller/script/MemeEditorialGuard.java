@@ -39,10 +39,11 @@ public final class MemeEditorialGuard {
         String title=headline==null?"":headline.trim();
         String desc=description==null?"":description.trim();
         String text=title+" "+desc;
-        if(METAPHOR.matcher(text).find()&&!HIGH_CONFIDENCE.matcher(text).find())return "";
+        // Remove figurative phrases without hiding other genuine harm in the same story.
+        String contextual=METAPHOR.matcher(text).replaceAll(" ");
         if(HIGH_CONFIDENCE.matcher(text).find()
-                ||(VICTIM_LANGUAGE.matcher(text).find()&&HUMAN_CONTEXT.matcher(text).find())
-                ||(DEATH_OR_INJURY.matcher(text).find()&&HUMAN_CONTEXT.matcher(text).find()))
+                ||(VICTIM_LANGUAGE.matcher(contextual).find()&&HUMAN_CONTEXT.matcher(text).find())
+                ||(DEATH_OR_INJURY.matcher(contextual).find()&&HUMAN_CONTEXT.matcher(text).find()))
             return "Victim-centered tragedy or serious harm indicated by source headline/description";
         return "";
     }
