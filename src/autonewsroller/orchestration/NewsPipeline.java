@@ -174,6 +174,15 @@ public final class NewsPipeline {
         MemeScriptGenerator memeGenerator=null;
         if(mode==ProductionMode.MEME_RAGEBAIT){
             if(!cfg.getBool("memePipelineEnabled",true))throw new IllegalStateException("Meme pipeline disabled");
+            String editorialRisk=MemeEditorialGuard.reason(c);
+            if(!editorialRisk.isBlank()){
+                Json.write(slotDir.resolve("meme_script_diagnostics.json"),Map.of(
+                        "storyId",fp.storyId(),"productionMode","MEME_RAGEBAIT",
+                        "worker",worker,"timestamp",Instant.now().toString(),
+                        "errorCategory","MEME_EDITORIAL_REVIEW_REQUIRED",
+                        "finalDisposition","FAILED","reason",editorialRisk));
+                throw new IllegalStateException("MEME_EDITORIAL_REVIEW_REQUIRED: "+editorialRisk);
+            }
             memeEvidence=new MemeEvidenceBuilder().build(c,fp);
             Json.write(slotDir.resolve("meme_evidence.json"),memeEvidence.toMap());
             memeGenerator=new MemeScriptGenerator(oc,cfg.getInt("ollamaRetries",5),
