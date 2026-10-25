@@ -15,10 +15,16 @@ public final class MemeComedyReviewer {
 
     public static final class WeakComedyException extends IllegalArgumentException {
         private final boolean weakHook;
+        private final Map<String,Object>review;
         public WeakComedyException(String reason,boolean weakHook){
+            this(reason,weakHook,Map.of());
+        }
+        public WeakComedyException(String reason,boolean weakHook,Map<String,Object>review){
             super(reason);this.weakHook=weakHook;
+            this.review=Map.copyOf(review);
         }
         public boolean weakHook(){return weakHook;}
+        public Map<String,Object>review(){return review;}
     }
 
     public Map<String,Object> review(NewsScript script,MemeEvidenceBuilder.Evidence evidence)throws Exception{
@@ -75,8 +81,11 @@ Output ONLY JSON: {"hookImpact":0,"specificity":0,"jokeDensity":0,
                 ||spoken<Math.max(5,minimum-1)||facts<8){
             String detail="hook="+hook+",specificity="+specificity+",jokes="+jokes+
                     ",payoff="+payoff+",spoken="+spoken+",facts="+facts;
+            Map<String,Object>review=new LinkedHashMap<>(scores);
+            review.put("problems",List.copyOf(problems));
+            review.put("minimum",minimum);review.put("verdict","BELOW_TARGET");
             throw new WeakComedyException("MEME_COMEDY_REVIEW_REWRITE: "+detail+
-                    "; "+String.join("; ",problems),hook<minimum);
+                    "; "+String.join("; ",problems),hook<minimum,review);
         }
         Map<String,Object>result=new LinkedHashMap<>(scores);
         result.put("problems",List.copyOf(problems));
