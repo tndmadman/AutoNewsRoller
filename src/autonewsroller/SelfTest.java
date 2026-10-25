@@ -50,6 +50,20 @@ public final class SelfTest {
         testPoliticalExposureMode();
         testPairedSequentialVideoProduction();
         testMemePipeline();
+        passed+=MemeScriptContractSelfTest.run();
+        ok(!MemeEditorialGuard.reason("Family mourns after child died in crash","Reported death").isBlank(),
+                "victim-centered fatality is held from meme production");
+        ok(!MemeEditorialGuard.reason("Football manager grieving after father's death","").isBlank(),
+                "grief-centered story is held before video generation");
+        ok(MemeEditorialGuard.reason("Phone battery died during demo","Device stopped working").isBlank(),
+                "isolated death idiom does not overblock unrelated meme story");
+        ok(!MemeEditorialGuard.reason("Death metal singer died in crash","Family confirms tragedy").isBlank(),
+                "figurative phrase cannot hide a separate reported human fatality");
+        ok(MemeEditorialGuard.reason("New death metal album announced","A music review").isBlank(),
+                "unrelated metaphor is not treated as victim-centered tragedy");
+        ok(MemeEditorialGuard.reason("City buys novelty signs","Signs were unveiled today").isBlank(),
+                "ordinary absurd event remains eligible for comedy");
+
         testMemeWorthinessEngine(root);
         testMemeRecentFoundScheduling(root);
         testPoliticalExposureLengthRecovery();
@@ -580,6 +594,40 @@ public final class SelfTest {
         ok("QUEUED".equals(resumed.storyDetail(cluster.id).get("status"))
                 &&"MEME_RAGEBAIT".equals(resumed.storyDetail(cluster.id).get("productionMode")),
                 "REMAKE_MEME queues only meme mode and preserves archive");
+        Map<String,Object>terminalClaim=resumed.claim("meme-worker",Map.of("duration",12));
+        ok(terminalClaim!=null&&"MEME_RAGEBAIT".equals(terminalClaim.get("productionMode")),
+                "new meme attempt can be claimed for terminal-failure test");
+        resumed.progress(cluster.id,new WorkerState(1,1,PipelineStage.SCRIPT,
+                "Writing meme continuation",Instant.now()),"meme-worker",
+                String.valueOf(terminalClaim.get("claimId")));
+        resumed.fail(cluster.id,"MEME_SCRIPT_VALIDATION_FAILED: Invalid meme continuation beats",
+                "meme-worker",String.valueOf(terminalClaim.get("claimId")));
+        Map<String,Object>terminalMeme=resumed.storyDetail(cluster.id);
+        ok("FAILED".equals(terminalMeme.get("status"))
+                &&"MEME_SCRIPT_VALIDATION_FAILURE".equals(terminalMeme.get("failureType"))
+                &&terminalMeme.get("retryNotBefore")==null,
+                "exhausted meme script fails permanently rather than recycling queued 15%");
+        CommandCenterStore failedReload=new CommandCenterStore(state,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null);
+        ok("FAILED".equals(failedReload.storyDetail(cluster.id).get("status")),
+                "terminal meme failure persists across controller restart");
+        ok(((List<?>)failedReload.snapshot().get("videos")).size()==2,
+                "terminal meme failure retains original and completed meme versions");
+        failedReload.action(cluster.id,"MAKE_MEME","manual-after-terminal-meme");
+        ok("QUEUED".equals(failedReload.storyDetail(cluster.id).get("status")),
+                "manual meme retry works after terminal script failure");
+        failedReload.heartbeat("meme-worker",Map.of("id","meme-worker",
+                "capabilities",List.of("meme_ragebait_v1")));
+        Map<String,Object>transportClaim=failedReload.claim("meme-worker",Map.of("duration",12));
+        failedReload.fail(cluster.id,"OLLAMA_FAILURE: Ollama HTTP 503","meme-worker",
+                String.valueOf(transportClaim.get("claimId")));
+        Map<String,Object>transportRetry=failedReload.storyDetail(cluster.id);
+        ok("QUEUED".equals(transportRetry.get("status"))
+                &&"OLLAMA_FAILURE".equals(transportRetry.get("failureType"))
+                &&transportRetry.get("error")==null
+                &&String.valueOf(transportRetry.get("lastFailure")).contains("OLLAMA"),
+                "transient Ollama outage requeues with historical error, not active error");
+
     }
 
 

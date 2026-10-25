@@ -18,8 +18,13 @@ fallback), local ComfyUI and FFmpeg/ffprobe. Updated workers advertise
    uncertainty and a source fingerprint. Content from web publishers is **untrusted data**.
 3. `MemeScriptGenerator` asks local Ollama for specific comedy mechanisms:
    expectation reversal, absurdity, ironic escalation, literal analogies and callbacks.
-   `MemeHookPlanner` proposes six hooks and rejects generic or source-unanchored hooks
-   even if Ollama assigns them a high score; the selected hook is locked into the script.
+   `MemeHookPlanner` proposes six hooks and rejects generic or source-unanchored hooks.
+   Once selected, **Java owns the hook**: its caption, spoken line, source fact IDs and
+   opening segment are constructed before the continuation is assembled. The final first
+   segment is always `HOOK`, at index 0; Ollama never needs to repeat the locked words.
+   The continuation prompt asks for only SETUP, CONTEXT, JOKE and PAYOFF beats.
+   A top-level legacy `hookText`/`spokenHook` is ignored. One clearly duplicated
+   opening beat is stripped; a contradictory/ambiguous HOOK beat is rejected for revision.
 4. `MemeScriptValidator` rejects repeated TTS lines, cliches, overlong narration
    beats, missing early jokes, unsupported numbers and direct quotations.
    A separate `MemeComedyReviewer` uses Ollama to rate the exact spoken lines,
@@ -103,10 +108,32 @@ Comfy checkpoint/seeds/image paths, the original synthesized sound identity and 
 auditing results. The controller counts both historic `comfyui-generated` and current
 `comfyui-generated-ai-illustration` image provenance types.
 
-Existing automatic retries and lease protections apply. Invalid Ollama JSON, weak
-spoken comedy, or unsafe scripts produce explicit stage errors instead of a bland video.
-The review adds a local Ollama call per attempted script; retries and renewed hook pitches
-may increase generation time. Set `memeComedyMinimumScore` from 1 to 10 (default 7),
+Script-stage errors are repaired within the bounded `ollamaRetries` budget.
+Presentation/legacy opening normalization happens in Java; factual and comedic failures
+are not silently waived. Reviewer-reported weak hooks trigger grounded hook reselection.
+After that budget is exhausted, `MEME_SCRIPT_VALIDATION_FAILED` is **non-transient**:
+Command Center marks the job FAILED rather than restarting the entire video job at 15%.
+A manually requested MAKE MEME can retry later. A genuinely unreachable Ollama/HTTP
+failure is reported as `OLLAMA_FAILURE` and can receive the existing delayed retry.
+While queued for such a retry, the last error stays in attempt history; it is not shown as
+the error of the current active attempt.
+
+Before Ollama is called, `MemeEditorialGuard` screens source headline/description for
+clear victim-centered tragedy and serious harm (including grief and fatal incidents).
+It holds these stories with `MEME_EDITORIAL_REVIEW_REQUIRED` instead of automatically
+joking about victims. This conservative gate is distinct from the independent meme-
+worthiness ranking; contextual exceptions avoid automatically rejecting obvious
+non-tragedy phrases such as "death metal". Borderline editorial assessments still
+require human review.
+
+The worker writes bounded `meme_script_diagnostics.json` alongside `meme_evidence.json`
+and `script.json` in the job's output directory (the diagnostics remain even when
+`script.json` was never produced). It records the source fingerprint, canonical hook,
+fact IDs, attempt number, failure category, targeted rewrite/reselection and final
+disposition without storing raw Ollama responses or the full article body.
+
+The independent comedy review still adds a local Ollama call per attempted script;
+targeted rewrites or hook reselection may increase generation time. Set `memeComedyMinimumScore` from 1 to 10 (default 7),
 or use `memeComedyReviewEnabled=false` for diagnostics; the deterministic factual
 validator always remains active. Human review is still essential for humor, fairness
 and anything that could be mistaken for factual evidence.
@@ -145,3 +172,26 @@ comedy audio levels.
 ## Independent preproduction suitability
 
 The [MEME_WORTHINESS_ENGINE.md](MEME_WORTHINESS_ENGINE.md) scorer is an optional discovery stage that ranks RSS candidates for comedic potential before a user requests production. It does not replace the MEME_RAGEBAIT script/visual pipeline or its fact checks. High meme scores do not automatically trigger video creation; the user must still select MAKE MEME. The selected source-grounded angle is advisory, not a mandate for the production hook planner.
+
+## Windows acceptance after update
+
+1. Update both the Command Center and Windows worker to the same verified `main`
+   commit after CI and merge; stop running workers before updating files.
+2. Compile using `build_windows.bat`, then run
+   `batch_create_news_videos_windows.bat --self-test`.
+3. Restart `command_center_windows.bat` and `run_gpu_worker_windows.bat`.
+   No new configuration key is required; keep existing Ollama and ComfyUI settings.
+4. Select a source-grounded, non-tragedy RSS story and MAKE MEME / RAGEBAIT.
+   The worker output folder must contain `meme_script_diagnostics.json`.
+   If generation succeeds, open `script.json` and verify:
+   `hook.hookText == segments[0].visualType`,
+   `hook.spokenHook == segments[0].narration`, and the first rendered caption
+   matches `hook.hookText`. Listen for the opening spoken line.
+5. A permanently invalid script must be marked `FAILED` with
+   `MEME_SCRIPT_VALIDATION_FAILURE`; a transient Ollama outage can return
+   to `QUEUED`, with retry history visible in `productionAttempts`.
+   Use manual MAKE MEME/REMAKE MEME only after understanding the failure.
+
+CI uses mock Ollama, CPU media and browser tests; it cannot prove local RTX,
+ComfyUI checkpoint, TTS voice or actual installed Ollama behavior. Human review
+of at least three different real stories and their first frames/audio remains required.
