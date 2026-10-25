@@ -74,19 +74,35 @@ public final class SelfTest {
 
     private void testCommandCenterAssistant()throws Exception{
         Path root=Files.createTempDirectory("anr-ops-chat-test");
-        Path script=root.resolve("src/autonewsroller/script/MemeScriptGenerator.java");
-        Files.createDirectories(script.getParent());
-        Files.writeString(script,"MOCK MEME SCRIPT SOURCE // testing trusted prompt library");
+        Path source=root.resolve("src/autonewsroller/script/MemeScriptGenerator.java");
+        Files.createDirectories(source.getParent());
+        Files.writeString(source,"MOCK MEME SCRIPT SOURCE // trusted source catalog test");
         NewsConfig cfg=NewsConfig.load(root);
         AtomicInteger calls=new AtomicInteger();
-        java.util.concurrent.atomic.AtomicReference<String>last=new java.util.concurrent.atomic.AtomicReference<>("");
+        java.util.concurrent.atomic.AtomicReference<Map<String,Object>>last=
+                new java.util.concurrent.atomic.AtomicReference<>(Map.of());
         HttpServer local=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
-        local.createContext("/api/generate",x->{
+        local.createContext("/api/chat",x->{
             calls.incrementAndGet();
-            last.set(new String(x.getRequestBody().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8));
-            byte[]bytes=Json.stringify(Map.of("response",Json.stringify(Map.of(
-                    "answer","The current job is queued. This is a mock response.")),
-                    "done_reason","stop")).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            Map<String,Object>body=Json.object(Json.parse(
+                    new String(x.getRequestBody().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8)));
+            last.set(body);
+            List<Object>messages=Json.array(body.get("messages"));
+            Map<String,Object>question=Json.object(messages.get(messages.size()-1));
+            String latest=String.valueOf(question.getOrDefault("content",""));
+            String answer;
+            if(latest.contains("What is queued?"))answer="There is one queued story.";
+            else if(latest.contains("How many meme"))answer="The meme analysis count comes from memeComplete.";
+            else if(latest.equals("hello"))answer="Hello! How can I help?";
+            else if(latest.contains("What changed?"))answer="There is no new status update.";
+            else if(latest.contains("Are memes analyzed?")){
+                String system=String.valueOf(Json.object(messages.get(0)).get("content"));
+                answer=system.contains("last draft copied")?"The meme analysis queue is separate."
+                        :"There is no new status update.";
+            }else answer="I don't know.";
+            byte[]bytes=Json.stringify(Map.of("message",
+                    Map.of("role","assistant","content",answer),"done_reason","stop"))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
             x.getResponseHeaders().set("Content-Type","application/json");
             x.sendResponseHeaders(200,bytes.length);
             try(OutputStream output=x.getResponseBody()){output.write(bytes);}
@@ -118,34 +134,56 @@ public final class SelfTest {
                     "assistant starts with empty saved conversation");
             ok(assistant.promptCatalog().stream().anyMatch(m->"meme-script".equals(m.get("id")))
                     &&assistant.promptSource("meme-script").get("text").toString().contains("MOCK MEME"),
-                    "assistant loads allowlisted pipeline source templates");
+                    "assistant loads allowlisted prompt source templates");
             try{
                 assistant.promptSource("../../data/state.json");
-                throw new AssertionError("Arbitrary file path accepted by prompt API");
+                throw new AssertionError("Arbitrary source path accepted");
             }catch(IllegalArgumentException expected){
-                ok(true,"assistant prompt library refuses untrusted file paths");
+                ok(true,"assistant prompt library blocks arbitrary file paths");
             }
-            var answer=assistant.ask("What is queued? Show the meme script prompts.");
-            ok(answer.get("answer").toString().contains("queued")&&calls.get()==1,
-                    "mock Ollama provides a structured local chat answer");
-            ok(last.get().contains("test-ops-llm")&&last.get().contains("Unexpected novelty signs")
-                    &&last.get().contains("mock-ops-queued")==false,
-                    "Ollama request gets model and current bounded operations context");
-            ok(last.get().contains("MOCK MEME SCRIPT SOURCE")&&last.get().contains("UNTRUSTED"),
-                    "local prompt templates are included as non-authoritative source context");
+            var first=assistant.ask("What is queued? Show the meme script prompts.");
+            ok(String.valueOf(first.get("answer")).contains("queued")&&calls.get()==1,
+                    "mock Ollama produces first chat answer via /api/chat");
+            List<Object>sent=Json.array(last.get().get("messages"));
+            ok("test-ops-llm".equals(last.get().get("model"))
+                    &&"system".equals(Json.object(sent.get(0)).get("role"))
+                    &&"user".equals(Json.object(sent.get(sent.size()-1)).get("role"))
+                    &&"What is queued? Show the meme script prompts.".equals(
+                            Json.object(sent.get(sent.size()-1)).get("content")),
+                    "current question is the LAST true user turn, separate from system context");
+            ok(Json.stringify(sent).contains("Unexpected novelty signs")
+                    &&Json.stringify(sent).contains("MOCK MEME SCRIPT SOURCE")
+                    &&Json.stringify(sent).contains("memeComplete"),
+                    "live state, real source snippets and meme counts are available");
             ok(Files.isRegularFile(root.resolve("data/command_center_assistant_history.json")),
-                    "chat turns are persisted atomically in local data storage");
+                    "chat turns saved to local data file");
             var restored=new CommandCenterAssistant(root,cfg,store);
             ok(((List<?>)restored.history().get("messages")).size()==2,
-                    "persisted conversation restores across Command Center restart");
+                    "chat history survives reload");
+            var second=restored.ask("How many meme evaluations are completed?");
+            ok(String.valueOf(second.get("answer")).contains("memeComplete")&&calls.get()==2,
+                    "meme analysis question receives topic-specific answer");
+            List<Object>history=Json.array(last.get().get("messages"));
+            ok(history.stream().anyMatch(x->x instanceof Map<?,?> m
+                        &&"assistant".equals(m.get("role"))&&String.valueOf(m.get("content")).contains("queued"))
+                    &&"How many meme evaluations are completed?".equals(
+                        Json.object(history.get(history.size()-1)).get("content")),
+                    "previous assistant turn is preserved but new question stays last");
+            restored.ask("hello");
+            ok("Hello! How can I help?".equals(
+                        ((Map<?,?>)((List<?>)restored.history().get("messages")).get(5)).get("content")),
+                    "greeting is not converted into canned status update");
             restored.ask("What changed?");
-            ok(calls.get()==2&&last.get().contains("current job is queued"),
-                    "subsequent turn reuses previous conversation alongside live context");
+            int before=calls.get();
+            var repaired=restored.ask("Are memes analyzed?");
+            ok(calls.get()==before+2
+                    &&String.valueOf(repaired.get("answer")).contains("analysis queue"),
+                    "identical unrelated response triggers a targeted retry");
             restored.clear();
             ok(((List<?>)new CommandCenterAssistant(root,cfg,store).history().get("messages")).isEmpty(),
-                    "clear chat removes saved conversation without deleting pipeline state");
+                    "clear removes saved chat without deleting job data");
             ok("QUEUED".equals(store.storyDetail(cluster.id).get("status")),
-                    "chat and reset never mutate job state");
+                    "read-only conversation never mutates queued jobs");
         }finally{local.stop(0);}
     }
 

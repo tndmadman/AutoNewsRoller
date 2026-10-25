@@ -70,9 +70,9 @@
     }finally{setBusy(false);input.focus();}
   });
   input.addEventListener("keydown",event=>{
-    if(event.key==="Enter"&&(event.ctrlKey||event.metaKey)){
-      event.preventDefault();if(typeof form.requestSubmit==="function")form.requestSubmit();
-    }
+    if(event.key!=="Enter"||event.shiftKey||event.isComposing||event.keyCode===229)return;
+    event.preventDefault();
+    if(!busy&&typeof form.requestSubmit==="function")form.requestSubmit();
   });
   $("assistantClear").addEventListener("click",async()=>{
     if(busy||!confirm("Delete saved assistant conversation from the controller? This does not affect any news jobs or videos."))return;
