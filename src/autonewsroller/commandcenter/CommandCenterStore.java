@@ -1072,6 +1072,8 @@ public final class CommandCenterStore {
             Instant retryAt=now.plusSeconds(failureRetryDelaySeconds);
             m.put("status","QUEUED");m.put("stage","QUEUED");m.put("progress",15);m.put("queuedAt",now.toString());
             m.put("retryNotBefore",retryAt.toString());
+            // Do not show a prior failure as the error on a newly queued attempt.
+            m.remove("error");
             m.put("detail","Production failed; automatic retry "+failures+"/"+failureMaxRetries+" queued"+(failureRetryDelaySeconds>0?" in "+failureRetryDelaySeconds+"s":""));
         }else{
             m.put("status","FAILED");m.put("stage","FAILED");m.put("progress",0);m.remove("retryNotBefore");
@@ -1573,7 +1575,11 @@ public final class CommandCenterStore {
 
     private static boolean nonTransientFailure(String message){
         String lower=message==null?"":message.toLowerCase(Locale.ROOT);
-        return lower.contains("framing_script_validation_failed")
+        return lower.contains("meme_script_validation_failed")
+                ||lower.contains("meme_hook_failure")
+                ||lower.contains("meme_evidence_missing")
+                ||lower.contains("meme_evidence_failure")
+                ||lower.contains("framing_script_validation_failed")
                 ||lower.contains("framing_script_format_failed")
                 ||lower.contains("framing_ollama_output_limit")
                 ||lower.contains("insufficient_framing_evidence")
@@ -1582,6 +1588,11 @@ public final class CommandCenterStore {
     }
     private static String failureTypeForStage(String stage,String message){
         String lower=message==null?"":message.toLowerCase(Locale.ROOT);
+        if(lower.contains("meme_script_validation_failed"))return "MEME_SCRIPT_VALIDATION_FAILURE";
+        if(lower.contains("meme_hook_failure"))return "MEME_HOOK_FAILURE";
+        if(lower.contains("meme_evidence_missing")||lower.contains("meme_evidence_failure"))
+            return "MEME_EVIDENCE_FAILURE";
+        if(lower.contains("ollama_failure"))return "OLLAMA_FAILURE";
         if(lower.contains("framing_ollama_failure"))return "OLLAMA_FAILURE";
         if(lower.contains("framing_ollama_output_limit"))return "OLLAMA_OUTPUT_LIMIT";
         if(lower.contains("framing_script_format_failed"))return "OLLAMA_FORMAT_FAILURE";
