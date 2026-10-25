@@ -659,7 +659,7 @@ public final class SelfTest {
                             Map.of("angle","Sign-shaped roast","factualBasis","F1",
                                     "visualIdea","Signing gag","surprise","Downtown signs","score",6)));
                     output.put("selectedAngle","Signs as salaried staff");
-                }else if(call==2||call==5){
+                }else if(call==2||(call==5&&!missingVisual.get())){
                     output.put("candidates",List.of(
                             Map.of("caption","THEY DID WHAT?","spoken","Seriously, what just happened?",
                                     "factIds",List.of("F1"),"score",10.0),
