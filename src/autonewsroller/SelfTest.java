@@ -50,6 +50,7 @@ public final class SelfTest {
         testPoliticalExposureMode();
         testPairedSequentialVideoProduction();
         testMemePipeline();
+        passed+=MemeScriptContractSelfTest.run();
         testMemeWorthinessEngine(root);
         testMemeRecentFoundScheduling(root);
         testPoliticalExposureLengthRecovery();
