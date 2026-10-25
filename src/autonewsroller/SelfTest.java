@@ -57,6 +57,8 @@ public final class SelfTest {
                 "grief-centered story is held before video generation");
         ok(MemeEditorialGuard.reason("Phone battery died during demo","Device stopped working").isBlank(),
                 "isolated death idiom does not overblock unrelated meme story");
+        ok(!MemeEditorialGuard.reason("Death metal singer died in crash","Family confirms tragedy").isBlank(),
+                "figurative phrase cannot hide a separate reported human fatality");
         ok(MemeEditorialGuard.reason("New death metal album announced","A music review").isBlank(),
                 "unrelated metaphor is not treated as victim-centered tragedy");
         ok(MemeEditorialGuard.reason("City buys novelty signs","Signs were unveiled today").isBlank(),
