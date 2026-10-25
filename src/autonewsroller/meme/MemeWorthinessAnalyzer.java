@@ -4,6 +4,7 @@ import autonewsroller.config.NewsConfig;
 import autonewsroller.model.Article;
 import autonewsroller.model.StoryCluster;
 import autonewsroller.script.OllamaClient;
+import autonewsroller.script.MemeEditorialGuard;
 import autonewsroller.util.Hashing;
 import autonewsroller.util.Json;
 import java.nio.file.Path;
@@ -118,9 +119,7 @@ editorialWarnings (array of short strings), severeRisk (boolean).
         if(reasons.isEmpty())throw new IllegalArgumentException("Meme evaluator returned no reasons");
         List<Map<String,Object>>angles=cleanAngles(raw.get("suggestedAngles"),ids,sourceText.toString());
         List<String>warnings=new ArrayList<>(cleanStrings(raw.get("editorialWarnings"),6,250));
-        String t=sourceText.toString().toLowerCase(Locale.ROOT);
-        boolean tragedy=List.of("killed","died","death toll","murdered","mass shooting",
-                "sexual assault","victims of abuse","fatal crash").stream().anyMatch(t::contains);
+        boolean tragedy=!MemeEditorialGuard.reason(cluster).isBlank();
         if(tragedy){warnings.add("Victim-centered tragedy: automatic comedy is unsuitable");score=Math.min(score,30);}
         boolean severe=Boolean.TRUE.equals(raw.get("severeRisk"))||tragedy;
         if(severe)warnings.add("Editorial review required; automatic meme production disabled");
