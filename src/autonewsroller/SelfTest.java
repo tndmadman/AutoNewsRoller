@@ -637,6 +637,9 @@ public final class SelfTest {
         AtomicInteger calls=new AtomicInteger();
         java.util.concurrent.atomic.AtomicBoolean rejectFirstReview=new java.util.concurrent.atomic.AtomicBoolean(false);
         java.util.concurrent.atomic.AtomicBoolean missingVisual=new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean alwaysWeak=new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean ungroundedHooks=new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean unsupportedNumber=new java.util.concurrent.atomic.AtomicBoolean(false);
         java.util.concurrent.atomic.AtomicBoolean checkedSchema=new java.util.concurrent.atomic.AtomicBoolean(false);
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         server.createContext("/api/generate",exchange->{
@@ -660,7 +663,11 @@ public final class SelfTest {
                             Map.of("angle","Sign-shaped roast","factualBasis","F1",
                                     "visualIdea","Signing gag","surprise","Downtown signs","score",6)));
                     output.put("selectedAngle","Signs as salaried staff");
-                }else if(call==2||(call==5&&!missingVisual.get())){
+                }else if(ungroundedHooks.get()&&call==2){
+                    output.put("candidates",List.of(Map.of(
+                            "caption","THIS IS WILD","spoken","This is wild",
+                            "factIds",List.of("F99"),"score",9.0)));
+                }else if(call==2||(call==5&&!missingVisual.get()&&!unsupportedNumber.get())){
                     output.put("candidates",List.of(
                             Map.of("caption","THEY DID WHAT?","spoken","Seriously, what just happened?",
                                     "factIds",List.of("F1"),"score",10.0),
@@ -674,6 +681,24 @@ public final class SelfTest {
                             Map.of("caption","THE SIGNS ARE TALKING",
                                     "spoken","The signs are alive.",
                                     "factIds",List.of("F99"),"score",9.0)));
+                }else if(unsupportedNumber.get()&&call==3){
+                    output.put("angle","Signs as salaried staff");
+                    output.put("beats",List.of(Map.of(
+                            "speech","The city bought 24 novelty signs for downtown.",
+                            "caption","24 SIGNS","visualPrompt","Cartoon downtown signs",
+                            "purpose","PAYOFF","factIds",List.of("F1"))));
+                }else if(unsupportedNumber.get()&&call==4){
+                    output.put("angle","Signs as salaried staff");
+                    output.put("beats",List.of(Map.of(
+                            "speech","The city bought novelty signs. Even those signs want overtime.",
+                            "caption","SIGNS WANT OVERTIME","visualPrompt","Cartoon novelty street sign punching a time clock",
+                            "purpose","PAYOFF","factIds",List.of("F1"))));
+                }else if(ungroundedHooks.get()&&call==3){
+                    output.put("angle","Signs as salaried staff");
+                    output.put("beats",List.of(Map.of(
+                            "speech","The city bought signs. They're already requesting overtime.",
+                            "caption","SIGNS WANT OVERTIME","visualPrompt","Cartoon sign holding a timecard",
+                            "purpose","PAYOFF","factIds",List.of("F1"))));
                 }else if(missingVisual.get()&&call==3){
                     output.put("angle","Signs as salaried staff");
                     output.put("beats",List.of(Map.of(
@@ -711,11 +736,14 @@ public final class SelfTest {
                             "caption","DOWNTOWN SIGNS ON OVERTIME",
                             "visualPrompt","Satirical novelty sign clocking in at a cartoon downtown office",
                             "purpose","PAYOFF","factIds",List.of("F1"))));
-                }else if(call==4||call==7||(missingVisual.get()&&call==5)){
-                    boolean weak=rejectFirstReview.get()&&call==4;
-                    output.put("hookImpact",weak?3:9);output.put("specificity",8);
-                    output.put("jokeDensity",weak?4:8);output.put("payoff",weak?3:8);
-                    output.put("spokenFlow",9);output.put("factualIntegrity",9);
+                }else if(call==4||call==7||(missingVisual.get()&&call==5)
+                        ||(unsupportedNumber.get()&&call==5)){
+                    boolean weak=alwaysWeak.get()||(rejectFirstReview.get()&&call==4);
+                    output.put("hookImpact",weak?(call==4?0:2):9);
+                    output.put("specificity",weak?6:8);
+                    output.put("jokeDensity",weak?2:8);
+                    output.put("payoff",weak?4:8);
+                    output.put("spokenFlow",9);output.put("factualIntegrity",10);
                     output.put("problems",weak?List.of("Replace a flat headline with a funny contradiction"):
                             List.of());
                 }else throw new IllegalStateException("Unexpected mocked Ollama call "+call);
@@ -771,6 +799,50 @@ public final class SelfTest {
                     "schema-constrained output repairs a missing scene prompt once and validates");
             ok("PASS".equals(Json.object(fixed.hook().get("comedyReview")).get("verdict")),
                     "structural repair still undergoes independent comedy review");
+            calls.set(0);missingVisual.set(false);alwaysWeak.set(true);
+            NewsScript lowRated=new MemeScriptGenerator(client,2).generate(
+                    facts,evidence,false,diagnostics);
+            Map<String,Object>softDiagnostics=Json.object(Json.read(diagnostics));
+            ok(calls.get()==7&&lowRated.segments().size()>=2
+                    &&Boolean.TRUE.equals(lowRated.hook().get("requiresEditorialReview"))
+                    &&Boolean.TRUE.equals(lowRated.hook().get("comedyBelowTarget"))
+                    &&"COMEDY_BELOW_TARGET".equals(softDiagnostics.get("finalDisposition"))
+                    &&"BELOW_TARGET".equals(Json.object(lowRated.hook().get("comedyReview")).get("verdict")),
+                    "exhausted subjective comedy review retains highest-scoring fact-checked script");
+            new MemeScriptValidator().validate(lowRated,evidence);
+            calls.set(0);
+            try{
+                new MemeScriptGenerator(client,2,true,7,true).generate(facts,evidence,false);
+                throw new AssertionError("Explicit strict comedy gate incorrectly accepted weak review");
+            }catch(IllegalStateException expected){
+                ok(expected.getMessage().contains("MEME_SCRIPT_VALIDATION_FAILED"),
+                        "strict comedy mode remains opt-in");
+            }
+            calls.set(0);alwaysWeak.set(false);ungroundedHooks.set(true);
+            NewsScript fallbackHook=new MemeScriptGenerator(client,1).generate(
+                    facts,evidence,false);
+            ok(calls.get()==4&&((Number)fallbackHook.hook().get("hookSelectedScore")).intValue()==0
+                    &&fallbackHook.segments().get(0).narration().contains("City"),
+                    "no eligible Ollama hook falls back to attributable source headline");
+            new MemeScriptValidator().validate(fallbackHook,evidence);
+            calls.set(0);ungroundedHooks.set(false);unsupportedNumber.set(true);
+            NewsScript repairedNumber=new MemeScriptGenerator(client,1).generate(
+                    facts,evidence,false,diagnostics);
+            Map<String,Object>numberDiagnostics=Json.object(Json.read(diagnostics));
+            ok(calls.get()==5
+                    &&!repairedNumber.narration().contains("24")
+                    &&"PASS".equals(numberDiagnostics.get("finalDisposition"))
+                    &&"PASS".equals(Json.object(
+                            ((List<?>)numberDiagnostics.get("attempts")).get(0)).get("factualRepair")),
+                    "unsupported made-up number is removed by model and revalidated");
+            new MemeScriptValidator().validate(repairedNumber,evidence);
+            ok(RemoteWorker.supersededMemeAnalysis(
+                        new IllegalStateException("STALE_MEME_ANALYSIS: Candidate evidence changed"))
+                    &&RemoteWorker.supersededMemeAnalysis(
+                        new IllegalStateException("/api/jobs/test/meme-complete HTTP 409"))
+                    &&!RemoteWorker.supersededMemeAnalysis(
+                        new IllegalStateException("/api/jobs/test/complete HTTP 409")),
+                    "stale meme scoring is superseded without hiding video upload conflicts");
         }finally{server.stop(0);}
     }
 

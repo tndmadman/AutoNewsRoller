@@ -204,6 +204,14 @@ public final class RemoteWorker {
             event("job-finish",Map.of("jobId",jobId,"result","COMPLETE","stage","COMPLETE","outputPath",output.toString()));
             System.out.println("Worker completed: "+currentTopic);
         }catch(Exception e){
+            if("MEME_ANALYSIS".equals(type)&&supersededMemeAnalysis(e)){
+                // Discovery invalidated this claim while analysis was running.
+                // Controller already owns the newer evidence/claim; do not send
+                // an obsolete failure callback that would return HTTP 409 again.
+                event("job-finish",Map.of("jobId",jobId,"result","SUPERSEDED",
+                        "stage","MEME_ANALYSIS","detail","Claim superseded by refreshed evidence"));
+                return;
+            }
             error("job",e);e.printStackTrace();
             boolean acknowledged=false;
             try{
@@ -223,6 +231,13 @@ public final class RemoteWorker {
             state="IDLE";currentJob="";currentTopic="";currentClaimId="";jobType="";stage="";detail="";jobStartedAt="";
         }
     }
+    /** A stale scoring claim is normal when an RSS refresh replaces its evidence. */
+    public static boolean supersededMemeAnalysis(Exception e){
+        String message=e==null?"":String.valueOf(e.getMessage());
+        return message.startsWith("STALE_MEME_ANALYSIS:")
+                ||message.matches("(?s)^/api/jobs/[^ ]+/meme-complete HTTP 409.*");
+    }
+
     private void runMemeAnalysis(Map<String,Object>job)throws Exception{
         if(!cfg.getBool("memeWorthinessEnabled",true))
             throw new IllegalStateException("Worker meme_analysis_v1 is disabled");

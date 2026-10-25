@@ -224,3 +224,40 @@ controller and worker. Synthetic/mock CI cannot prove real local Ollama generati
 quality, especially on the configured model and stories. Examine
 `meme_script_diagnostics.json`, the first caption/TTS hook and the complete
 article-level framing result before publishing.
+
+## Production recovery: subjective comedy is not a hard prerequisite (2026-10-25)
+
+Real local Ollama repeatedly gave zero-to-six humor scores to source-validated videos,
+or supplied no hook candidates meeting strict source-overlap and self-score constraints.
+Previously these conditions aborted production, even where the factual-integrity score
+was 10/10. The automatic worker could therefore render **no MP4s**.
+
+The production default is now `memeComedyReviewEnabled=true` with
+`memeComedyStrictGate=false`. Independent comedy review **still runs** and drives
+up to the bounded `ollamaRetries` rewrites. If no review passes and **at least one
+fully Java-validated script with factual-integrity score >=8** exists, the worker
+retains the highest-scoring valid script instead of refusing the video. The script's
+hook carries `comedyBelowTarget=true`, `requiresEditorialReview=true`, and full
+`comedyReview` feedback. Diagnostics use
+`finalDisposition=COMEDY_BELOW_TARGET`. These are *drafts to review before posting*,
+not certified funny scripts. Set `memeComedyStrictGate=true` to restore blocking
+behavior, or `memeComedyReviewEnabled=false` to disable only reviewer calls.
+
+Hook scoring no longer treats model self-scores as absolute gatekeepers; a short
+headline-based source-attributed fallback is used if no usable model hook survives.
+The fallback is explicitly identified in candidates and reviewed like any other.
+The validator's hard checks for unsupported numbers, invented direct quotes,
+required fact IDs, broken structures, and editorial tragedy gates are **unchanged**.
+An unsupported numeric claim prompts one evidence-constrained revision, then passes
+the *same* validator or is rejected. A job still fails if no fact-checked script
+exists or factual-integrity review is poor.
+
+A meme-analysis claim superseded by RSS refresh returns an informational
+`SUPERSEDED` worker event rather than a misleading job failure and second
+HTTP 409 callback. It is not treated as a completed analysis, and newer evidence
+must still be analyzed normally.
+
+Regression coverage now exercises local-Ollama-like all-low comedy scores,
+headline fallback, numeric correction, strict-gate opt-in, and stale scoring.
+These tests use simulated Ollama responses; **real MP4 production on the user's
+Windows GPU worker still needs a measured acceptance test**.
