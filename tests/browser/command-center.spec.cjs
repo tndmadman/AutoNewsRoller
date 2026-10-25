@@ -192,6 +192,30 @@ test("local Ollama chat restores history, escapes untrusted answers, inspects pr
   }finally{await f.stop();}
 });
 
+test("assistant Enter sends and Shift+Enter inserts newline without posting",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator("#assistantMessages .assistantBubble")).toHaveCount(2);
+    const composer=page.locator("#assistantInput");
+    await composer.fill("How many meme evaluations?");
+    await composer.press("Shift+Enter");
+    await expect(composer).toHaveValue("How many meme evaluations?\n");
+    expect(f.posts.filter(x=>x.path==="/api/assistant/chat")).toHaveLength(0);
+    await composer.type("Show completed counts.");
+    await composer.press("Enter");
+    await expect(page.locator("#assistantMessages .assistantBubble")).toHaveCount(4);
+    const chats=f.posts.filter(x=>x.path==="/api/assistant/chat");
+    expect(chats).toHaveLength(1);
+    expect(chats[0].body.message).toBe("How many meme evaluations?\nShow completed counts.");
+    await expect(composer).toHaveValue("");
+    await composer.fill("hello");
+    await composer.press("Enter");
+    await expect(page.locator("#assistantMessages .assistantBubble")).toHaveCount(6);
+    expect(f.posts.filter(x=>x.path==="/api/assistant/chat")).toHaveLength(2);
+  }finally{await f.stop();}
+});
+
 test("any one-source story can request framing exposure without publisher comparison",async({page})=>{
   const f=fixture(),url=await f.start();
   try{
