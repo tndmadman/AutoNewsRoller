@@ -187,7 +187,8 @@ public final class NewsPipeline {
             Json.write(slotDir.resolve("meme_evidence.json"),memeEvidence.toMap());
             memeGenerator=new MemeScriptGenerator(oc,cfg.getInt("ollamaRetries",5),
                     cfg.getBool("memeComedyReviewEnabled",true),
-                    cfg.getInt("memeComedyMinimumScore",7));
+                    cfg.getInt("memeComedyMinimumScore",7),
+                    cfg.getBool("memeComedyStrictGate",false));
         }
         PoliticalFramingEvidenceBuilder.Evidence evidence=null;
         PoliticalFramingScriptGenerator exposureGenerator=null;
