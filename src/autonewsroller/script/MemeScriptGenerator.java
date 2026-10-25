@@ -270,15 +270,15 @@ Do not modify the approved opening or try to output it as a new beat.
         if(reason.contains("meme_hook_failure"))return "MEME_HOOK_FAILURE";
         if(reason.contains("evidence"))return "MEME_EVIDENCE_FAILURE";
         if(reason.contains("json")||reason.contains("format")||reason.contains("beat purpose")
-                ||reason.contains("continuation"))return "MEME_SCRIPT_FORMAT_FAILURE";
+                ||reason.contains("continuation")||reason.contains("output hit")
+                ||reason.contains("empty response"))return "MEME_SCRIPT_FORMAT_FAILURE";
         return "MEME_SCRIPT_VALIDATION_FAILURE";
     }
     private static boolean isInfrastructure(Exception ex){
         if(ex instanceof java.io.IOException||ex instanceof InterruptedException
                 ||ex instanceof java.net.http.HttpTimeoutException)return true;
         String message=ex==null?"":String.valueOf(ex.getMessage()).toLowerCase(Locale.ROOT);
-        return message.contains("ollama http")||message.contains("ollama returned an empty")
-                ||message.contains("ollama output hit")||message.contains("connectexception")
+        return message.contains("ollama http")||message.contains("connectexception")
                 ||message.contains("timed out")||message.contains("connection refused");
     }
     private static String shortReason(Exception ex){
