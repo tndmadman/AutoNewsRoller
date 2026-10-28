@@ -283,6 +283,8 @@ test("paired normal and narrative review display as separate keyed board rows wi
     await reviewRow.locator('[data-command="UPLOAD"]').click();
     await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/upload-status")
       &&p.body.versionId==="story-1#v2"&&p.body.uploaded).length).toBe(1);
+    expect(f.posts.filter(p=>p.path.endsWith("/upload-status")&&p.body.uploaded)
+      .every(p=>p.body.aigcLabelConfirmed===true)).toBe(true);
     await reviewRow.locator('[data-command="SCRAP"]').click();
     await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/scrap-status")
       &&p.body.versionId==="story-1#v2"&&p.body.scrapped).length).toBe(1);
