@@ -2816,11 +2816,14 @@ public final class SelfTest {
                 Map.of("mustNotShow",List.of("hologram")));
         String newsPositive=ComfyPromptProfiles.positive(news,false,0);
         String newsNegative=ComfyPromptProfiles.negative(config,news,false);
-        ok(newsPositive.contains("wire-service documentary photograph")
+        ok(newsPositive.contains("hand-illustrated editorial news artwork")
+                        &&!newsPositive.contains("wire-service documentary photograph")
                         &&newsPositive.contains("lower quarter")
+                        &&newsNegative.contains("exposed breasts")
+                        &&newsNegative.contains("exposed genitals")
                         &&newsNegative.contains("photographic watermark")
                         &&newsNegative.contains("hologram"),
-                "standard news SDXL profile is realistic and preserves scene-specific exclusions");
+                "standard SDXL profile is recognizably illustrated and enforces mandatory nudity exclusions");
         VisualPlan.Item meme=new VisualPlan.Item(0,"MEME_HOOK","Comedic hook",
                 "The city bought silly traffic signs",4,"goofy traffic-sign scene",Map.of());
         String memePositive=ComfyPromptProfiles.positive(meme,true,0);
