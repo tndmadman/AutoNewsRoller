@@ -570,11 +570,15 @@ public final class NewsPipeline {
         for(Path image:renderOverlays)if(image!=null)safetyAssets.add(image);
         Map<String,Object>safetyManifest=safety.approve(render,safetyAssets,slotDir.resolve("content_safety_approval.json"));
         Path finalDir=slotDir.getParent().resolve("final_videos");Path finalVideo=FileNames.unique(finalDir,c.topic,".mp4");Files.createDirectories(finalDir);
+        // Keep the copy outside the publishable *.mp4 namespace until its sidecar
+        // has been durably created. A crash must never leave a bare MP4 presented
+        // as a publishable file in final_videos.
+        Path stagedVideo=finalDir.resolve(".safety-stage-"+UUID.randomUUID()+".pending");
         try{
             ContentSafetyService.verify(render,safetyManifest,true);
-            Files.copy(render,finalVideo);
-            ContentSafetyService.verify(finalVideo,safetyManifest,false);
-        }catch(Exception safetyFailure){Files.deleteIfExists(finalVideo);throw safetyFailure;}
+            Files.copy(render,stagedVideo);
+            ContentSafetyService.verify(stagedVideo,safetyManifest,false);
+        }catch(Exception safetyFailure){Files.deleteIfExists(stagedVideo);throw safetyFailure;}
         Map<String,Object>prov=new LinkedHashMap<>();prov.put("productionMode",mode.name());
         prov.put("introSound",Map.of("enabled",introEnabled,
                 "identity",introEnabled?introId:"",
@@ -593,7 +597,20 @@ public final class NewsPipeline {
             prov.put("sourceContentFingerprint",memeEvidence.fingerprint());
             prov.put("measuredNarrationSeconds",narrationSeconds);
             prov.put("actualFinalVideoSeconds",finalSeconds);}
-        if(evidence!=null){prov.put("framingEvidence",evidence.toMap());prov.put("lockedHeadline",script.headline());prov.put("lockedTeaser",PoliticalFramingScriptGenerator.TEASER);}prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("postLayout","tiktok-footer-220");prov.put("motionPackage","editorial-motion-v5");prov.put("narrationTiming",alignment.toMap());prov.put("visualStoryboard",storyboard.toMap());prov.put("visualQuality",visualQuality);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("contentSafety",safetyManifest);prov.put("aiDisclosure","AI-GENERATED VISUALS / AI NARRATION; ILLUSTRATION - NOT ACTUAL FOOTAGE");prov.put("publicationChecklist",List.of("Enable platform creator-side AIGC setting before posting","Check attributed sources and platform policy"));prov.put("output",finalVideo.toString());Json.write(finalVideo.resolveSibling(finalVideo.getFileName()+".json"),prov);
+        if(evidence!=null){prov.put("framingEvidence",evidence.toMap());prov.put("lockedHeadline",script.headline());prov.put("lockedTeaser",PoliticalFramingScriptGenerator.TEASER);}prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("postLayout","tiktok-footer-220");prov.put("motionPackage","editorial-motion-v5");prov.put("narrationTiming",alignment.toMap());prov.put("visualStoryboard",storyboard.toMap());prov.put("visualQuality",visualQuality);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("contentSafety",safetyManifest);prov.put("aiDisclosure","AI-GENERATED VISUALS / AI NARRATION; ILLUSTRATION - NOT ACTUAL FOOTAGE");prov.put("publicationChecklist",List.of("Enable platform creator-side AIGC setting before posting","Check attributed sources and platform policy"));prov.put("output",finalVideo.toString());Path sidecar=finalVideo.resolveSibling(finalVideo.getFileName()+".json");
+        boolean promoted=false;
+        try{
+            Json.write(sidecar,prov);
+            try{Files.move(stagedVideo,finalVideo,StandardCopyOption.ATOMIC_MOVE);}
+            catch(AtomicMoveNotSupportedException unsupported){Files.move(stagedVideo,finalVideo);}
+            promoted=true;
+            ContentSafetyService.verify(finalVideo,safetyManifest,false);
+        }catch(Exception publishFailure){
+            if(promoted)Files.deleteIfExists(finalVideo);
+            Files.deleteIfExists(stagedVideo);
+            Files.deleteIfExists(sidecar);
+            throw publishFailure;
+        }
         history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
     }
 
