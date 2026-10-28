@@ -752,10 +752,11 @@ document.addEventListener("click",e=>{
       if(p===null)return;platform=p.trim();
       const n=prompt("Optional upload note (account, caption/version, etc.):","");
       if(n===null)return;note=n.trim();
+      if(!confirm("Confirm you reviewed the final video and verified that the platform's applicable AI-generated-content label is ENABLED on the actual post, including any automatic label. This control cannot change TikTok settings."))return;
       if(platform)localStorage.setItem("autonewsUploadPlatform",platform);
     }else if(!confirm("Mark this video as NOT uploaded? The history entry will be kept."))return;
     if(!versionId){toast("Video version not identified; reload before changing upload status.",true);return}
-    submitOperation(id,button,path+"/upload-status",{uploaded,platform,note,versionId},"POST",uploaded?"Marked manually uploaded.":"Upload mark removed.");
+    submitOperation(id,button,path+"/upload-status",{uploaded,platform,note,versionId,aigcLabelConfirmed:uploaded},"POST",uploaded?"Marked manually uploaded with AIGC confirmation.":"Upload mark removed.");
     return;
   }
   if(["SCRAP","RESTORE"].includes(command)){
