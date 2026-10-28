@@ -7,6 +7,7 @@ import autonewsroller.model.Article;
 import autonewsroller.model.StoryCluster;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.NewsPipeline;
+import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.orchestration.ProductionMode;
 import autonewsroller.orchestration.WorkerState;
 import autonewsroller.util.Json;
@@ -860,10 +861,29 @@ public final class CommandCenterStore {
             if(!completedMode.name().equals(declared))throw new IllegalStateException("Completion mode mismatch: "+declared);
         }else if(completedMode!=ProductionMode.STANDARD)
             throw new IllegalStateException("Experimental video requires a provenance sidecar.");
+        boolean dryRun=Boolean.TRUE.equals(metadata.get("dryRun"));
+        Map<String,Object>manifest=Map.of();
+        if(!dryRun){
+            if(!(metadata.get("sidecar") instanceof Map<?,?>))
+                throw new IllegalStateException("CONTENT_SAFETY: worker completion lacks a provenance sidecar");
+            Map<String,Object>sidecar=Json.object(metadata.get("sidecar"));
+            if(!(sidecar.get("contentSafety") instanceof Map<?,?>))
+                throw new IllegalStateException("CONTENT_SAFETY: missing approval manifest (old worker or unverified output)");
+            manifest=Json.object(sidecar.get("contentSafety"));
+            try{
+                Object serverVideo=m.get("serverVideo");
+                if(serverVideo==null)throw new IllegalStateException("Video upload missing");
+                ContentSafetyService.verify(Path.of(String.valueOf(serverVideo)),manifest,false);
+            }catch(Exception invalid){
+                throw new IllegalStateException("CONTENT_SAFETY: uploaded video not approved: "+invalid.getMessage(),invalid);
+            }
+        }
         int version=nextVideoVersion(jobId);
         String versionId=videoVersionId(jobId,version);
         m.put("status","COMPLETE");m.put("stage","COMPLETE");m.put("progress",100);clearLease(m);m.put("completedAt",Instant.now().toString());m.put("result",new LinkedHashMap<>(metadata));m.remove("error");
         m.put("videoVersion",version);m.put("currentVideoVersionId",versionId);
+        m.put("safetyStatus",dryRun?"NOT_PUBLISHABLE_DRY_RUN":"APPROVED_FOR_EXPORT");
+        m.put("safetyPolicyVersion",ContentSafetyService.POLICY);
         clearCurrentPublicationState(m);m.put("uploaded",false);m.put("scrapped",false);
         Object sidecarObj=metadata.get("sidecar");
         if(sidecarObj instanceof Map<?,?>){
@@ -886,7 +906,11 @@ public final class CommandCenterStore {
             m.put("visualMode",comfyImages>0?"ComfyUI + procedural cards":"Procedural cards");
         }
         for(Map<String,Object>existing:videos.values())if(jobId.equals(String.valueOf(existing.get("storyId"))))existing.put("current",false);
-        Map<String,Object>v=new LinkedHashMap<>();v.put("versionId",versionId);v.put("productionMode",completedMode.name());v.put("storyId",jobId);v.put("jobId",jobId);v.put("version",version);v.put("current",true);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));copyPublicationState(m,v);videos.put(versionId,v);
+        Map<String,Object>v=new LinkedHashMap<>();v.put("versionId",versionId);v.put("productionMode",completedMode.name());v.put("storyId",jobId);v.put("jobId",jobId);v.put("version",version);v.put("current",true);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));
+        v.put("safetyStatus",dryRun?"NOT_PUBLISHABLE_DRY_RUN":"APPROVED_FOR_EXPORT");
+        v.put("safetyPolicyVersion",ContentSafetyService.POLICY);
+        v.put("safetyManifest",manifest);
+        copyPublicationState(m,v);videos.put(versionId,v);
         // Create the second job only AFTER the normal video has been fully recorded.
         // The standard version keeps its own id, path, metadata and uploaded flag.
         if(completedMode==ProductionMode.STANDARD&&pairFramingAfterStandard){
@@ -969,6 +993,14 @@ public final class CommandCenterStore {
         if(alreadyHandled(operationId,identity))return publicStory(m);
         Map<String,Object>v=resolveVideo(storyId,versionId);
         if(v==null)throw new IllegalStateException("No completed local video version is available.");
+        if(uploaded){
+            if(!"APPROVED_FOR_EXPORT".equals(v.getOrDefault("safetyStatus","NOT_SCANNED")))
+                throw new IllegalStateException("CONTENT_SAFETY: historical or dry-run videos cannot be marked publishable");
+            try{
+                ContentSafetyService.verify(Path.of(String.valueOf(v.get("path"))),
+                        Json.object(v.get("safetyManifest")),false);
+            }catch(Exception e){throw new IllegalStateException("CONTENT_SAFETY: video changed or approval invalid: "+e.getMessage(),e);}
+        }
         if(uploaded&&Boolean.TRUE.equals(v.get("scrapped")))
             throw new IllegalStateException("A scrapped video cannot be marked uploaded until it is restored.");
         if(uploaded==Boolean.TRUE.equals(v.get("uploaded"))
@@ -1119,7 +1151,10 @@ public final class CommandCenterStore {
         counts.put("verified",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("verified"))).count());
         counts.put("worthy",stories.values().stream().filter(CommandCenterStore::isActionableWorthy).count());
         counts.put("queued",countStatus("QUEUED"));counts.put("producing",countStatus("PRODUCING"));counts.put("complete",countStatus("COMPLETE")+countStatus("COMPLETE_HISTORY"));counts.put("hold",countStatus("HOLD"));counts.put("skipped",countStatus("SKIPPED"));counts.put("failed",countStatus("FAILED"));
-        counts.put("toPost",videos.values().stream().filter(v->!Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
+        counts.put("toPost",videos.values().stream().filter(v->"APPROVED_FOR_EXPORT".equals(v.get("safetyStatus"))&&!Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
+        counts.put("safetyApproved",videos.values().stream().filter(v->"APPROVED_FOR_EXPORT".equals(v.get("safetyStatus"))).count());
+        counts.put("safetyUnverified",videos.values().stream().filter(v->!"APPROVED_FOR_EXPORT".equals(v.getOrDefault("safetyStatus","NOT_SCANNED"))).count());
+        counts.put("safetyFailures",stories.values().stream().filter(v->String.valueOf(v.getOrDefault("error","")).contains("CONTENT_SAFETY")).count());
         counts.put("uploaded",videos.values().stream().filter(v->Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
         counts.put("scrapped",videos.values().stream().filter(v->Boolean.TRUE.equals(v.get("scrapped"))).count());
         counts.put("videoVersions",videos.size());
@@ -1478,6 +1513,7 @@ public final class CommandCenterStore {
     }
     private static boolean isToPost(Map<String,Object>m){
         return "COMPLETE".equals(String.valueOf(m.get("status")))
+                &&"APPROVED_FOR_EXPORT".equals(m.get("safetyStatus"))
                 &&Boolean.TRUE.equals(m.getOrDefault("entryHasVideo",true))
                 &&!Boolean.TRUE.equals(m.get("uploaded"))
                 &&!Boolean.TRUE.equals(m.get("scrapped"));
@@ -1585,10 +1621,12 @@ public final class CommandCenterStore {
                 ||lower.contains("framing_ollama_output_limit")
                 ||lower.contains("insufficient_framing_evidence")
                 ||lower.contains("stale_framing_evidence")
-                ||lower.contains("locked political framing opening changed");
+                ||lower.contains("locked political framing opening changed")
+                ||lower.contains("content_safety");
     }
     private static String failureTypeForStage(String stage,String message){
         String lower=message==null?"":message.toLowerCase(Locale.ROOT);
+        if(lower.contains("content_safety"))return "CONTENT_SAFETY_BLOCKED";
         if(lower.contains("meme_script_validation_failed"))return "MEME_SCRIPT_VALIDATION_FAILURE";
         if(lower.contains("meme_hook_failure"))return "MEME_HOOK_FAILURE";
         if(lower.contains("meme_editorial_review_required"))return "MEME_EDITORIAL_REVIEW_REQUIRED";
@@ -1738,6 +1776,7 @@ public final class CommandCenterStore {
             if(!v.containsKey("storyId")||!v.containsKey("versionId")||!v.containsKey("version"))changed=true;
             v.put("storyId",storyId);v.put("jobId",storyId);v.put("version",version);v.put("versionId",versionId);
             v.putIfAbsent("scrapped",false);v.putIfAbsent("uploaded",false);
+            v.putIfAbsent("safetyStatus","NOT_SCANNED");
             rebuilt.put(versionId,v);
         }
         if(!rebuilt.keySet().equals(videos.keySet()))changed=true;

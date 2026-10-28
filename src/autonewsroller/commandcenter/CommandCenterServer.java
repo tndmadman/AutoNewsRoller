@@ -3,6 +3,7 @@ package autonewsroller.commandcenter;
 import autonewsroller.config.NewsConfig;
 import autonewsroller.config.SourceConfig;
 import autonewsroller.orchestration.NewsPipeline;
+import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.util.Json;
 import com.sun.net.httpserver.*;
 
@@ -371,6 +372,17 @@ public final class CommandCenterServer {
         Path file=root.resolve("output/command_center/videos").resolve(name).normalize();
         Path dir=root.resolve("output/command_center/videos").normalize();
         if(!file.startsWith(dir)||!Files.isRegularFile(file)){json(x,404,Map.of("error","video not found"));return;}
+        // Uploaded, historical, replaced, or tampered bytes are never served as publishable MP4.
+        if(!name.toLowerCase(Locale.ROOT).endsWith(".json")){
+            try{
+                Path sidecar=file.resolveSibling(file.getFileName()+".json");
+                Map<String,Object>provenance=Json.object(Json.read(sidecar));
+                ContentSafetyService.verify(file,Json.object(provenance.get("contentSafety")),false);
+            }catch(Exception denied){
+                json(x,409,Map.of("error","CONTENT_SAFETY: video unverified or stale; do not repost"));
+                return;
+            }
+        }
         x.getResponseHeaders().set("Content-Type",name.toLowerCase(Locale.ROOT).endsWith(".json")?"application/json":"video/mp4");
         x.getResponseHeaders().set("Cache-Control","no-store");x.sendResponseHeaders(200,Files.size(file));
         try(OutputStream out=x.getResponseBody()){Files.copy(file,out);}

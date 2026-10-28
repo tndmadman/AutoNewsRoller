@@ -45,6 +45,18 @@
       </div>
     </section>
 
+    <section class="panel" id="contentSafetyPanel">
+      <div class="panelTitle"><span>CONTENT SAFETY / EXPORT GATE / CH-08</span><small id="safetyPolicy">POLICY CHECK PENDING</small></div>
+      <div class="metricsGrid" aria-live="polite">
+        <div class="metric"><span>APPROVED VIDEO VERSIONS</span><strong id="safetyApproved">0</strong><small>hash-bound export approvals</small></div>
+        <div class="metric"><span>UNVERIFIED / LEGACY</span><strong id="safetyUnverified">0</strong><small>not cleared for reposting</small></div>
+        <div class="metric"><span>FAILED SAFETY JOBS</span><strong id="safetyFailures">0</strong><small>export blocked</small></div>
+        <div class="metric"><span>DETECTOR HEALTH</span><strong id="safetyHealth">LOCAL CHECK</strong><small>verify on Windows GPU worker</small></div>
+      </div>
+      <div id="safetyRecent" class="videoList" role="status" aria-live="polite">Loading safety records…</div>
+      <p class="signalCaption">Older videos are NOT_SCANNED until audited. An approval expires if video bytes change. Creator-side TikTok AIGC labeling remains a required manual publishing step.</p>
+    </section>
+
     <section class="panel workersPanel">
       <div class="panelTitle"><span>WORKER RACK / CH-02</span><small>CPU / RAM / GPU / VRAM / JOB TELEMETRY</small></div>
       <div id="workers" class="workerGrid emptyState">No workers connected.</div>
