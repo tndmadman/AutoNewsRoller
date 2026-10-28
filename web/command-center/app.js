@@ -1,5 +1,15 @@
 const $=s=>document.querySelector(s);
 let state={stories:[],feeds:[],workers:[],videos:[],counts:{}}, token="", activeFilter="ALL", eventSource=null, refreshTimer=null;
+let safetyHealthStatus="NOT CHECKED",safetyHealthNext=0,safetyHealthInFlight=false;
+async function checkSafetyDetectorHealth(){
+  if(safetyHealthInFlight||Date.now()<safetyHealthNext)return;
+  safetyHealthInFlight=true;safetyHealthNext=Date.now()+60000;
+  try{
+    const h=await api("/api/safety/health");
+    safetyHealthStatus=h.status==="READY"?("READY / "+String(h.detector||"LOCAL")+" "+String(h.version||"")):"UNAVAILABLE";
+  }catch(e){safetyHealthStatus="SCANNER UNAVAILABLE";}
+  finally{safetyHealthInFlight=false;const el=$("#safetyHealth");if(el)el.textContent=safetyHealthStatus;}
+}
 const BOARD_PAGE_SIZES=new Set([10,25,50,100]);
 let boardPageSize=Number(localStorage.getItem("autonewsBoardPageSize")||25);
 if(!BOARD_PAGE_SIZES.has(boardPageSize))boardPageSize=25;
@@ -107,6 +117,7 @@ async function loadState(){
         if(sequence>liveAtStart)mergeLiveEntity(snapshot,event);
       }
       state=snapshot;
+      checkSafetyDetectorHealth().catch(()=>{});
       $("#connection").textContent="LIVE";$("#connection").className="pill ok";
       render();
     }catch(e){
@@ -625,7 +636,7 @@ function renderSafety(){
     const el=$("#"+id);if(el)el.textContent=num(c[key]);
   }
   const policy=$("#safetyPolicy");if(policy)policy.textContent="FAIL-CLOSED / POLICY 2026-10-28-V1";
-  const health=$("#safetyHealth");if(health)health.textContent="NOT VERIFIED";
+  const health=$("#safetyHealth");if(health)health.textContent=safetyHealthStatus;
   const latest=vs.slice().sort((a,b)=>Date.parse(b.completedAt||0)-Date.parse(a.completedAt||0)).slice(0,12);
   const panel=$("#safetyRecent");
   if(panel)reconcileList(panel,latest.map(v=>{

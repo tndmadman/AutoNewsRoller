@@ -57,6 +57,7 @@ public final class CommandCenterServer {
         server=HttpServer.create(new InetSocketAddress(host,requestedPort),0);
         server.setExecutor(Executors.newCachedThreadPool());
         server.createContext("/api/health",this::health);
+        server.createContext("/api/safety/health",this::safetyHealth);
         server.createContext("/api/state",this::state);
         server.createContext("/api/board/stories",this::boardStories);
         server.createContext("/api/assistant",this::assistant);
@@ -105,6 +106,30 @@ public final class CommandCenterServer {
 
     private void health(HttpExchange x)throws IOException{
         json(x,200,Map.of("ok",true,"service","AutoNewsRoller Command Center","time",Instant.now().toString()));
+    }
+
+    private void safetyHealth(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        try{
+            String python=cfg.get("contentSafetyPython","python");
+            Path scanner=root.resolve("tools/content_safety_scan.py").toAbsolutePath();
+            Process process=new ProcessBuilder(python,scanner.toString(),"--health")
+                    .directory(root.toFile()).start();
+            if(!process.waitFor(45,TimeUnit.SECONDS)){
+                process.destroyForcibly();
+                json(x,503,Map.of("error","Safety detector health timed out"));return;
+            }
+            String stdout=new String(process.getInputStream().readAllBytes(),StandardCharsets.UTF_8);
+            if(process.exitValue()!=0){json(x,503,Map.of("error","Safety detector unavailable"));return;}
+            Map<String,Object>health=Json.object(Json.parse(stdout));
+            if(!"READY".equals(health.get("status"))){
+                json(x,503,Map.of("error","Safety detector did not report readiness"));return;
+            }
+            json(x,200,health);
+        }catch(Exception e){
+            json(x,503,Map.of("error","Safety detector unavailable: "+safe(e.getMessage())));
+        }
     }
 
     private void state(HttpExchange x)throws IOException{

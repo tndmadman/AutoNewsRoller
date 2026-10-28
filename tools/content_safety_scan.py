@@ -48,6 +48,7 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--image")
     mode.add_argument("--video")
+    mode.add_argument("--health", action="store_true")
     args = parser.parse_args()
     import cv2
     from nudenet import NudeDetector
@@ -56,6 +57,15 @@ def main():
     version = importlib.metadata.version("nudenet")
     if version != "3.4.2":
         raise RuntimeError("unvalidated NudeNet version: " + version)
+    if args.health:
+        import numpy as np
+        probe = np.zeros((192, 192, 3), dtype=np.uint8)
+        if not isinstance(detector.detect(probe), list):
+            raise ValueError("detector failed synthetic health test")
+        print(json.dumps({"status":"READY","detector":"NudeNet","version":version,
+                          "policyVersion":"content-safety-2026-10-28-v1",
+                          "test":"detector loaded and responded to synthetic safe image"}))
+        return
     path = args.image or args.video
     unsafe = []
     frames = 0
