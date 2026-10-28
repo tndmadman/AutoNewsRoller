@@ -35,6 +35,7 @@ public final class ContentSafetyService {
     private Map<String,Object> scan(String kind,Path input){
         try{
             if(!Files.isRegularFile(input)||Files.size(input)==0)throw new IOException("empty or missing input");
+            String beforeHash=hash(input);
             String python=cfg.get("contentSafetyPython","python");
             Path script=root.resolve("tools/content_safety_scan.py").toAbsolutePath();
             if(!Files.isRegularFile(script))throw new IOException("scanner script missing");
@@ -55,17 +56,26 @@ public final class ContentSafetyService {
             String status=String.valueOf(result.getOrDefault("status",""));
             if(!Set.of("SAFE","UNSAFE","REVIEW_REQUIRED").contains(status))
                 throw new IOException("unexpected safety status");
-            if(!result.containsKey("detector")||!result.containsKey("version"))
-                throw new IOException("unversioned detector result");
+            if(!"NudeNet".equals(result.get("detector"))||!"3.4.2".equals(result.get("version")))
+                throw new IOException("unrecognized detector name or model version");
             if(kind.equals("video")){
-                Object count=result.get("framesInspected"),total=result.get("framesDecoded");
+                Object count=result.get("framesInspected"),total=result.get("framesDecoded"),
+                        expected=result.get("framesExpected"),disclosure=result.get("disclosureFramesVerified");
                 if(!(count instanceof Number)||!(total instanceof Number)
+                        ||!(expected instanceof Number)||!(disclosure instanceof Number)
                         ||((Number)count).longValue()<1
-                        ||((Number)count).longValue()!=((Number)total).longValue())
+                        ||((Number)count).longValue()!=((Number)total).longValue()
+                        ||((Number)expected).longValue()!=((Number)total).longValue())
                     throw new IOException("incomplete final-frame coverage");
+                if("SAFE".equals(status)&&
+                        (!Boolean.TRUE.equals(result.get("disclosureVerified"))
+                        ||((Number)disclosure).longValue()!=((Number)total).longValue()))
+                    throw new IOException("missing final-frame AI disclosure");
             }
+            String afterHash=hash(input);
+            if(!beforeHash.equals(afterHash))throw new IOException("content changed during safety inspection");
             result=new LinkedHashMap<>(result);
-            result.put("sha256",hash(input));
+            result.put("sha256",afterHash);
             result.put("policyVersion",POLICY);
             return result;
         }catch(Exception e){return failure("SCANNER_UNAVAILABLE",crop(e.getMessage(),320));}
@@ -115,8 +125,16 @@ public final class ContentSafetyService {
         if(!"SAFE".equals(frames.get("status"))||!POLICY.equals(frames.get("policyVersion")))
             throw new IllegalStateException("CONTENT_SAFETY_FINAL_AUDIT_MISSING");
         if(!(frames.get("framesDecoded") instanceof Number f) || f.longValue()<1
-                ||!(frames.get("framesInspected") instanceof Number n) || f.longValue()!=n.longValue())
+                ||!(frames.get("framesInspected") instanceof Number n) || f.longValue()!=n.longValue()
+                ||!(frames.get("framesExpected") instanceof Number expected) || f.longValue()!=expected.longValue()
+                ||!(frames.get("disclosureFramesVerified") instanceof Number disclosed) || f.longValue()!=disclosed.longValue()
+                ||!Boolean.TRUE.equals(frames.get("disclosureVerified")))
             throw new IllegalStateException("CONTENT_SAFETY_INCOMPLETE_FRAME_AUDIT");
+        if(!"NudeNet".equals(frames.get("detector"))||!"3.4.2".equals(frames.get("version"))
+                ||!"every decoded frame; full and three overlapping crops".equals(frames.get("coverage")))
+            throw new IllegalStateException("CONTENT_SAFETY_DETECTOR_EVIDENCE_MISSING");
+        if(!manifest.get("videoSha256").equals(frames.get("sha256")))
+            throw new IllegalStateException("CONTENT_SAFETY_SCANNED_HASH_MISMATCH");
         if(checkInputs){
             Object inputs=manifest.get("inputs");
             if(!(inputs instanceof List<?>))throw new IllegalStateException("CONTENT_SAFETY_INPUT_HASHES_MISSING");
