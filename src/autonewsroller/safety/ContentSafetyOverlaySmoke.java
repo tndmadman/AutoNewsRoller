@@ -31,7 +31,13 @@ public final class ContentSafetyOverlaySmoke {
                     "-filter_complex","[0:v][1:v]overlay=0:0:format=auto,format=yuv420p[v]",
                     "-map","[v]","-frames:v","3","-c:v","mpeg4","-q:v","4",
                     video.toString()),root);
-            String python=System.getenv().getOrDefault("SAFETY_PYTHON","python");
+            String python=System.getenv("SAFETY_PYTHON");
+            if(python==null||python.isBlank()){
+                Path local=root.resolve(".venv-safety/bin/python");
+                Path win=root.resolve(".venv-safety/Scripts/python.exe");
+                python=Files.isRegularFile(local)?local.toString():
+                        Files.isRegularFile(win)?win.toString():"python";
+            }
             for(String scanner:List.of("tools/content_safety_scan.py","tools/content_context_scan.py")){
                 String output=command(List.of(python,root.resolve(scanner).toString(),
                         "--video",video.toString()),root);
@@ -57,15 +63,21 @@ public final class ContentSafetyOverlaySmoke {
     private static String command(List<String>arguments,Path root)throws Exception{
         ProcessBuilder builder=new ProcessBuilder(arguments);
         builder.directory(root.toFile());
-        if("ffmpeg".equals(arguments.get(0)))builder.redirectErrorStream(true);
-        else builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-        Process p=builder.start();
-        if(!p.waitFor(180,java.util.concurrent.TimeUnit.SECONDS)){
-            p.destroyForcibly();throw new IllegalStateException("Integration smoke timed out: "+arguments.get(0));
-        }
-        String output=new String(p.getInputStream().readAllBytes(),StandardCharsets.UTF_8).trim();
-        if(p.exitValue()!=0)
-            throw new IllegalStateException("Integration smoke failed "+arguments.get(0)+": "+output);
-        return output;
+        Path errorLog=Files.createTempFile("anr-overlay-smoke-", ".stderr.log");
+        try{
+            builder.redirectError(errorLog.toFile());
+            Process p=builder.start();
+            if(!p.waitFor(180,java.util.concurrent.TimeUnit.SECONDS)){
+                p.destroyForcibly();
+                throw new IllegalStateException("Integration smoke timed out: "+arguments.get(0));
+            }
+            String output=new String(p.getInputStream().readAllBytes(),StandardCharsets.UTF_8).trim();
+            if(p.exitValue()!=0){
+                String stderr=Files.readString(errorLog);
+                throw new IllegalStateException("Integration smoke failed "+arguments.get(0)+": "+
+                        stderr.substring(Math.max(0,stderr.length()-1200))+" / "+output);
+            }
+            return output;
+        }finally{Files.deleteIfExists(errorLog);}
     }
 }
