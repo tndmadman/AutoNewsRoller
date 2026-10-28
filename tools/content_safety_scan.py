@@ -104,7 +104,7 @@ def main():
         if not isinstance(detector.detect(probe), list):
             raise ValueError("detector failed synthetic health test")
         print(json.dumps({"status":"READY","detector":"NudeNet","version":version,
-                          "policyVersion":"content-safety-2026-10-28-v2",
+                          "policyVersion":"content-safety-2026-10-28-v3",
                           "test":"detector loaded and responded to synthetic safe image"}))
         return
     path = args.image or args.video
