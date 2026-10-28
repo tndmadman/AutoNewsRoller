@@ -79,6 +79,7 @@ jobs:
           java -cp build/classes autonewsroller.video.VisualSmoke
           java -cp build/classes autonewsroller.video.PoliticalFramingSmoke
           java -cp build/classes autonewsroller.video.MemeSmoke
+          java -cp build/classes autonewsroller.safety.ContentSafetyOverlaySmoke
 
   linux-headless:
     runs-on: ubuntu-latest
@@ -127,6 +128,7 @@ jobs:
           V5_LONG_SMOKE=true java -cp build/classes autonewsroller.video.VisualSmoke
           java -cp build/classes autonewsroller.video.PoliticalFramingSmoke
           java -cp build/classes autonewsroller.video.MemeSmoke
+          java -cp build/classes autonewsroller.safety.ContentSafetyOverlaySmoke
       - uses: actions/upload-artifact@v4
         if: always()
         with:
