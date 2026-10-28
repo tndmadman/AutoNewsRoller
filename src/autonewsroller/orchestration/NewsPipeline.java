@@ -569,7 +569,12 @@ public final class NewsPipeline {
         safetyAssets.addAll(imgs);safetyAssets.add(disclosure);
         for(Path image:renderOverlays)if(image!=null)safetyAssets.add(image);
         Map<String,Object>safetyManifest=safety.approve(render,safetyAssets,slotDir.resolve("content_safety_approval.json"));
-        Path finalDir=slotDir.getParent().resolve("final_videos");Path finalVideo=FileNames.unique(finalDir,c.topic,".mp4");Files.createDirectories(finalDir);
+        Path finalDir=slotDir.getParent().resolve("final_videos");
+        Path proposedFinal=FileNames.unique(finalDir,c.topic,".mp4");
+        String proposedName=proposedFinal.getFileName().toString();
+        String uniqueSuffix=UUID.randomUUID().toString().replace("-","").substring(0,16);
+        Path finalVideo=proposedFinal.resolveSibling(proposedName.replaceFirst("(?i)\\.mp4$", "")+"_"+uniqueSuffix+".mp4");
+        Files.createDirectories(finalDir);
         // Keep the copy outside the publishable *.mp4 namespace until its sidecar
         // has been durably created. A crash must never leave a bare MP4 presented
         // as a publishable file in final_videos.
