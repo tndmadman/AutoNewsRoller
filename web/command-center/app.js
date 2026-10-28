@@ -643,7 +643,7 @@ function renderSafety(){
     const status=v.safetyStatus||"NOT_SCANNED";
     const versions=String(v.versionId||v.storyId||"legacy");
     const reason=String(v.metadata?.sidecar?.contentSafety?.finalVideoAudit?.reason||"No current safety evidence");
-    return {key:versions,html:'<div class="videoRow"><div class="videoInfo"><strong>'+esc(v.productionMode||"STANDARD")+' / '+esc(versions)+' / '+esc(status)+'</strong><small>'+esc(v.filename||"")+' // '+esc(reason)+'</small></div></div>'};
+    return {key:versions,html:'<div class="safetyAuditRow"><div class="videoInfo"><strong>'+esc(v.productionMode||"STANDARD")+' / '+esc(versions)+' / '+esc(status)+'</strong><small>'+esc(v.filename||"")+' // '+esc(reason)+'</small></div></div>'};
   }),"No videos with new safety manifests yet.");
 }
 function renderVideos(){
