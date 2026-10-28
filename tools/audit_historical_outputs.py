@@ -59,6 +59,7 @@ def inventory(root, extra_dirs=()):
     Exclude audit reports/quarantine so a second audit never re-ingests
     already quarantined media. Symlinks are skipped rather than followed.
     """
+    root = Path(root).resolve()  # Normalize Windows short/long temporary paths.
     output = root / "output"
     dirs = [output] + [Path(x).expanduser().resolve() for x in extra_dirs]
     discovered = {}
