@@ -83,7 +83,7 @@ public final class ContentSafetyService {
     }
 
     private Map<String,Object> runDetector(String scriptName,String kind,Path input,int limit)throws Exception{
-        String python=cfg.get("contentSafetyPython","python");
+        String python=SafetyPython.resolve(root,cfg);
         Path script=root.resolve(scriptName).toAbsolutePath();
         if(!Files.isRegularFile(script))throw new IOException("missing mandatory scanner: "+scriptName);
         Path log=Files.createTempFile("anr-content-scan-", ".stderr.log");
