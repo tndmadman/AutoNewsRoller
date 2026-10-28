@@ -39,8 +39,14 @@ public final class SelfTest {
         manifest.put("policyVersion",ContentSafetyService.POLICY);
         manifest.put("videoSha256",ContentSafetyService.hash(mp4));
         manifest.put("inputs",List.of());
-        manifest.put("finalVideoAudit",Map.of("status","SAFE","policyVersion",ContentSafetyService.POLICY,
-                "framesDecoded",1,"framesInspected",1));
+        Map<String,Object> audit=new LinkedHashMap<>();
+        audit.put("status","SAFE");audit.put("policyVersion",ContentSafetyService.POLICY);
+        audit.put("framesDecoded",1);audit.put("framesInspected",1);audit.put("framesExpected",1);
+        audit.put("disclosureFramesVerified",1);audit.put("disclosureVerified",true);
+        audit.put("detector","NudeNet");audit.put("version","3.4.2");
+        audit.put("coverage","every decoded frame; full and three overlapping crops");
+        audit.put("sha256",ContentSafetyService.hash(mp4));
+        manifest.put("finalVideoAudit",audit);
         Map<String,Object>sidecar=metadata.get("sidecar") instanceof Map<?,?>m
                 ?new LinkedHashMap<>(Json.object(m)):new LinkedHashMap<>();
         sidecar.put("contentSafety",manifest);
