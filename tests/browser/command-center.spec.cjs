@@ -894,3 +894,14 @@ test("terminal meme script failure is explicit and historical error does not mas
     await expect(card.locator(".liveDetail")).not.toContainText("Invalid continuation beats");
   }finally{await f.stop();}
 });
+
+test("safety audit rows never collide with interactive posting ledger rows",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator("#videos .videoRow")).toHaveCount(1);
+    await expect(page.locator("#safetyRecent .safetyAuditRow")).toHaveCount(1);
+    await expect(page.locator("#safetyRecent .videoRow")).toHaveCount(0);
+    await expect(page.locator(".videoRow")).toHaveCount(1);
+  }finally{await f.stop();}
+});
