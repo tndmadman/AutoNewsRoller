@@ -36,49 +36,82 @@ public final class ContentSafetyService {
         try{
             if(!Files.isRegularFile(input)||Files.size(input)==0)throw new IOException("empty or missing input");
             String beforeHash=hash(input);
-            String python=cfg.get("contentSafetyPython","python");
-            Path script=root.resolve("tools/content_safety_scan.py").toAbsolutePath();
-            if(!Files.isRegularFile(script))throw new IOException("scanner script missing");
-            ProcessBuilder pb=new ProcessBuilder(python,script.toString(),"--"+kind,input.toAbsolutePath().toString());
-            pb.directory(root.toAbsolutePath().toFile());
-            pb.environment().put("PYTHONUNBUFFERED","1");
-            Process process=pb.start();
             int limit=kind.equals("video")?cfg.getInt("contentSafetyVideoTimeoutSeconds",3600):
                     cfg.getInt("contentSafetyImageTimeoutSeconds",120);
-            if(!process.waitFor(Math.max(1,limit),TimeUnit.SECONDS)){
-                process.destroyForcibly();
-                return failure("SCANNER_UNAVAILABLE","detector timeout");
-            }
-            String stdout=new String(process.getInputStream().readAllBytes(),StandardCharsets.UTF_8).trim();
-            String stderr=new String(process.getErrorStream().readAllBytes(),StandardCharsets.UTF_8).trim();
-            if(process.exitValue()!=0)throw new IOException("scanner exit "+process.exitValue()+": "+crop(stderr,320));
-            Map<String,Object>result=Json.object(Json.parse(stdout));
-            String status=String.valueOf(result.getOrDefault("status",""));
-            if(!Set.of("SAFE","UNSAFE","REVIEW_REQUIRED").contains(status))
-                throw new IOException("unexpected safety status");
-            if(!"NudeNet".equals(result.get("detector"))||!"3.4.2".equals(result.get("version")))
-                throw new IOException("unrecognized detector name or model version");
+            // Independent, mandatory models. Neither can be skipped by a
+            // worker configuration flag. Any model failure fails the whole job.
+            Map<String,Object>anatomy=runDetector("tools/content_safety_scan.py",kind,input,limit);
+            Map<String,Object>context=runDetector("tools/content_context_scan.py",kind,input,limit);
+            if(!"NudeNet".equals(anatomy.get("detector"))||!"3.4.2".equals(anatomy.get("version")))
+                throw new IOException("unrecognized exposed-anatomy detector");
+            if(!"OpenNSFW2".equals(context.get("detector"))||!"0.19.0".equals(context.get("version")))
+                throw new IOException("unrecognized independent context classifier");
+            String a=String.valueOf(anatomy.getOrDefault("status",""));
+            String c=String.valueOf(context.getOrDefault("status",""));
+            if(!Set.of("SAFE","UNSAFE","REVIEW_REQUIRED").contains(a)
+                    ||!Set.of("SAFE","UNSAFE","REVIEW_REQUIRED").contains(c))
+                throw new IOException("unrecognized safety decision");
             if(kind.equals("video")){
-                Object count=result.get("framesInspected"),total=result.get("framesDecoded"),
-                        expected=result.get("framesExpected"),disclosure=result.get("disclosureFramesVerified");
-                if(!(count instanceof Number)||!(total instanceof Number)
-                        ||!(expected instanceof Number)||!(disclosure instanceof Number)
-                        ||((Number)count).longValue()<1
-                        ||((Number)count).longValue()!=((Number)total).longValue()
-                        ||((Number)expected).longValue()!=((Number)total).longValue())
-                    throw new IOException("incomplete final-frame coverage");
-                if("SAFE".equals(status)&&
-                        (!Boolean.TRUE.equals(result.get("disclosureVerified"))
-                        ||((Number)disclosure).longValue()!=((Number)total).longValue()))
+                long frames=frameCount(anatomy,"framesDecoded");
+                if(frames<1||frameCount(anatomy,"framesInspected")!=frames
+                        ||frameCount(anatomy,"framesExpected")!=frames
+                        ||frameCount(context,"framesDecoded")!=frames
+                        ||frameCount(context,"framesInspected")!=frames
+                        ||frameCount(context,"framesExpected")!=frames)
+                    throw new IOException("independent detectors failed complete-frame coverage");
+                if("SAFE".equals(a)&&(!Boolean.TRUE.equals(anatomy.get("disclosureVerified"))
+                        ||frameCount(anatomy,"disclosureFramesVerified")!=frames))
                     throw new IOException("missing final-frame AI disclosure");
             }
             String afterHash=hash(input);
             if(!beforeHash.equals(afterHash))throw new IOException("content changed during safety inspection");
-            result=new LinkedHashMap<>(result);
+            Map<String,Object>result=new LinkedHashMap<>(anatomy);
+            result.put("contextAudit",context);
+            result.put("status","UNSAFE".equals(a)||"UNSAFE".equals(c)?"UNSAFE":
+                    ("REVIEW_REQUIRED".equals(a)||"REVIEW_REQUIRED".equals(c)?"REVIEW_REQUIRED":"SAFE"));
             result.put("sha256",afterHash);
             result.put("policyVersion",POLICY);
             return result;
         }catch(Exception e){return failure("SCANNER_UNAVAILABLE",crop(e.getMessage(),320));}
+    }
+
+    private static long frameCount(Map<String,Object>result,String name)throws IOException{
+        Object value=result.get(name);
+        if(!(value instanceof Number n)||n.longValue()<0)
+            throw new IOException("missing or invalid frame coverage: "+name);
+        return n.longValue();
+    }
+
+    private Map<String,Object> runDetector(String scriptName,String kind,Path input,int limit)throws Exception{
+        String python=cfg.get("contentSafetyPython","python");
+        Path script=root.resolve(scriptName).toAbsolutePath();
+        if(!Files.isRegularFile(script))throw new IOException("missing mandatory scanner: "+scriptName);
+        Path log=Files.createTempFile("anr-content-scan-", ".stderr.log");
+        try{
+            ProcessBuilder pb=new ProcessBuilder(python,script.toString(),"--"+kind,input.toAbsolutePath().toString());
+            pb.directory(root.toAbsolutePath().toFile());
+            pb.environment().put("PYTHONUNBUFFERED","1");
+            pb.environment().put("TF_CPP_MIN_LOG_LEVEL","2");
+            pb.redirectError(log.toFile());
+            Process process=pb.start();
+            if(!process.waitFor(Math.max(1,limit),TimeUnit.SECONDS)){
+                process.destroyForcibly();
+                process.waitFor(15,TimeUnit.SECONDS);
+                throw new IOException("mandatory scanner timed out: "+scriptName);
+            }
+            String stdout=new String(process.getInputStream().readAllBytes(),StandardCharsets.UTF_8).trim();
+            if(process.exitValue()!=0){
+                String stderr=Files.readString(log);
+                throw new IOException("mandatory scanner failed "+scriptName+" exit "+process.exitValue()+
+                        ": "+crop(stderr,240));
+            }
+            Map<String,Object>result=Json.object(Json.parse(stdout));
+            if(!Set.of("SAFE","UNSAFE","REVIEW_REQUIRED").contains(String.valueOf(result.get("status"))))
+                throw new IOException("malformed scanner decision: "+scriptName);
+            return result;
+        }finally{
+            Files.deleteIfExists(log);
+        }
     }
     private static String crop(String s,int max){if(s==null)return "unknown";return s.length()>max?s.substring(0,max):s;}
     private static Map<String,Object>failure(String status,String reason){
@@ -133,6 +166,14 @@ public final class ContentSafetyService {
         if(!"NudeNet".equals(frames.get("detector"))||!"3.4.2".equals(frames.get("version"))
                 ||!"every decoded frame; full and three overlapping crops".equals(frames.get("coverage")))
             throw new IllegalStateException("CONTENT_SAFETY_DETECTOR_EVIDENCE_MISSING");
+        Map<String,Object>context=Json.object(frames.get("contextAudit"));
+        if(!"SAFE".equals(context.get("status"))||!"OpenNSFW2".equals(context.get("detector"))
+                ||!"0.19.0".equals(context.get("version"))
+                ||!"every decoded frame; complete frame; upper/lower crops on still images".equals(context.get("coverage"))
+                ||!(context.get("framesDecoded") instanceof Number cf)||cf.longValue()!=f.longValue()
+                ||!(context.get("framesInspected") instanceof Number ci)||ci.longValue()!=f.longValue()
+                ||!(context.get("framesExpected") instanceof Number ce)||ce.longValue()!=f.longValue())
+            throw new IllegalStateException("CONTENT_SAFETY_INDEPENDENT_CONTEXT_AUDIT_MISSING");
         if(!manifest.get("videoSha256").equals(frames.get("sha256")))
             throw new IllegalStateException("CONTENT_SAFETY_SCANNED_HASH_MISMATCH");
         if(checkInputs){
