@@ -35,7 +35,7 @@ def main():
         file_hash=sha256(path)
         key=str(path.relative_to(root))
         existing=cache.get(key,{})
-        if existing.get("sha256")==file_hash and existing.get("policyVersion")=="content-safety-2026-10-28-v1" and existing.get("status") in ("SAFE","UNSAFE","REVIEW_REQUIRED"):
+        if existing.get("sha256")==file_hash and existing.get("policyVersion")=="content-safety-2026-10-28-v2" and existing.get("status") in ("SAFE","UNSAFE","REVIEW_REQUIRED"):
             finding=existing
         else:
             action=[sys.executable,str(root/"tools/content_safety_scan.py"),"--video",str(path)]
@@ -52,9 +52,9 @@ def main():
                              "elapsedSeconds":result.get("elapsedSeconds",0)}
             except Exception as error:
                 finding={"status":"SCANNER_UNAVAILABLE","reason":str(error)[:300]}
-            finding.update({"sha256":file_hash,"policyVersion":"content-safety-2026-10-28-v1"})
+            finding.update({"sha256":file_hash,"policyVersion":"content-safety-2026-10-28-v2"})
         finding["file"]=key
-        finding["mustNotRepost"]=finding["status"]!="SAFE"
+        finding["mustNotRepost"]=True  # archival scan never grants a fresh publishable manifest
         if finding["status"]=="UNSAFE" and args.quarantine_confirmed_unsafe:
             q=archive/"quarantine"/key.replace("/","__").replace("\\","__")
             q.parent.mkdir(parents=True,exist_ok=True)
@@ -69,7 +69,7 @@ def main():
         print(finding["status"],key,file=sys.stderr)
     previous.write_text(json.dumps(entries,indent=2),encoding="utf-8")
     report=archive/("archive-audit-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")+".json")
-    report.write_text(json.dumps({"policyVersion":"content-safety-2026-10-28-v1",
+    report.write_text(json.dumps({"policyVersion":"content-safety-2026-10-28-v2",
                                   "scannedAt":datetime.now(timezone.utc).isoformat(),
                                   "total":len(entries),"files":list(entries.values())},indent=2),encoding="utf-8")
     print(str(report))
