@@ -4,6 +4,7 @@ import autonewsroller.config.NewsConfig;
 import autonewsroller.config.SourceConfig;
 import autonewsroller.orchestration.NewsPipeline;
 import autonewsroller.safety.ContentSafetyService;
+import autonewsroller.safety.SafetyPython;
 import autonewsroller.util.Json;
 import com.sun.net.httpserver.*;
 
@@ -133,7 +134,7 @@ public final class CommandCenterServer {
     }
 
     private Map<String,Object> probeSafetyModel(String script,String detector,String version)throws Exception{
-        String python=cfg.get("contentSafetyPython","python");
+        String python=SafetyPython.resolve(root,cfg);
         Path scanner=root.resolve(script).toAbsolutePath();
         if(!Files.isRegularFile(scanner))throw new IOException("Missing "+detector+" scanner");
         Path stderr=Files.createTempFile("anr-safety-health-", ".log");
