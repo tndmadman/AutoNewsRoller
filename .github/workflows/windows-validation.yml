@@ -22,6 +22,8 @@ jobs:
         run: |
           batch_create_news_videos_windows.bat --self-test
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
+          java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
+          python -m py_compile tools/content_safety_scan.py tools/audit_historical_outputs.py
       - name: Windows worker web launcher smoke
         shell: pwsh
         run: |
@@ -87,6 +89,8 @@ jobs:
           bash -n run_gpu_worker_linux.sh
           bash build_linux.sh
           java -cp build/classes autonewsroller.Main --self-test
+          java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
+          python3 -m py_compile tools/content_safety_scan.py tools/audit_historical_outputs.py
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264
       - name: V5 FFmpeg render and actual MP4 contact sheet

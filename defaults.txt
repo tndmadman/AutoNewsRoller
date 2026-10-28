@@ -165,3 +165,10 @@ memeWorthinessExplorationPercent=25
 memeWorthinessOtherJobsPerAnalysis=2
 memeWorthinessMaxRetries=2
 commandCenterAutoMeme=false
+
+# Mandatory local content safety (production has no disable switch)
+contentSafetyPython=python
+contentSafetyImageTimeoutSeconds=120
+contentSafetyVideoTimeoutSeconds=3600
+# Mandatory: content-safety-2026-10-28-v1; NudeNet 3.4.2 320n CPU, threshold 0.18 (uncalibrated)
+# Install requirements-content-safety.txt into the interpreter above.
