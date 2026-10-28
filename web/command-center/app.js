@@ -642,8 +642,16 @@ function renderSafety(){
   if(panel)reconcileList(panel,latest.map(v=>{
     const status=v.safetyStatus||"NOT_SCANNED";
     const versions=String(v.versionId||v.storyId||"legacy");
-    const reason=String(v.metadata?.sidecar?.contentSafety?.finalVideoAudit?.reason||"No current safety evidence");
-    return {key:versions,html:'<div class="safetyAuditRow"><div class="videoInfo"><strong>'+esc(v.productionMode||"STANDARD")+' / '+esc(versions)+' / '+esc(status)+'</strong><small>'+esc(v.filename||"")+' // '+esc(reason)+'</small></div></div>'};
+    const approval=v.safetyManifest||v.metadata?.sidecar?.contentSafety||{};
+    const scan=approval.finalVideoAudit||{},context=scan.contextAudit||{};
+    const detail=String(scan.reason||"No current detector evidence")+
+      (context.reason?" / Context: "+String(context.reason):"");
+    const coverage=scan.framesInspected===undefined?"NOT AUDITED":
+      ("FRAMES "+String(scan.framesInspected)+" / "+String(scan.framesExpected||"?"));
+    const models=scan.detector&&context.detector?
+      (String(scan.detector)+" "+String(scan.version||"?")+" + "+String(context.detector)+" "+String(context.version||"?")):
+      "DETECTOR RECORD INCOMPLETE";
+    return {key:versions,html:'<div class="safetyAuditRow"><div class="videoInfo"><strong>'+esc(v.productionMode||"STANDARD")+' / '+esc(versions)+' / '+esc(status)+'</strong><small>'+esc(v.filename||"")+' // '+esc(coverage)+' // '+esc(models)+'</small><small>'+esc(detail)+'</small></div></div>'};
   }),"No videos with new safety manifests yet.");
 }
 function renderVideos(){
