@@ -56,7 +56,9 @@ public final class ContentSafetyOverlaySmoke {
     }
     private static String command(List<String>arguments,Path root)throws Exception{
         ProcessBuilder builder=new ProcessBuilder(arguments);
-        builder.directory(root.toFile());builder.redirectErrorStream(true);
+        builder.directory(root.toFile());
+        if("ffmpeg".equals(arguments.get(0)))builder.redirectErrorStream(true);
+        else builder.redirectError(ProcessBuilder.Redirect.DISCARD);
         Process p=builder.start();
         if(!p.waitFor(180,java.util.concurrent.TimeUnit.SECONDS)){
             p.destroyForcibly();throw new IllegalStateException("Integration smoke timed out: "+arguments.get(0));
