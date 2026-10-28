@@ -46,6 +46,10 @@ public final class SelfTest {
         audit.put("detector","NudeNet");audit.put("version","3.4.2");
         audit.put("coverage","every decoded frame; full and three overlapping crops");
         audit.put("sha256",ContentSafetyService.hash(mp4));
+        audit.put("contextAudit",Map.of("status","SAFE","detector","OpenNSFW2",
+                "version","0.19.0","framesDecoded",1,"framesInspected",1,
+                "framesExpected",1,"coverage",
+                "every decoded frame; complete frame; upper/lower crops on still images"));
         manifest.put("finalVideoAudit",audit);
         Map<String,Object>sidecar=metadata.get("sidecar") instanceof Map<?,?>m
                 ?new LinkedHashMap<>(Json.object(m)):new LinkedHashMap<>();
