@@ -32,16 +32,57 @@ def scan(image, detector):
         for d in detected:
             if not isinstance(d, dict) or not isinstance(d.get("class"), str):
                 raise ValueError("malformed detector output")
-            if d["class"] in BLOCK_CLASSES and float(d.get("score", -1)) >= THRESHOLD:
-                hits.append({"category": d["class"], "confidence": round(float(d["score"]), 5), "region": name})
+            label = d["class"]
+            confidence = float(d.get("score", -1))
+            if not (0 <= confidence <= 1):
+                raise ValueError("invalid detector confidence")
+            # A future detector can add new exposure classes. Unknown exposed
+            # anatomy must not be silently treated as harmless content.
+            if label.endswith("_EXPOSED") and label not in BLOCK_CLASSES:
+                raise ValueError("unrecognized exposure class: " + label)
+            if label in BLOCK_CLASSES and confidence >= THRESHOLD:
+                hits.append({"category": label, "confidence": round(confidence, 5), "region": name})
     return hits
 
 def disclosure_present(frame):
-    # Overlay is composed after motion, transitions and captions, with fixed coordinates.
+    """Check the actual disclosure banner, two distinct text lines and its fiducial.
+
+    The fiducial is an integrity aid, NOT sufficient evidence by itself.
+    Coordinates use the final overlay's 1080x1920 reference layout.
+    """
+    import numpy as np
     h, w = frame.shape[:2]
-    x, y = round(364 * w / 1080), round(137 * h / 1920)
-    b, g, r = [int(v) for v in frame[y, x, :3]]
-    return r >= 125 and b >= 90 and g < 145
+    if h < 640 or w < 480:
+        return False
+
+    def rect(x1, y1, x2, y2):
+        xa, xb = round(x1 * w / 1080), round(x2 * w / 1080)
+        ya, yb = round(y1 * h / 1920), round(y2 * h / 1920)
+        return frame[ya:yb, xa:xb, :3]
+
+    marker = rect(356, 128, 371, 148)
+    if marker.size == 0:
+        return False
+    b, g, r = marker[:, :, 0], marker[:, :, 1], marker[:, :, 2]
+    magenta_fraction = np.mean((r > 125) & (b > 90) & (g < 145))
+    if magenta_fraction < 0.65:
+        return False
+
+    # Ensure the backing panel remains dark rather than accepting a lone
+    # colored pixel pasted anywhere in an otherwise unlabeled frame.
+    panel = rect(376, 126, 386, 145)
+    if panel.size == 0 or np.mean(np.max(panel, axis=2) < 100) < 0.70:
+        return False
+
+    for y1, y2 in ((145, 170), (184, 211)):
+        ink = rect(390, y1, 1043, y2)
+        if ink.size == 0:
+            return False
+        # Bright foreground ink must occupy both distinct lines, including
+        # the lower "NOT ACTUAL FOOTAGE" text, after MP4 compression.
+        if np.mean(np.min(ink, axis=2) > 170) < 0.006:
+            return False
+    return True
 
 def main():
     parser = argparse.ArgumentParser()
