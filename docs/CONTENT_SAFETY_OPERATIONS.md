@@ -18,7 +18,16 @@ Final MP4 approval references the exact SHA-256, policy version, full-frame audi
 
 ## Install and verify
 
-Use a dedicated compatible Python 3.12 environment for the worker's `contentSafetyPython` configuration. Confirm which interpreter is used rather than assuming the ComfyUI embedded Python contains the needed packages.
+Use a dedicated compatible Python 3.12 environment for the worker's `contentSafetyPython` configuration. The default is now `auto`, selecting `.venv-safety/Scripts/python.exe` on Windows or `.venv-safety/bin/python` on Linux. Legacy `contentSafetyPython=python` also resolves to this virtual environment; it does **not** use whichever system Python happens to be first on PATH. An override must be an explicit executable path. A missing environment blocks export with an actionable error.
+
+**Windows first-time setup / repair (from the AutoNewsRoller project directory):**
+
+```powershell
+.\setup_content_safety_windows.bat
+```
+
+The setup script creates `.venv-safety` with Python 3.12 if needed, installs all three pinned dependencies, loads both pretrained models and verifies the synthetic MP4 scanner smoke test. `setup_windows.bat` also calls this helper. **Drain/stop the worker before installing, then restart it** to load the correct interpreter. Python dependencies installed into ComfyUI, Qwen TTS, Kokoro or globally do not count.
+
 
 ```powershell
 py -3.12 -m venv .venv-safety
@@ -61,13 +70,19 @@ MP4 disclosures and sidecars do not switch on TikTok's creator-side AIGC setting
 
 ## Historical media
 
-```bash
-python tools/audit_historical_outputs.py --root .
+From Windows PowerShell, in the project directory:
+
+```powershell
+.\.venv-safety\Scripts\python.exe tools\audit_historical_outputs.py --root .
 ```
 
-This uses both detectors, is read-only as to existing videos by default, records reports under `output/content_safety`, and always marks historical records `mustNotRepost=true`. An archival safety result is informational only and never grants a new current-controller publishing approval.
+For videos stored elsewhere, add `--extra-dir "D:\Your\Other\Videos"` (repeat for multiple directories). The audit inventories all MP4s recursively in `output` and in any extra directories, not just the current `final_videos` folder. It runs both mandatory detectors on every file and verifies every decoded frame. **Default is read-only to video files and rescans everything**; `--resume` optionally reuses verified same-hash, same-policy, same-model full scans.
 
-Add `--quarantine-confirmed-unsafe` only when you intentionally want confirmed unsafe files moved to a restricted local quarantine. Do not delete ambiguous or unverified evidence.
+Reports are written to `output/content_safety/archive-audit-latest.json` and timestamped `archive-audit-*.json` and `.csv`, including totals and statuses `SAFE`, `UNSAFE`, `REVIEW_REQUIRED`, `SCANNER_UNAVAILABLE`. The terminal and report explicitly say `NO_VIDEO_FILES` if no MP4s are accessible (exit 3), or `INCOMPLETE` if even one mandatory scanner failed (exit 2). No videos are deleted, and the default never moves them. **A technical SAFE scan is not a repost authorization**, and records always say `mustNotRepost=true` until independently cleared.
+
+Pass `--quarantine-flagged` (alias: `--quarantine-confirmed-unsafe`) only when explicitly choosing to move scanner-confirmed `UNSAFE` media into a local restricted quarantine directory. It never moves ambiguous `REVIEW_REQUIRED` or `SCANNER_UNAVAILABLE` videos. It also forces a fresh scan before quarantining previously cached unsafe findings. Do not delete uncertain evidence.
+
+The archive audit **must be run on the workstation holding your historical videos**, or on a mounted directory containing them; it cannot scan TikTok's servers or discover videos that were never downloaded. Run `python tools/test_historical_audit.py` for mocked file-handling regression checks; those tests do not establish the safety of any real MP4.
 
 The October 28 TikTok ban and any link between nudity removal and mass AIGC enforcement remain unverified. Do not imply that this code reverses strikes or proves the cause of account enforcement.
 
