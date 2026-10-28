@@ -6,6 +6,21 @@ on:
     branches: [main]
 
 jobs:
+  archive-regression:
+    name: Archive audit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Historical MP4 audit inventory and quarantine regressions
+        run: python tools/test_historical_audit.py
+
   windows-self-test:
     runs-on: windows-latest
     steps:
