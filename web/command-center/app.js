@@ -635,7 +635,7 @@ function renderSafety(){
   for(const [id,key] of [["safetyApproved","safetyApproved"],["safetyUnverified","safetyUnverified"],["safetyFailures","safetyFailures"]]){
     const el=$("#"+id);if(el)el.textContent=num(c[key]);
   }
-  const policy=$("#safetyPolicy");if(policy)policy.textContent="FAIL-CLOSED / POLICY 2026-10-28-V2";
+  const policy=$("#safetyPolicy");if(policy)policy.textContent="FAIL-CLOSED / POLICY 2026-10-28-V3";
   const health=$("#safetyHealth");if(health)health.textContent=safetyHealthStatus;
   const latest=vs.slice().sort((a,b)=>Date.parse(b.completedAt||0)-Date.parse(a.completedAt||0)).slice(0,12);
   const panel=$("#safetyRecent");
