@@ -38,6 +38,10 @@ public final class ContentSafetySelfTest {
             audit.put("detector","NudeNet");audit.put("version","3.4.2");
             audit.put("coverage","every decoded frame; full and three overlapping crops");
             audit.put("sha256",ContentSafetyService.hash(video));
+        audit.put("contextAudit",Map.of("status","SAFE","detector","OpenNSFW2",
+                "version","0.19.0","framesDecoded",1,"framesInspected",1,
+                "framesExpected",1,"coverage",
+                "every decoded frame; complete frame; upper/lower crops on still images"));
             Map<String,Object>manifest=new LinkedHashMap<>();
             manifest.put("status","APPROVED_FOR_EXPORT");
             manifest.put("policyVersion",ContentSafetyService.POLICY);
