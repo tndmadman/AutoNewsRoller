@@ -1,42 +1,67 @@
-# Content safety / AIGC transition (DRAFT — NOT YET PRODUCTION VALIDATED)
+# Content safety / AIGC transition (DRAFT — real worker validation pending)
 
-## Hard policy
+## Mandatory release policy
 
-The worker scans every generated image and every composed background before use. Failure, timeout and unavailable scanner do not mean SAFE; rejected image attempts are deleted and the untouched Java procedural card remains in place. The final render is decoded frame by frame and scanned; the MP4 is only copied into final_videos after a content-addressed manifest reaches APPROVED_FOR_EXPORT. Worker and controller independently check the exact MP4 SHA-256 against that manifest before offering it in the normal posting/download path.
+Current approval policy: `content-safety-2026-10-28-v3`.
+Older approvals expire. A worker cannot export a new MP4 unless both mandatory local detectors finish successfully, report the exact tested versions, and cover every final decoded frame:
 
-Sensitive stories (war, allegations, sexual violence, minors, medical emergencies, disasters) are restricted to existing Java procedural source/fact graphics. FRAMING_EXPOSURE does not invoke ComfyUI. STANDARD and MEME_RAGEBAIT have common mandatory negative conditioning; the standard prompt profile no longer requests synthetic wire-service documentary images.
+- NudeNet 3.4.2: exposed-anatomy region detection; full frame and three overlapping crops.
+- OpenNSFW2 0.19.0: independent pornographic-context scoring; all final decoded frames, plus upper and lower regions for still images.
 
-The final FFmpeg render overlays a persistent, phone-readable "AI-GENERATED VISUALS / AI NARRATION" label and "ILLUSTRATION - NOT ACTUAL FOOTAGE"; MEME_RAGEBAIT retains SATIRE labeling. A colored marker makes it possible to assert every decoded frame has the overlay without relying on OCR. This alone does not verify every word's legibility.
+NudeNet exposed-anatomy detection uses its effective 0.25 confidence floor. OpenNSFW2 hard-holds a frame at score >=0.70 and requires review at score >=0.20. These are **uncalibrated, conservative preliminary thresholds**, not measured error guarantees. OpenNSFW2 is a pornographic context classifier, **not** a comprehensive erotic-pose classifier. Misclassification and false negatives remain possible. Production release requires licensed evaluation data and acceptable accuracy/latency evidence.
 
-## Installation on the GPU worker
+The worker scans generated and composed images before use. When an image fails, the untouched procedural card is retained. The output video is then independently decoded and checked by both classifiers. A returned error, exception, unexpected response, incomplete frame coverage, unavailable model, missing disclosure, or policy mismatch blocks export.
 
-Use the Python interpreter configured by contentSafetyPython and install:
+Final MP4 approval references the exact SHA-256, policy version, full-frame audit, named detector versions and independent model results. The approved MP4 is copied to a `.pending` staging filename and promoted to a `.mp4` destination only after its provenance sidecar is written. The Command Center verifies its actual MP4 bytes and current manifest before offering upload or download options. Older worker versions lacking this evidence are not grandfathered in.
 
-    python -m pip install -r requirements-content-safety.txt
+**Trust boundary:** The controller currently validates worker-supplied detector evidence and bytes, but does not independently rerun model inference. A compromised worker with the ability to forge sidecars remains a release threat. Restrict worker credentials and access, and do not describe manifest verification as cryptographic attestation.
 
-For the Windows portable Python used by ComfyUI, do not assume packages are installed in the same interpreter; explicitly set contentSafetyPython to the correct compatible Python executable.
+## Install and verify
 
-Default NudeNet 3.4.2 ships a 320n ONNX model and runs CPU-only. Java calls Python as a subprocess. First deployment must verify the model loads, that every expected exposed-anatomy class is returned on licensed test material, and that a whole video completes within the configured timeout. Because it uses CPU ONNX, it does not contend for the ComfyUI GPU lane. A future persistent scanner process would reduce startup overhead.
+Use a dedicated compatible Python 3.12 environment for the worker's `contentSafetyPython` configuration. Confirm which interpreter is used rather than assuming the ComfyUI embedded Python contains the needed packages.
 
-A detector failure fails closed: no MP4 approval. Attempts to disable a mandatory production safety step via configuration are intentionally unsupported. The detector's preliminary 0.25 effective exposed-anatomy threshold is **not calibrated** and must not be treated as a measured false-negative guarantee.
+```powershell
+py -3.12 -m venv .venv-safety
+.\.venv-safety\Scripts\python.exe -m pip install -r requirements-content-safety.txt
+.\.venv-safety\Scripts\python.exe tools/content_safety_scan.py --health
+.\.venv-safety\Scripts\python.exe tools/content_context_scan.py --health
+.\.venv-safety\Scripts\python.exe tools/test_content_safety_scan.py
+```
 
-## Operations
+For Linux, use Python 3.12 with the corresponding `.venv-safety/bin/python` commands.
 
-- To review historical local videos, run: python tools/audit_historical_outputs.py --root .
-- The audit is read-only by default; its JSON reports go to output/content_safety.
-- Add --quarantine-confirmed-unsafe only if moving detector-confirmed unsafe material out of the usual output directory is intended. Borderline/unverified media are not deleted.
-- Existing video versions are NOT_SCANNED, not automatically grandfathered into approval. Historical MP4s cannot use normal Command Center OPEN MP4/download and posting controls without a current matching approval.
-- Uploads from older workers without a safety manifest will fail at controller completion.
-- TikTok's creator-side AIGC switch must be enabled by the operator; the MP4 overlay and metadata do not enable that setting.
-- Publishing description: "AI-generated visuals and synthesized narration. Illustrations are not footage of the reported event. Reporting based on the attributed news sources." Append the article publisher names and URLs.
+TensorFlow CPU requires a large platform-specific wheel. OpenNSFW2 also needs its pretrained weights from the upstream release on its first run; supply a verified local copy in a controlled deployment if downloading is restricted. A failed dependency install or model download does **not** permit a lower-protection fallback.
 
-## Remaining release blockers
+The synthetic smoke tests prove decoder, dual-model startup, frame coverage and disclosure detection on blank scenes. They do **not** measure sexual-content precision/recall, real production throughput, or GPU pipeline compatibility.
 
-1. Validate NudeNet 3.4.2 installation, Windows subprocess behavior, FFmpeg and GPU worker behavior.
-2. Evaluate license-approved adult/nonsexual examples and difficult exposure cases; report precision, false positives, false negatives and category-specific thresholds.
-3. Add an independent classifier for erotic poses/sexual context and challenging illustrations; NudeNet exposed-region boxes alone cannot identify all prohibited content.
-4. Benchmark full-frame, four-region scanning on the Threadripper workstation. It may be prohibitively slow with a new interpreter per still image.
-5. Validate the disclosure marker persists through real FFmpeg encodes and is legible without headline/caption collisions. Verify source grounding of synthetic scenes and the three modes end to end.
-6. Add production-safe retries for positive prompts rejected on news sexual-content wording, archival reapproval controls, and more complete health/operations UI as needed.
+## Visual and AIGC rules
 
-The TikTok account-ban mechanism and its relationship (if any) to the nudity strike remain unverified.
+STANDARD videos produce illustrated editorial imagery rather than presenting generated imagery as authenticated wire-service photographs. MEME_RAGEBAIT is labeled as satire. FRAMING_EXPOSURE uses source/fact graphics, not fabricated photographs. Sensitive incidents use procedural fact graphics rather than realistic synthetic incident reenactments.
+
+Final rendered videos contain top-of-frame labels identifying AI visuals, narration and illustrations. The full-frame NudeNet video scanner verifies presence of the marker, dark backing, and distinct bright text regions on **every decoded frame**. It is not a formal OCR or phone-legibility certification. Verify social-platform safe regions and the finished phone-size presentation before release.
+
+MP4 disclosures and sidecars do not switch on TikTok's creator-side AIGC setting. Operators must explicitly enable the platform's applicable AIGC label and verify source attribution before posting. Verified RSS sources do not guarantee a generated scene is truthful or that an upload meets a platform's policies.
+
+## Historical media
+
+```bash
+python tools/audit_historical_outputs.py --root .
+```
+
+This uses both detectors, is read-only as to existing videos by default, records reports under `output/content_safety`, and always marks historical records `mustNotRepost=true`. An archival safety result is informational only and never grants a new current-controller publishing approval.
+
+Add `--quarantine-confirmed-unsafe` only when you intentionally want confirmed unsafe files moved to a restricted local quarantine. Do not delete ambiguous or unverified evidence.
+
+The October 28 TikTok ban and any link between nudity removal and mass AIGC enforcement remain unverified. Do not imply that this code reverses strikes or proves the cause of account enforcement.
+
+## Required release gates still outstanding
+
+1. Complete licensed evaluation for explicit and ambiguous examples, challenging illustrations and nonsexual skin; measure per-category false positives and false negatives.
+2. Verify OpenNSFW2/TensorFlow, NudeNet, ComfyUI, Ollama, Kokoro/Qwen and FFmpeg together on the actual Windows Threadripper/RTX 3090 worker.
+3. Benchmark all-frame dual-detector scanning and reduce expensive startup costs without losing coverage. Each image currently launches detector subprocesses; each final video is independently decoded twice.
+4. Check visual disclosure legibility and all standard, meme and framing rendered videos at phone size.
+5. Validate historical archive files from the real workstation and restrict unsafe previews in all operational views.
+6. Assess authenticated controller-side attestations or independent rescan to mitigate forged worker manifests.
+7. Run full Java, browser, Python model-health, video smoke and Windows/Linux CI against the last commit before any merge.
+
+No single detector, classifier threshold or safety workflow can make generated nudity literally impossible. The policy is intended to prevent identified prohibited content from being published and to block export when required checks cannot be completed.
