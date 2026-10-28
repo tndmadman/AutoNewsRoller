@@ -31,8 +31,13 @@ public final class ContentSafetySelfTest {
                 throw new AssertionError("Disclosure marker missing");
             Path video=dir.resolve("video.mp4");
             Files.writeString(video,"synthetic placeholder bytes");
-            Map<String,Object>audit=Map.of("status","SAFE","policyVersion",ContentSafetyService.POLICY,
-                    "framesDecoded",1,"framesInspected",1);
+            Map<String,Object>audit=new LinkedHashMap<>();
+            audit.put("status","SAFE");audit.put("policyVersion",ContentSafetyService.POLICY);
+            audit.put("framesDecoded",1);audit.put("framesInspected",1);audit.put("framesExpected",1);
+            audit.put("disclosureFramesVerified",1);audit.put("disclosureVerified",true);
+            audit.put("detector","NudeNet");audit.put("version","3.4.2");
+            audit.put("coverage","every decoded frame; full and three overlapping crops");
+            audit.put("sha256",ContentSafetyService.hash(video));
             Map<String,Object>manifest=new LinkedHashMap<>();
             manifest.put("status","APPROVED_FOR_EXPORT");
             manifest.put("policyVersion",ContentSafetyService.POLICY);
@@ -40,6 +45,12 @@ public final class ContentSafetySelfTest {
             manifest.put("finalVideoAudit",audit);
             manifest.put("inputs",List.of(Map.of("path",overlay.toString(),"sha256",ContentSafetyService.hash(overlay))));
             ContentSafetyService.verify(video,manifest,true);
+            audit.put("disclosureFramesVerified",0);
+            rejects(()->ContentSafetyService.verify(video,manifest,false));
+            audit.put("disclosureFramesVerified",1);
+            audit.remove("detector");
+            rejects(()->ContentSafetyService.verify(video,manifest,false));
+            audit.put("detector","NudeNet");
             Files.writeString(video,"changed bytes invalidate approval");
             rejects(()->ContentSafetyService.verify(video,manifest,false));
             Files.writeString(video,"synthetic placeholder bytes");
