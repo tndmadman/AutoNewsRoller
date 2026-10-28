@@ -58,7 +58,11 @@ def main():
         assert safe["disclosureFramesVerified"] == 3, safe
         assert blocked["status"] == "REVIEW_REQUIRED", blocked
         assert blocked["disclosureFramesVerified"] == 0, blocked
-        print("ContentSafetyScannerSmoke PASS (fully decoded MP4; both disclosure text lines mandatory)")
+        context = run(Path(__file__).with_name("content_context_scan.py"), good)
+        assert context["status"] == "SAFE", context
+        assert context["detector"] == "OpenNSFW2", context
+        assert context["framesInspected"] == context["framesExpected"] == 3, context
+        print("ContentSafetyScannerSmoke PASS (two independent models; every MP4 frame; both disclosure lines mandatory)")
         print("Licensed nudity classifier precision/recall: NOT TESTED")
 
 
