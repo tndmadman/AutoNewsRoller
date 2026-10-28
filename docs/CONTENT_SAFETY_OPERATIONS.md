@@ -34,6 +34,23 @@ TensorFlow CPU requires a large platform-specific wheel. OpenNSFW2 also needs it
 
 The synthetic smoke tests prove decoder, dual-model startup, frame coverage and disclosure detection on blank scenes. They do **not** measure sexual-content precision/recall, real production throughput, or GPU pipeline compatibility.
 
+## Windows workstation release-readiness evidence
+
+With ComfyUI and Ollama running locally, use the native PowerShell verifier.
+It will not upload or publish anything.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\verify_content_safety_windows.ps1 -Python .\.venv-safety\Scripts\python.exe -Video "output\path-to-an-actual-finished-video.mp4"
+```
+
+The script saves a JSON report and logs under
+`output/content_safety/release_readiness/<timestamp>` and never reports
+`PRODUCTION_READY` automatically. The real final video must be visually
+reviewed for disclosure legibility, factual grounding and hidden unsafe details.
+Pass `-FullArchive` only when intentionally scanning all local historical MP4
+files, which can be lengthy. Without `-Video` the report explicitly records
+that end-to-end video validation has not been performed.
+
 ## Visual and AIGC rules
 
 STANDARD videos produce illustrated editorial imagery rather than presenting generated imagery as authenticated wire-service photographs. MEME_RAGEBAIT is labeled as satire. FRAMING_EXPOSURE uses source/fact graphics, not fabricated photographs. Sensitive incidents use procedural fact graphics rather than realistic synthetic incident reenactments.
