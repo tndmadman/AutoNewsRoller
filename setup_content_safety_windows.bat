@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 set "SAFETY_PY=.venv-safety\Scripts\python.exe"
@@ -17,7 +17,7 @@ if not exist "%SAFETY_PY%" (
     exit /b 1
   )
   echo [SAFETY] Creating dedicated Python 3.12 environment...
-  %BOOTSTRAP% -m venv .venv-safety
+  !BOOTSTRAP! -m venv .venv-safety
   if errorlevel 1 exit /b 1
 )
 echo [SAFETY] Installing pinned NudeNet, OpenNSFW2 and CPU TensorFlow...
