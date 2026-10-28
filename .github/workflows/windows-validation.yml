@@ -22,6 +22,7 @@ jobs:
         run: |
           python -m pip install -r requirements-content-safety.txt
           python tools/content_safety_scan.py --health
+          python tools/content_context_scan.py --health
           python tools/test_content_safety_scan.py
       - name: Self test
         shell: cmd
@@ -29,7 +30,7 @@ jobs:
           batch_create_news_videos_windows.bat --self-test
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
-          python -m py_compile tools/content_safety_scan.py tools/test_content_safety_scan.py tools/audit_historical_outputs.py
+          python -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/test_content_safety_scan.py tools/audit_historical_outputs.py
       - name: Windows worker web launcher smoke
         shell: pwsh
         run: |
@@ -93,6 +94,7 @@ jobs:
           python3 -m venv .venv-safety
           .venv-safety/bin/python -m pip install -r requirements-content-safety.txt
           .venv-safety/bin/python tools/content_safety_scan.py --health
+          .venv-safety/bin/python tools/content_context_scan.py --health
           .venv-safety/bin/python tools/test_content_safety_scan.py
       - name: Compile and self-test
         shell: bash
