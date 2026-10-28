@@ -10,8 +10,8 @@ BLOCK_CLASSES = {
     "FEMALE_BREAST_EXPOSED", "FEMALE_GENITALIA_EXPOSED",
     "MALE_GENITALIA_EXPOSED", "BUTTOCKS_EXPOSED", "ANUS_EXPOSED",
 }
-# Intentionally conservative starting thresholds, NOT production-calibrated values.
-THRESHOLD = 0.18
+# NudeNet 3.4.2 internally hardcodes NMS score threshold 0.25; this is NOT production calibrated.
+THRESHOLD = 0.25
 
 def scan(image, detector):
     import cv2

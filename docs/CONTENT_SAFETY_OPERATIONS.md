@@ -18,7 +18,7 @@ For the Windows portable Python used by ComfyUI, do not assume packages are inst
 
 Default NudeNet 3.4.2 ships a 320n ONNX model and runs CPU-only. Java calls Python as a subprocess. First deployment must verify the model loads, that every expected exposed-anatomy class is returned on licensed test material, and that a whole video completes within the configured timeout. Because it uses CPU ONNX, it does not contend for the ComfyUI GPU lane. A future persistent scanner process would reduce startup overhead.
 
-A detector failure fails closed: no MP4 approval. Attempts to disable a mandatory production safety step via configuration are intentionally unsupported. The detector's preliminary 0.18 exposed-anatomy threshold is **not calibrated** and must not be treated as a measured false-negative guarantee.
+A detector failure fails closed: no MP4 approval. Attempts to disable a mandatory production safety step via configuration are intentionally unsupported. The detector's preliminary 0.25 effective exposed-anatomy threshold is **not calibrated** and must not be treated as a measured false-negative guarantee.
 
 ## Operations
 
