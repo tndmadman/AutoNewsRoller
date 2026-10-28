@@ -36,6 +36,13 @@ def scan(image, detector):
                 hits.append({"category": d["class"], "confidence": round(float(d["score"]), 5), "region": name})
     return hits
 
+def disclosure_present(frame):
+    # Overlay is composed after motion, transitions and captions, with fixed coordinates.
+    h, w = frame.shape[:2]
+    x, y = round(364 * w / 1080), round(137 * h / 1920)
+    b, g, r = [int(v) for v in frame[y, x, :3]]
+    return r >= 125 and b >= 90 and g < 145
+
 def main():
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -53,6 +60,7 @@ def main():
     unsafe = []
     frames = 0
     expected = 0
+    disclosure_frames = 0
     if args.image:
         image = cv2.imread(path, cv2.IMREAD_COLOR)
         if image is None:
@@ -71,6 +79,8 @@ def main():
                     break
                 if frame is None:
                     raise ValueError("decoded null frame")
+                if disclosure_present(frame):
+                    disclosure_frames += 1
                 hits = scan(frame, detector)
                 if hits and len(unsafe) < 30:
                     unsafe.append({"frame": frames, "detections": hits[:8]})
@@ -79,15 +89,18 @@ def main():
             cap.release()
         if expected < 1 or frames != expected:
             raise ValueError("incomplete video decode: decoded=" + str(frames) + " expected=" + str(expected))
+    missing_disclosure = bool(args.video) and disclosure_frames != frames
     result = {
-        "status": "UNSAFE" if unsafe else "SAFE",
-        "reason": "explicit-anatomy region detected" if unsafe else "no exposed-anatomy regions above configured threshold",
+        "status": "UNSAFE" if unsafe else ("REVIEW_REQUIRED" if missing_disclosure else "SAFE"),
+        "reason": "explicit-anatomy region detected" if unsafe else ("missing AI disclosure in one or more final frames" if missing_disclosure else "no exposed-anatomy regions above configured threshold"),
         "detector": "NudeNet",
         "version": version,
         "threshold": THRESHOLD,
         "framesInspected": frames,
         "framesDecoded": frames,
         "framesExpected": expected,
+        "disclosureVerified": not missing_disclosure,
+        "disclosureFramesVerified": disclosure_frames,
         "coverage": "every decoded frame; full and three overlapping crops",
         "detections": unsafe,
         "elapsedSeconds": round(time.monotonic()-start, 3),

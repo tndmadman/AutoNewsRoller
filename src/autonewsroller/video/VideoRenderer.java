@@ -35,6 +35,12 @@ public final class VideoRenderer {
 
     public RenderResult render(List<Path>backgrounds,List<Path>overlays,List<Boolean>motion,List<Double>sceneWeights,
                                Path audio,Path output,String requestedEncoder,String captionMode,String narration,Path timingFile)throws Exception{
+        return render(backgrounds,overlays,motion,sceneWeights,audio,output,requestedEncoder,captionMode,narration,timingFile,null);
+    }
+
+    public RenderResult render(List<Path>backgrounds,List<Path>overlays,List<Boolean>motion,List<Double>sceneWeights,
+                               Path audio,Path output,String requestedEncoder,String captionMode,String narration,
+                               Path timingFile,Path disclosure)throws Exception{
         if(backgrounds.isEmpty())throw new IllegalArgumentException("No visuals");
         if(!overlays.isEmpty()&&overlays.size()!=backgrounds.size())throw new IllegalArgumentException("Overlay count must match visuals");
         if(!motion.isEmpty()&&motion.size()!=backgrounds.size())throw new IllegalArgumentException("Motion flag count must match visuals");
@@ -44,7 +50,7 @@ public final class VideoRenderer {
         List<Double>sceneDurations=normalizedSceneDurations(backgrounds.size(),sceneWeights,duration);
         Path ass=CaptionWriter.write(output.resolveSibling(output.getFileName()+".ass"),narration,duration,captionMode,timingFile,width,height,classicCaptions);
         String resolved=new VideoEncoderProbe(ffmpeg).resolve(requestedEncoder);
-        List<String>cmd=motionCommand(backgrounds,overlays,motion,sceneDurations,audio,output,resolved,ass);
+        List<String>cmd=motionCommand(backgrounds,overlays,motion,sceneDurations,audio,output,resolved,ass,disclosure);
 
         String actual=resolved;
         try{
@@ -53,7 +59,7 @@ public final class VideoRenderer {
             if("nvenc".equals(resolved)&&"auto".equals(VideoEncoderProbe.normalize(requestedEncoder))){
                 System.err.println("NVENC render failed; retrying with x264: "+first.getMessage());
                 actual="x264";
-                cmd=motionCommand(backgrounds,overlays,motion,sceneDurations,audio,output,actual,ass);
+                cmd=motionCommand(backgrounds,overlays,motion,sceneDurations,audio,output,actual,ass,disclosure);
                 FfmpegRunner.run(cmd,1200);
             }else throw first;
         }
@@ -64,7 +70,7 @@ public final class VideoRenderer {
     }
 
     private List<String>motionCommand(List<Path>backgrounds,List<Path>overlays,List<Boolean>motion,List<Double>durations,
-                                       Path audio,Path output,String encoder,Path ass){
+                                       Path audio,Path output,String encoder,Path ass,Path disclosure){
         List<String>cmd=new ArrayList<>(List.of(ffmpeg,"-y","-hide_banner","-loglevel","warning"));
         List<Integer>backgroundInputs=new ArrayList<>();
         List<Integer>overlayInputs=new ArrayList<>();
@@ -83,6 +89,7 @@ public final class VideoRenderer {
 
         int audioInput=inputIndex;
         cmd.addAll(List.of("-i",audio.toString()));
+        if(disclosure!=null)cmd.addAll(List.of("-loop","1","-framerate",Integer.toString(fps),"-i",disclosure.toString()));
 
         StringBuilder fc=new StringBuilder();
         for(int i=0;i<backgrounds.size();i++){
@@ -133,6 +140,12 @@ public final class VideoRenderer {
         if(ass!=null){
             fc.append("[vcat]subtitles='").append(escapeFilter(ass.toAbsolutePath().toString())).append("'[vcap];");
             videoLabel="vcap";
+        }
+        // Last composition layer persists through all transitions and motion crops.
+        if(disclosure!=null){
+            fc.append("[").append(videoLabel).append("][").append(audioInput+1).append(":v]")
+                .append("overlay=0:0:format=auto[withAigc];");
+            videoLabel="withAigc";
         }
         fc.append("[").append(videoLabel).append("]format=yuv420p[vout]");
 
