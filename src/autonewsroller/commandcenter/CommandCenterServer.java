@@ -275,6 +275,10 @@ public final class CommandCenterServer {
             if(p.length>=2&&"upload-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>body=bodyObject(x);
                 boolean uploaded=Boolean.TRUE.equals(body.get("uploaded"));
+                if(uploaded&&!Boolean.TRUE.equals(body.get("aigcLabelConfirmed"))){
+                    json(x,409,Map.of("error","AIGC label confirmation required; verify the label on the actual platform post"));
+                    return;
+                }
                 String platform=String.valueOf(body.getOrDefault("platform",""));
                 String note=String.valueOf(body.getOrDefault("note",""));
                 String versionId=String.valueOf(body.getOrDefault("versionId",""));
