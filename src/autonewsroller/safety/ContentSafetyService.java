@@ -164,11 +164,16 @@ public final class ContentSafetyService {
                 ||!Boolean.TRUE.equals(frames.get("disclosureVerified")))
             throw new IllegalStateException("CONTENT_SAFETY_INCOMPLETE_FRAME_AUDIT");
         if(!"NudeNet".equals(frames.get("detector"))||!"3.4.2".equals(frames.get("version"))
-                ||!"every decoded frame; full and three overlapping crops".equals(frames.get("coverage")))
+                ||!"every decoded frame; full and three overlapping crops".equals(frames.get("coverage"))
+                ||!(frames.get("threshold") instanceof Number nt)||nt.doubleValue()>0.25)
             throw new IllegalStateException("CONTENT_SAFETY_DETECTOR_EVIDENCE_MISSING");
+        if(!(frames.get("contextAudit") instanceof Map<?,?>))
+            throw new IllegalStateException("CONTENT_SAFETY_INDEPENDENT_CONTEXT_AUDIT_MISSING");
         Map<String,Object>context=Json.object(frames.get("contextAudit"));
         if(!"SAFE".equals(context.get("status"))||!"OpenNSFW2".equals(context.get("detector"))
                 ||!"0.19.0".equals(context.get("version"))
+                ||!(context.get("reviewThreshold") instanceof Number rt)||rt.doubleValue()>0.20
+                ||!(context.get("hardBlockThreshold") instanceof Number ht)||ht.doubleValue()>0.70
                 ||!"every decoded frame; complete frame; upper/lower crops on still images".equals(context.get("coverage"))
                 ||!(context.get("framesDecoded") instanceof Number cf)||cf.longValue()!=f.longValue()
                 ||!(context.get("framesInspected") instanceof Number ci)||ci.longValue()!=f.longValue()
