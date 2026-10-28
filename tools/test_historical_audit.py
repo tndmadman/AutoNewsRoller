@@ -75,14 +75,14 @@ def main():
         # Opt-in quarantine is allowed only on a new confirmed detector result.
         def unsafe(_root, path, script):
             reply = fake_scan(_root, path, script)
-            if path == old_final and reply["detector"] == "NudeNet":
+            if path.name.lower() == "video-a.mp4" and reply["detector"] == "NudeNet":
                 reply["status"] = "UNSAFE"
                 reply["reason"] = "mock exposure detection"
             return reply
         with patch.object(audit, "call_scanner", side_effect=unsafe):
             fourth = audit.audit(root, extra_dirs=[video_d.parent],
                                  quarantine_flagged=True, progress=quiet)
-            assert fourth["counts"]["UNSAFE"] == 1
+            assert fourth["counts"]["UNSAFE"] == 1, fourth["files"]
             assert fourth["quarantined"] == 1
             assert not old_final.exists()
             quarantine_item = next(e for e in fourth["files"] if "video-A" in e["file"])
