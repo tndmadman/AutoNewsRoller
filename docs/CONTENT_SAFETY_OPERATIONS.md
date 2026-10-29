@@ -18,26 +18,28 @@ Final MP4 approval references the exact SHA-256, policy version, full-frame audi
 
 ## Install and verify
 
-Use a dedicated compatible Python 3.12 environment for the worker's `contentSafetyPython` configuration. The default is now `auto`, selecting `.venv-safety/Scripts/python.exe` on Windows or `.venv-safety/bin/python` on Linux. Legacy `contentSafetyPython=python` also resolves to this virtual environment; it does **not** use whichever system Python happens to be first on PATH. An override must be an explicit executable path. A missing environment blocks export with an actionable error.
+Use a dedicated compatible 64-bit Python 3.10–3.13 environment for the worker's `contentSafetyPython` configuration. The default is now `auto`, selecting `.venv-safety/Scripts/python.exe` on Windows or `.venv-safety/bin/python` on Linux. Legacy `contentSafetyPython=python` also resolves to this virtual environment; it does **not** use whichever system Python happens to be first on PATH. An override must be an explicit executable path. A missing environment blocks export with an actionable error.
 
 **Windows first-time setup / repair (from the AutoNewsRoller project directory):**
+
+Python 3.13 is supported by the pinned TensorFlow CPU 2.20 Windows wheel. The launcher searches for standalone 64-bit CPython 3.13, 3.12, 3.11, or 3.10. If none is installed, use `winget install --id Python.Python.3.13 -e --source winget` or install Python from python.org, open a new terminal, and rerun setup. Do not use ComfyUI's embedded Python for environment creation.
 
 ```powershell
 .\setup_content_safety_windows.bat
 ```
 
-The setup script creates `.venv-safety` with Python 3.12 if needed, installs all three pinned dependencies, loads both pretrained models and verifies the synthetic MP4 scanner smoke test. `setup_windows.bat` also calls this helper. **Drain/stop the worker before installing, then restart it** to load the correct interpreter. Python dependencies installed into ComfyUI, Qwen TTS, Kokoro or globally do not count.
+The setup script creates `.venv-safety` with a detected standalone Python 3.10–3.13 if needed, installs all three pinned dependencies, loads both pretrained models and verifies the synthetic MP4 scanner smoke test. `setup_windows.bat` also calls this helper. **Drain/stop the worker before installing, then restart it** to load the correct interpreter. Python dependencies installed into ComfyUI, Qwen TTS, Kokoro or globally do not count.
 
 
 ```powershell
-py -3.12 -m venv .venv-safety
+py -3.13 -m venv .venv-safety
 .\.venv-safety\Scripts\python.exe -m pip install -r requirements-content-safety.txt
 .\.venv-safety\Scripts\python.exe tools/content_safety_scan.py --health
 .\.venv-safety\Scripts\python.exe tools/content_context_scan.py --health
 .\.venv-safety\Scripts\python.exe tools/test_content_safety_scan.py
 ```
 
-For Linux, use Python 3.12 with the corresponding `.venv-safety/bin/python` commands.
+For Linux, use a compatible CPython version with the corresponding `.venv-safety/bin/python` commands.
 
 TensorFlow CPU requires a large platform-specific wheel. OpenNSFW2 also needs its pretrained weights from the upstream release on its first run; supply a verified local copy in a controlled deployment if downloading is restricted. A failed dependency install or model download does **not** permit a lower-protection fallback.
 
