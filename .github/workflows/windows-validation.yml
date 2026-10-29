@@ -6,6 +6,24 @@ on:
     branches: [main]
 
 jobs:
+  scanner-python-313:
+    name: Windows scanner Python 3.13 bootstrap
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Bootstrap safety environment from Python 3.13
+        shell: pwsh
+        run: |
+          py -3.13 --version
+          cmd /c setup_content_safety_windows.bat
+          if ($LASTEXITCODE -ne 0) { throw 'Python 3.13 scanner bootstrap failed' }
+          $actual = & .venv-safety/Scripts/python.exe -c 'import sys; print(sys.version_info.minor)'
+          if ($actual.Trim() -ne '13') { throw "Expected Python 3.13, got minor version $actual" }
+
   archive-regression:
     name: Archive audit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
