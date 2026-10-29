@@ -45,8 +45,12 @@ public final class VisualAssetGateSelfTest {
             // Incident sensitive stories keep readable procedural cards instead of synthetic depictions.
             if (!VisualAssetGate.sensitiveTopic("Police respond to a shooting",""))throw new AssertionError("Sensitive story detection failed");
             if (VisualAssetGate.sensitiveTopic("New kitchen appliances","Unrelated consumer news"))throw new AssertionError("False sensitive topic");
-            VisualAssetGate.requireReady(ProductionMode.STANDARD,true,List.of(),0,
-                    List.of(graphic),List.of(card),List.of(card),Arrays.asList((Path)null),w,h);
+            // Sensitive reporting must not quietly degrade into a card-only
+            // news or meme video. Both modes must refuse publication.
+            for(ProductionMode mode:List.of(ProductionMode.STANDARD,ProductionMode.MEME_RAGEBAIT)){
+                rejected(()->VisualAssetGate.requireReady(mode,true,List.of(),0,
+                        List.of(graphic),List.of(card),List.of(card),Arrays.asList((Path)null),w,h));
+            }
             Path corrupt=dir.resolve("corrupt.png");
             Files.writeString(corrupt,"This is not a PNG even though it has a PNG filename");
             rejected(()->VisualAssetGate.requireReady(ProductionMode.FRAMING_EXPOSURE,false,List.of(),0,
