@@ -47,7 +47,9 @@ public final class VisualAssetGate {
                 requireImage(overlays.get(i), width, height, "scene " + i + " overlay");
         }
 
-        boolean illustrationRequired = mode != ProductionMode.FRAMING_EXPOSURE && !sensitiveTopic;
+        if(sensitiveTopic && mode != ProductionMode.FRAMING_EXPOSURE)
+            throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: sensitive-topic illustrations are disabled; no placeholder-only news or meme videos can render");
+        boolean illustrationRequired = mode != ProductionMode.FRAMING_EXPOSURE;
         if (illustrationRequired) {
             if (requiredGeneratedScenes == null || requiredGeneratedScenes.isEmpty())
                 throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: no ComfyUI illustration scenes were scheduled");
