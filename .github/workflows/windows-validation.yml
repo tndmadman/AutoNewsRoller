@@ -69,7 +69,9 @@ jobs:
           batch_create_news_videos_windows.bat --self-test
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
+          java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
           java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
+          java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
           python -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/test_content_safety_scan.py tools/audit_historical_outputs.py
       - name: Windows worker web launcher smoke
         shell: pwsh
