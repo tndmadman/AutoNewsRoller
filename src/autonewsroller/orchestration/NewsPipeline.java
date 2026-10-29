@@ -354,14 +354,15 @@ public final class NewsPipeline {
         String usedCheckpoint="";
         int comfyGenerated=0;
         List<Integer> requiredGeneratedScenes=new ArrayList<>();
-        if(sensitiveTopic&&useComfy){
-            events.emit(worker,slot,PipelineStage.VISUALS,"SENSITIVE TOPIC: procedural evidence graphics only");
-            useComfy=false;requireComfy=false;
+        if(sensitiveTopic && mode != ProductionMode.FRAMING_EXPOSURE) {
+            // For this source we cannot safely generate illustrative scenes.
+            // Rather than quietly produce another graphics-only MP4, fail.
+            throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: "+mode+
+                    " is safety-sensitive; ComfyUI disabled, video not produced");
         }
-        if(mode!=ProductionMode.FRAMING_EXPOSURE&&!sensitiveTopic){
+        if(mode!=ProductionMode.FRAMING_EXPOSURE){
             if(!useComfy)throw new IllegalStateException(
                     "VISUAL_IMAGE_REQUIRED: ComfyUI image generation disabled for "+mode);
-            // Fail closed irrespective of worker/controller opt-out settings.
             requireComfy=true;
         }
         if(requireComfy&&!useComfy)throw new IllegalStateException("ComfyUI is required for this job but useComfy=false");
