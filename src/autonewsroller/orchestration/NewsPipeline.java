@@ -353,9 +353,16 @@ public final class NewsPipeline {
                 cfg.get("visualImageReviewOllamaUrl",cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate")));
         String usedCheckpoint="";
         int comfyGenerated=0;
+        List<Integer> requiredGeneratedScenes=new ArrayList<>();
         if(sensitiveTopic&&useComfy){
             events.emit(worker,slot,PipelineStage.VISUALS,"SENSITIVE TOPIC: procedural evidence graphics only");
             useComfy=false;requireComfy=false;
+        }
+        if(mode!=ProductionMode.FRAMING_EXPOSURE&&!sensitiveTopic){
+            if(!useComfy)throw new IllegalStateException(
+                    "VISUAL_IMAGE_REQUIRED: ComfyUI image generation disabled for "+mode);
+            // Fail closed irrespective of worker/controller opt-out settings.
+            requireComfy=true;
         }
         if(requireComfy&&!useComfy)throw new IllegalStateException("ComfyUI is required for this job but useComfy=false");
         if(useComfy&&mode==ProductionMode.FRAMING_EXPOSURE)
@@ -398,6 +405,7 @@ public final class NewsPipeline {
                 if(eligible.isEmpty()){
                     throw new IllegalStateException("visual plan contained no replaceable story visuals");
                 }
+                requiredGeneratedScenes.addAll(eligible);
 
                 int maxRetries=Math.max(0,Math.min(4,cfg.getInt("visualImageReviewRetries",2)));
                 int requestedWidth=cfg.getInt("imageWidth",ComfyImageGenerator.DEFAULT_WIDTH),requestedHeight=cfg.getInt("imageHeight",ComfyImageGenerator.DEFAULT_HEIGHT);
@@ -505,12 +513,13 @@ public final class NewsPipeline {
                     }
                 }
 
-                int requiredCount=Math.min(limit,eligible.size());
-                if(requireComfy&&comfyGenerated<requiredCount&&unsafeImageRejections==0)
-                    throw new IllegalStateException("ComfyUI accepted "+comfyGenerated+"/"+requiredCount+" requested images");
-                if(comfyGenerated==0&&unsafeImageRejections==0)throw new IllegalStateException("ComfyUI produced zero accepted images");
+                int requiredCount=requiredGeneratedScenes.size();
+                if(requireComfy&&comfyGenerated<requiredCount)
+                    throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: ComfyUI accepted "+
+                            comfyGenerated+"/"+requiredCount+" requested images; no fallback video will render");
+                if(comfyGenerated==0)throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: ComfyUI produced zero accepted images");
                 if(unsafeImageRejections>0)events.emit(worker,slot,PipelineStage.VISUALS,
-                        "CONTENT SAFETY: "+unsafeImageRejections+" unsafe/unverified generations replaced by procedural cards");
+                        "CONTENT SAFETY: "+unsafeImageRejections+" unsafe/unverified image attempts rejected; only accepted images will render");
             }catch(Exception e){
                 String msg="COMFYUI FAILED: "+e.getMessage();
                 System.err.println(msg);
@@ -523,6 +532,14 @@ public final class NewsPipeline {
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI DISABLED for this job");
         }
 
+        // No final render, safety approval, or publication is permitted with
+        // missing ComfyUI illustrations or invalid evidence graphics.
+        VisualAssetGate.requireReady(mode,sensitiveTopic,requiredGeneratedScenes,comfyGenerated,
+                imageSources,imgs,renderBackgrounds,renderOverlays,
+                cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+        events.emit(worker,slot,PipelineStage.VISUALS,
+                "VISUAL ASSET GATE PASSED: ComfyUI "+comfyGenerated+
+                "/"+requiredGeneratedScenes.size()+" required; scenes="+imgs.size());
         Path renderAudio=nr.wav();
         // Both formats open with the same original sting. +9.54 dB is 3x waveform
         // amplitude relative to the former -14 dB exposure level, before limiting.
