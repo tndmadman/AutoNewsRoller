@@ -349,6 +349,19 @@ public final class NewsPipeline {
                 cfg.get("visualImageReviewOllamaUrl",cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate")));
         String usedCheckpoint="";
         int comfyGenerated=0;
+        List<Integer> requiredGeneratedScenes=new ArrayList<>();
+        boolean sensitiveTopic=VisualAssetGate.sensitiveTopic(fp.headline(),fp.summary());
+        if(sensitiveTopic && mode != ProductionMode.FRAMING_EXPOSURE) {
+            // For this source we cannot safely generate illustrative scenes.
+            // Rather than quietly produce another graphics-only MP4, fail.
+            throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: "+mode+
+                    " is safety-sensitive; ComfyUI disabled, video not produced");
+        }
+        if(mode!=ProductionMode.FRAMING_EXPOSURE){
+            if(!useComfy)throw new IllegalStateException(
+                    "VISUAL_IMAGE_REQUIRED: ComfyUI image generation disabled for "+mode);
+            requireComfy=true;
+        }
         if(requireComfy&&!useComfy)throw new IllegalStateException("ComfyUI is required for this job but useComfy=false");
         if(useComfy&&mode==ProductionMode.FRAMING_EXPOSURE)
             throw new IllegalStateException("Framing exposure uses verified procedural evidence cards, not fabricated article images.");
@@ -390,6 +403,7 @@ public final class NewsPipeline {
                 if(eligible.isEmpty()){
                     throw new IllegalStateException("visual plan contained no replaceable story visuals");
                 }
+                requiredGeneratedScenes.addAll(eligible);
 
                 int maxRetries=Math.max(0,Math.min(4,cfg.getInt("visualImageReviewRetries",2)));
                 int requestedWidth=cfg.getInt("imageWidth",ComfyImageGenerator.DEFAULT_WIDTH),requestedHeight=cfg.getInt("imageHeight",ComfyImageGenerator.DEFAULT_HEIGHT);
@@ -476,9 +490,10 @@ public final class NewsPipeline {
                     }
                 }
 
-                int requiredCount=Math.min(limit,eligible.size());
+                int requiredCount=requiredGeneratedScenes.size();
                 if(requireComfy&&comfyGenerated<requiredCount)
-                    throw new IllegalStateException("ComfyUI accepted "+comfyGenerated+"/"+requiredCount+" requested images");
+                    throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: ComfyUI accepted "+
+                            comfyGenerated+"/"+requiredCount+" requested images; no fallback video will render");
                 if(comfyGenerated==0)throw new IllegalStateException("ComfyUI produced zero accepted images");
             }catch(Exception e){
                 String msg="COMFYUI FAILED: "+e.getMessage();
@@ -492,6 +507,14 @@ public final class NewsPipeline {
             events.emit(worker,slot,PipelineStage.VISUALS,"COMFYUI DISABLED for this job");
         }
 
+        // This gate precedes all video-render and output promotion paths.
+        // Cards are required graphics, but do not count as AI illustrations.
+        VisualAssetGate.requireReady(mode,sensitiveTopic,requiredGeneratedScenes,comfyGenerated,
+                imageSources,imgs,renderBackgrounds,renderOverlays,
+                cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+        events.emit(worker,slot,PipelineStage.VISUALS,
+                "VISUAL ASSET GATE PASSED: ComfyUI "+comfyGenerated+
+                "/"+requiredGeneratedScenes.size()+" required; scenes="+imgs.size());
         Path renderAudio=nr.wav();
         // Both formats open with the same original sting. +9.54 dB is 3x waveform
         // amplitude relative to the former -14 dB exposure level, before limiting.
