@@ -20,7 +20,7 @@ public final class VisualAssetGate {
     // Safety-sensitive reporting uses factual graphics rather than invented
     // depictions of people, victims, disasters, elections, or crime scenes.
     private static final Pattern SENSITIVE = Pattern.compile(
-            "(?i)\\\\b(war|battle|armed conflict|terroris\\\\w*|bombing|hostage|shooting|murder|rape|sexual assault|sex crime|trafficking|child abuse|minor\\\\w*|underage|fatal|dead|death|corpse|injur\\\\w*|medical|disaster|earthquake|flood|wildfire|evacuat\\\\w*|emergency|election|candidate|politic\\\\w*|accus\\\\w*|alleg\\\\w*|arrest|police|fraud|endorse\\\\w*)\\\\b");
+            "(?i)\\b(war|battle|armed conflict|terroris\\w*|bombing|hostage|shooting|murder|rape|sexual assault|sex crime|trafficking|child abuse|minor\\w*|underage|fatal|dead|death|corpse|injur\\w*|medical|disaster|earthquake|flood|wildfire|evacuat\\w*|emergency|election|candidate|politic\\w*|accus\\w*|alleg\\w*|arrest|police|fraud|endorse\\w*)\\b");
 
     public static boolean sensitiveTopic(String headline, String summary) {
         return SENSITIVE.matcher(String.valueOf(headline) + " " + String.valueOf(summary)).find();
