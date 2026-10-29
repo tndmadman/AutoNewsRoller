@@ -283,6 +283,8 @@ test("paired normal and narrative review display as separate keyed board rows wi
     await reviewRow.locator('[data-command="UPLOAD"]').click();
     await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/upload-status")
       &&p.body.versionId==="story-1#v2"&&p.body.uploaded).length).toBe(1);
+    expect(f.posts.filter(p=>p.path.endsWith("/upload-status")&&p.body.uploaded)
+      .every(p=>p.body.aigcLabelConfirmed===true)).toBe(true);
     await reviewRow.locator('[data-command="SCRAP"]').click();
     await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/scrap-status")
       &&p.body.versionId==="story-1#v2"&&p.body.scrapped).length).toBe(1);
@@ -892,5 +894,16 @@ test("terminal meme script failure is explicit and historical error does not mas
     await expect(card.locator(".failurePanel")).toHaveCount(0);
     await expect(card.locator(".liveDetail")).toContainText("retry 1/3 queued");
     await expect(card.locator(".liveDetail")).not.toContainText("Invalid continuation beats");
+  }finally{await f.stop();}
+});
+
+test("safety audit rows never collide with interactive posting ledger rows",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator("#videos .videoRow")).toHaveCount(1);
+    await expect(page.locator("#safetyRecent .safetyAuditRow")).toHaveCount(1);
+    await expect(page.locator("#safetyRecent .videoRow")).toHaveCount(0);
+    await expect(page.locator(".videoRow")).toHaveCount(1);
   }finally{await f.stop();}
 });

@@ -13,6 +13,10 @@ if not exist .venv-news %PY% -m venv .venv-news || exit /b %errorlevel%
 if not exist .venv-kokoro %PY% -m venv .venv-kokoro || exit /b %errorlevel%
 if not exist .venv-qwen3-tts %PY% -m venv .venv-qwen3-tts || exit /b %errorlevel%
 
+rem Fail closed if mandatory scanner dependencies or model weights are absent.
+call setup_content_safety_windows.bat
+if errorlevel 1 exit /b 1
+
 .venv-kokoro\Scripts\python.exe -m pip install --upgrade pip || exit /b %errorlevel%
 .venv-kokoro\Scripts\python.exe -m pip install -r requirements-kokoro.txt || exit /b %errorlevel%
 .venv-kokoro\Scripts\python.exe -c "import kokoro,soundfile,numpy; print('Kokoro imports passed')" || exit /b %errorlevel%

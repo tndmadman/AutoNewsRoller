@@ -4,6 +4,7 @@ build/
 .venv-news/
 .venv-kokoro/
 .venv-qwen3-tts/
+.venv-safety/
 __pycache__/
 *.pyc
 output/**

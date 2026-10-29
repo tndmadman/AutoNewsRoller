@@ -6,6 +6,39 @@ on:
     branches: [main]
 
 jobs:
+  scanner-python-313:
+    name: Windows scanner Python 3.13 bootstrap
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Bootstrap safety environment from Python 3.13
+        shell: pwsh
+        run: |
+          py -3.13 --version
+          cmd /c setup_content_safety_windows.bat
+          if ($LASTEXITCODE -ne 0) { throw 'Python 3.13 scanner bootstrap failed' }
+          $actual = & .venv-safety/Scripts/python.exe -c 'import sys; print(sys.version_info.minor)'
+          if ($actual.Trim() -ne '13') { throw "Expected Python 3.13, got minor version $actual" }
+
+  archive-regression:
+    name: Archive audit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Historical MP4 audit inventory and quarantine regressions
+        run: python tools/test_historical_audit.py
+
   windows-self-test:
     runs-on: windows-latest
     steps:
@@ -17,11 +50,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Windows readiness script syntax
+        shell: pwsh
+        run: |
+          $tokens=$null
+          $errors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile('tools/verify_content_safety_windows.ps1',[ref]$tokens,[ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+      - name: Dedicated Windows safety environment, model health, and archive regression
+        shell: pwsh
+        run: |
+          cmd /c setup_content_safety_windows.bat
+          if ($LASTEXITCODE -ne 0) { throw 'Dedicated safety environment setup failed' }
+          python tools/test_historical_audit.py
       - name: Self test
         shell: cmd
         run: |
           batch_create_news_videos_windows.bat --self-test
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
+          java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
+          java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
+          java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
+          java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
+          python -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/test_content_safety_scan.py tools/audit_historical_outputs.py
       - name: Windows worker web launcher smoke
         shell: pwsh
         run: |
@@ -63,6 +114,7 @@ jobs:
           java -cp build/classes autonewsroller.video.VisualSmoke
           java -cp build/classes autonewsroller.video.PoliticalFramingSmoke
           java -cp build/classes autonewsroller.video.MemeSmoke
+          java -cp build/classes autonewsroller.safety.ContentSafetyOverlaySmoke
 
   linux-headless:
     runs-on: ubuntu-latest
@@ -75,10 +127,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Dashboard JavaScript syntax
         run: |
           node --check web/command-center/app.js
           node --check web/worker-console/app.js
+      - name: Local NudeNet model health (Linux CPU)
+        shell: bash
+        run: |
+          python3 -m venv .venv-safety
+          .venv-safety/bin/python -m pip install -r requirements-content-safety.txt
+          .venv-safety/bin/python tools/content_safety_scan.py --health
+          .venv-safety/bin/python tools/content_context_scan.py --health
+          .venv-safety/bin/python tools/test_content_safety_scan.py
       - name: Compile and self-test
         shell: bash
         run: |
@@ -87,6 +150,10 @@ jobs:
           bash -n run_gpu_worker_linux.sh
           bash build_linux.sh
           java -cp build/classes autonewsroller.Main --self-test
+          java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
+          java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
+          python3 tools/test_historical_audit.py
+          python3 -m py_compile tools/content_safety_scan.py tools/audit_historical_outputs.py
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264
       - name: V5 FFmpeg render and actual MP4 contact sheet
@@ -98,6 +165,7 @@ jobs:
           V5_LONG_SMOKE=true java -cp build/classes autonewsroller.video.VisualSmoke
           java -cp build/classes autonewsroller.video.PoliticalFramingSmoke
           java -cp build/classes autonewsroller.video.MemeSmoke
+          java -cp build/classes autonewsroller.safety.ContentSafetyOverlaySmoke
       - uses: actions/upload-artifact@v4
         if: always()
         with:
