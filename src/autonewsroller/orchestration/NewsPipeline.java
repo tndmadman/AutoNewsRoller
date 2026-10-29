@@ -351,16 +351,13 @@ public final class NewsPipeline {
         int comfyGenerated=0;
         List<Integer> requiredGeneratedScenes=new ArrayList<>();
         boolean sensitiveTopic=VisualAssetGate.sensitiveTopic(fp.headline(),fp.summary());
-        if(sensitiveTopic&&(mode==ProductionMode.MEME_RAGEBAIT||mode==ProductionMode.STANDARD)){
-            // Keep sensitive news on attributable evidence graphics rather than
-            // fabricate potentially harmful incident photographs.
-            useComfy=false;
-            requireComfy=false;
-            events.emit(worker,slot,PipelineStage.VISUALS,"SENSITIVE TOPIC: procedural evidence graphics only");
-        }else if(mode!=ProductionMode.FRAMING_EXPOSURE){
-            // ComfyUI illustrations are mandatory for every normal/meme video.
-            // No controller setting, batch CLI switch or retry can approve a
-            // caption-only / placeholder-card video.
+        if(sensitiveTopic && mode != ProductionMode.FRAMING_EXPOSURE) {
+            // For this source we cannot safely generate illustrative scenes.
+            // Rather than quietly produce another graphics-only MP4, fail.
+            throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: "+mode+
+                    " is safety-sensitive; ComfyUI disabled, video not produced");
+        }
+        if(mode!=ProductionMode.FRAMING_EXPOSURE){
             if(!useComfy)throw new IllegalStateException(
                     "VISUAL_IMAGE_REQUIRED: ComfyUI image generation disabled for "+mode);
             requireComfy=true;
