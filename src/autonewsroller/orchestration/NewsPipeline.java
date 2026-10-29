@@ -350,7 +350,7 @@ public final class NewsPipeline {
         String usedCheckpoint="";
         int comfyGenerated=0;
         List<Integer> requiredGeneratedScenes=new ArrayList<>();
-        boolean sensitiveTopic=autonewsroller.safety.ContentSafetyPolicy.sensitive(fp.headline()+" "+fp.summary());
+        boolean sensitiveTopic=VisualAssetGate.sensitiveTopic(fp.headline(),fp.summary());
         if(sensitiveTopic&&(mode==ProductionMode.MEME_RAGEBAIT||mode==ProductionMode.STANDARD)){
             // Keep sensitive news on attributable evidence graphics rather than
             // fabricate potentially harmful incident photographs.
