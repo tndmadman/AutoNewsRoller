@@ -21,6 +21,7 @@ jobs:
         shell: cmd
         run: |
           batch_create_news_videos_windows.bat --self-test
+          java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
       - name: Windows worker web launcher smoke
         shell: pwsh
@@ -87,6 +88,7 @@ jobs:
           bash -n run_gpu_worker_linux.sh
           bash build_linux.sh
           java -cp build/classes autonewsroller.Main --self-test
+          java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264
       - name: V5 FFmpeg render and actual MP4 contact sheet
