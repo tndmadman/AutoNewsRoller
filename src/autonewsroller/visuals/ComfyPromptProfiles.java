@@ -1,6 +1,7 @@
 package autonewsroller.visuals;
 
 import autonewsroller.config.NewsConfig;
+import autonewsroller.safety.ContentSafetyPolicy;
 import autonewsroller.model.VisualPlan;
 import autonewsroller.util.Text;
 import java.util.*;
@@ -23,11 +24,12 @@ public final class ComfyPromptProfiles {
             if(attempt>0)suffix+=", simplified composition, stronger visual punchline, distinct large central subject";
         }else{
             suffix="HOOK".equalsIgnoreCase(item.type())
-                    ?", realistic wire-service documentary photograph, immediate thumbnail-safe news subject, upper-middle focal subject, natural colors and skin texture, neutral white balance, restrained saturation, clear lower quarter for the separately rendered news lower-third, vertical editorial portrait"
-                    :", realistic wire-service documentary photograph, clear source-grounded focal subject, natural colors and skin texture, neutral white balance, restrained saturation, editorial depth, clear lower quarter for the separately rendered news lower-third, vertical editorial portrait";
+                    ?", clearly hand-illustrated editorial news artwork, immediate thumbnail-safe news subject, upper-middle focal subject, natural colors and skin texture, neutral white balance, restrained saturation, clear lower quarter for the separately rendered news lower-third, vertical editorial portrait"
+                    :", clearly hand-illustrated editorial news artwork, clear source-grounded focal subject, natural colors and skin texture, neutral white balance, restrained saturation, editorial depth, clear lower quarter for the separately rendered news lower-third, vertical editorial portrait";
             if(attempt>0)suffix+=", simpler documented focal action, clean factual composition, clear subject separation";
         }
-        String prompt=Text.clean(base+" "+suffix);
+        String prompt=Text.clean(base+" "+suffix+", fully clothed people when shown, appropriate everyday clothing, nonsexual composition, not presented as a genuine event photograph");
+        ContentSafetyPolicy.validatePositive(prompt);
         if(!meme)assertNoExcludedConceptInPositive(item,prompt);
         return prompt;
     }
@@ -54,7 +56,7 @@ public final class ComfyPromptProfiles {
                 if(!term.isBlank())terms.add(term);
             }
         }
-        return String.join(", ",terms);
+        return ContentSafetyPolicy.negative(String.join(", ",terms));
     }
 
     private static void assertNoExcludedConceptInPositive(VisualPlan.Item item,String prompt){

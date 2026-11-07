@@ -3,6 +3,8 @@ package autonewsroller.commandcenter;
 import autonewsroller.config.NewsConfig;
 import autonewsroller.config.SourceConfig;
 import autonewsroller.orchestration.NewsPipeline;
+import autonewsroller.safety.ContentSafetyService;
+import autonewsroller.safety.SafetyPython;
 import autonewsroller.util.Json;
 import com.sun.net.httpserver.*;
 
@@ -28,6 +30,8 @@ public final class CommandCenterServer {
     private final CopyOnWriteArrayList<BlockingQueue<String>>subscribers=new CopyOnWriteArrayList<>();
     private final AtomicBoolean scanInFlight=new AtomicBoolean();
     private HttpServer server;
+    private volatile Map<String,Object> cachedSafetyHealth=Map.of();
+    private volatile long safetyHealthCheckedAt=0;
 
     public CommandCenterServer(Path root,NewsConfig cfg,String host,int port,int scanMinutes,boolean autoQueue,double autoThreshold,int maxQueued,String token,boolean scanOnStart){
         this.root=root;this.cfg=cfg;this.host=host;this.requestedPort=port;this.scanMinutes=Math.max(1,scanMinutes);this.token=token==null?"":token.trim();this.scanOnStart=scanOnStart;
@@ -56,6 +60,7 @@ public final class CommandCenterServer {
         server=HttpServer.create(new InetSocketAddress(host,requestedPort),0);
         server.setExecutor(Executors.newCachedThreadPool());
         server.createContext("/api/health",this::health);
+        server.createContext("/api/safety/health",this::safetyHealth);
         server.createContext("/api/state",this::state);
         server.createContext("/api/board/stories",this::boardStories);
         server.createContext("/api/assistant",this::assistant);
@@ -104,6 +109,54 @@ public final class CommandCenterServer {
 
     private void health(HttpExchange x)throws IOException{
         json(x,200,Map.of("ok",true,"service","AutoNewsRoller Command Center","time",Instant.now().toString()));
+    }
+
+    private void safetyHealth(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        try{
+            Map<String,Object> health;
+            synchronized(this){
+                if(System.currentTimeMillis()-safetyHealthCheckedAt>300000||cachedSafetyHealth.isEmpty()){
+                    Map<String,Object> anatomy=probeSafetyModel("tools/content_safety_scan.py","NudeNet","3.4.2");
+                    Map<String,Object> context=probeSafetyModel("tools/content_context_scan.py","OpenNSFW2","0.19.0");
+                    cachedSafetyHealth=Map.of("status","READY","detector","NudeNet + OpenNSFW2",
+                            "version","3.4.2 + 0.19.0","policyVersion",ContentSafetyService.POLICY,
+                            "models",List.of(anatomy,context));
+                    safetyHealthCheckedAt=System.currentTimeMillis();
+                }
+                health=cachedSafetyHealth;
+            }
+            json(x,200,health);
+        }catch(Exception e){
+            json(x,503,Map.of("error","Mandatory safety model unavailable: "+safe(e.getMessage())));
+        }
+    }
+
+    private Map<String,Object> probeSafetyModel(String script,String detector,String version)throws Exception{
+        String python=SafetyPython.resolve(root,cfg);
+        Path scanner=root.resolve(script).toAbsolutePath();
+        if(!Files.isRegularFile(scanner))throw new IOException("Missing "+detector+" scanner");
+        Path stderr=Files.createTempFile("anr-safety-health-", ".log");
+        try{
+            ProcessBuilder builder=new ProcessBuilder(python,scanner.toString(),"--health");
+            builder.directory(root.toFile());
+            builder.environment().put("TF_CPP_MIN_LOG_LEVEL","2");
+            builder.redirectError(stderr.toFile());
+            Process process=builder.start();
+            if(!process.waitFor(150,TimeUnit.SECONDS)){
+                process.destroyForcibly();
+                throw new IOException(detector+" health timeout");
+            }
+            if(process.exitValue()!=0)throw new IOException(detector+" health failed");
+            Map<String,Object> result=Json.object(Json.parse(
+                    new String(process.getInputStream().readAllBytes(),StandardCharsets.UTF_8)));
+            if(!"READY".equals(result.get("status"))||!detector.equals(result.get("detector"))
+                    ||!version.equals(result.get("version"))
+                    ||!ContentSafetyService.POLICY.equals(result.get("policyVersion")))
+                throw new IOException(detector+" did not validate the current safety policy");
+            return result;
+        }finally{Files.deleteIfExists(stderr);}
     }
 
     private void state(HttpExchange x)throws IOException{
@@ -223,6 +276,10 @@ public final class CommandCenterServer {
             if(p.length>=2&&"upload-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>body=bodyObject(x);
                 boolean uploaded=Boolean.TRUE.equals(body.get("uploaded"));
+                if(uploaded&&!Boolean.TRUE.equals(body.get("aigcLabelConfirmed"))){
+                    json(x,409,Map.of("error","AIGC label confirmation required; verify the label on the actual platform post"));
+                    return;
+                }
                 String platform=String.valueOf(body.getOrDefault("platform",""));
                 String note=String.valueOf(body.getOrDefault("note",""));
                 String versionId=String.valueOf(body.getOrDefault("versionId",""));
@@ -371,6 +428,17 @@ public final class CommandCenterServer {
         Path file=root.resolve("output/command_center/videos").resolve(name).normalize();
         Path dir=root.resolve("output/command_center/videos").normalize();
         if(!file.startsWith(dir)||!Files.isRegularFile(file)){json(x,404,Map.of("error","video not found"));return;}
+        // Uploaded, historical, replaced, or tampered bytes are never served as publishable MP4.
+        if(!name.toLowerCase(Locale.ROOT).endsWith(".json")){
+            try{
+                Path sidecar=file.resolveSibling(file.getFileName()+".json");
+                Map<String,Object>provenance=Json.object(Json.read(sidecar));
+                ContentSafetyService.verify(file,Json.object(provenance.get("contentSafety")),false);
+            }catch(Exception denied){
+                json(x,409,Map.of("error","CONTENT_SAFETY: video unverified or stale; do not repost"));
+                return;
+            }
+        }
         x.getResponseHeaders().set("Content-Type",name.toLowerCase(Locale.ROOT).endsWith(".json")?"application/json":"video/mp4");
         x.getResponseHeaders().set("Cache-Control","no-store");x.sendResponseHeaders(200,Files.size(file));
         try(OutputStream out=x.getResponseBody()){Files.copy(file,out);}

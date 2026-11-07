@@ -8,6 +8,7 @@ import autonewsroller.model.*;
 import autonewsroller.meme.MemeWorthinessAnalyzer;
 import autonewsroller.orchestration.*;
 import autonewsroller.script.*;
+import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.util.*;
 import autonewsroller.verify.*;
 import autonewsroller.video.*;
@@ -28,6 +29,41 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class SelfTest {
+
+    /** Fabricated tiny media fixture: validates controller's SHA-256 binding, not a detector verdict. */
+    private static void completeWithSafety(CommandCenterStore store,String storyId,Map<String,Object>metadata)throws Exception{
+        Path mp4=Files.createTempFile("anr-safety-approval-fixture-", ".mp4");
+        Files.writeString(mp4,"fixture-video-"+UUID.randomUUID());
+        Map<String,Object>manifest=new LinkedHashMap<>();
+        manifest.put("status","APPROVED_FOR_EXPORT");
+        manifest.put("policyVersion",ContentSafetyService.POLICY);
+        manifest.put("videoSha256",ContentSafetyService.hash(mp4));
+        manifest.put("inputs",List.of());
+        Map<String,Object> audit=new LinkedHashMap<>();
+        audit.put("status","SAFE");audit.put("policyVersion",ContentSafetyService.POLICY);
+        audit.put("framesDecoded",1);audit.put("framesInspected",1);audit.put("framesExpected",1);
+        audit.put("disclosureFramesVerified",1);audit.put("disclosureVerified",true);
+        audit.put("detector","NudeNet");audit.put("version","3.4.2");
+        audit.put("threshold",0.25);
+        audit.put("coverage","every decoded frame; full and three overlapping crops");
+        audit.put("sha256",ContentSafetyService.hash(mp4));
+        audit.put("contextAudit",Map.of("status","SAFE","detector","OpenNSFW2",
+                "version","0.19.0","reviewThreshold",0.20,"hardBlockThreshold",0.70,"framesDecoded",1,"framesInspected",1,
+                "framesExpected",1,"coverage",
+                "every decoded frame; complete frame; upper/lower crops on still images"));
+        manifest.put("finalVideoAudit",audit);
+        Map<String,Object>sidecar=metadata.get("sidecar") instanceof Map<?,?>m
+                ?new LinkedHashMap<>(Json.object(m)):new LinkedHashMap<>();
+        sidecar.put("contentSafety",manifest);
+        sidecar.putIfAbsent("productionMode","STANDARD");
+        Map<String,Object>complete=new LinkedHashMap<>(metadata);
+        complete.put("sidecar",sidecar);
+        store.videoUploaded(storyId,mp4,mp4.getFileName().toString(),Files.size(mp4),
+                String.valueOf(metadata.getOrDefault("workerId","")),
+                String.valueOf(metadata.getOrDefault("claimId","")));
+        store.complete(storyId,complete);
+    }
+
     private int passed;
 
     public void run(Path root)throws Exception{
@@ -551,7 +587,7 @@ public final class SelfTest {
         Map<String,Object>normal=resumed.claim("legacy",Map.of());
         ok(normal!=null&&"STANDARD".equals(normal.get("productionMode")),
                 "original news production claims before pending meme");
-        resumed.complete(cluster.id,Map.of("workerId","legacy","claimId",normal.get("claimId"),
+        completeWithSafety(resumed,cluster.id,Map.of("workerId","legacy","claimId",normal.get("claimId"),
                 "sidecar",Map.of("productionMode","STANDARD")));
         ok("MEME_RAGEBAIT".equals(resumed.storyDetail(cluster.id).get("productionMode"))
                 &&"QUEUED".equals(resumed.storyDetail(cluster.id).get("status")),
@@ -575,7 +611,7 @@ public final class SelfTest {
         sidecar.put("productionMode","MEME_RAGEBAIT");
         sidecar.put("comedyAngle","Absurd signs");
         sidecar.put("imageSources",List.of(Map.of("type","comfyui-generated-ai-illustration")));
-        resumed.complete(cluster.id,Map.of("workerId","meme-worker","claimId",job.get("claimId"),
+        completeWithSafety(resumed,cluster.id,Map.of("workerId","meme-worker","claimId",job.get("claimId"),
                 "sidecar",sidecar));
         Map<String,Object>snapshot=resumed.snapshot();
         List<?> archive=(List<?>)snapshot.get("videos");
@@ -1169,9 +1205,9 @@ public final class SelfTest {
         ok(((Number)store.boardStories(1,25,"QUEUED","",1).get("total")).intValue()==600
                 &&((Number)store.boardStories(1,25,"FAILED","",1).get("total")).intValue()==300,
                 "age filtering exempts queued operations but limits failed stories");
-        ok(((Number)store.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==300
+        ok(((Number)store.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==0
                 &&((Number)store.boardStories(1,25,"UPLOADED","",0).get("total")).intValue()==300,
-                "story-level upload/to-post filters distinguish video archive metrics");
+                "historical unverified videos are excluded from TO_POST even if old upload flags exist");
         ok(((Number)store.boardStories(1,25,"WORTHY","",0).get("total")).intValue()==600
                 &&((Number)store.boardStories(1,25,"COMPLETE","",0).get("total")).intValue()==600,
                 "worthy and complete special filters match the story board");
@@ -1179,7 +1215,7 @@ public final class SelfTest {
                 Map.entry("ALL",3000),Map.entry("DISCOVERED",0),Map.entry("WORTHY",600),
                 Map.entry("VERIFIED",600),Map.entry("QUEUED",600),Map.entry("PRODUCING",0),
                 Map.entry("HOLD",0),Map.entry("FAILED",600),Map.entry("COMPLETE",600),
-                Map.entry("TO_POST",300),Map.entry("UPLOADED",300),Map.entry("SCRAPPED",0),
+                Map.entry("TO_POST",0),Map.entry("UPLOADED",300),Map.entry("SCRAPPED",0),
                 Map.entry("SKIPPED",600));
         boolean filtersCorrect=true;
         for(var entry:expected.entrySet()){
@@ -1340,7 +1376,7 @@ public final class SelfTest {
         Map<String,Object>sidecar=new LinkedHashMap<>();
         sidecar.put("ttsEngineActuallyUsed","Kokoro");sidecar.put("voice","af_heart");sidecar.put("comfyCheckpoint","test.safetensors");
         sidecar.put("imageSources",List.of(Map.of("type","comfyui-generated"),Map.of("type","procedural-card")));
-        store.complete(cluster.id,Map.of("sidecar",sidecar));
+        completeWithSafety(store,cluster.id,Map.of("sidecar",sidecar));
         Map<String,Object>story=store.storyDetail(cluster.id);
         ok("Kokoro".equals(story.get("ttsEngine"))&&((Number)story.get("comfyImages")).intValue()==1&&"test.safetensors".equals(story.get("comfyCheckpoint")),"command center retains actual TTS and ComfyUI results");
 
@@ -1417,7 +1453,7 @@ public final class SelfTest {
 
         ok(reloadedUploadStore.claim("remake-worker",Map.of("duration",70))!=null,"queued remake can be claimed by a worker");
         reloadedUploadStore.videoUploaded(cluster.id,dir.resolve("version2.mp4"),"version2.mp4",1234);
-        reloadedUploadStore.complete(cluster.id,Map.of("sidecar",sidecar));
+        completeWithSafety(reloadedUploadStore,cluster.id,Map.of("sidecar",sidecar));
         Map<String,Object>remadeSnapshot=reloadedUploadStore.snapshot();
         Map<String,Object>remadeCounts=Json.object(remadeSnapshot.get("counts"));
         Map<String,Object>remadeStory=Json.object(((List<?>)remadeSnapshot.get("stories")).get(0));
@@ -1566,7 +1602,7 @@ public final class SelfTest {
         Map<String,Object>job=loaded.claim("new-worker",Map.of("duration",75));
         ok("VIDEO".equals(job.get("jobType"))&&"FRAMING_EXPOSURE".equals(job.get("productionMode")),
                 "capable worker claims only requested experiment");
-        loaded.complete(cluster.id,Map.of("workerId","new-worker","claimId",job.get("claimId"),
+        completeWithSafety(loaded,cluster.id,Map.of("workerId","new-worker","claimId",job.get("claimId"),
                 "sidecar",Map.of("productionMode","FRAMING_EXPOSURE")));
         Map<String,Object>done=loaded.storyDetail(cluster.id);
         String versionId=String.valueOf(done.get("currentVideoVersionId"));
@@ -1664,7 +1700,7 @@ public final class SelfTest {
                 "first claimed job is always the original normal video");
         ok(store.claim("updated-worker",Map.of())==null,
                 "second video is never claimable while the standard video is in progress");
-        store.complete(cluster.id,Map.of("workerId","updated-worker","claimId",normal.get("claimId"),
+        completeWithSafety(store,cluster.id,Map.of("workerId","updated-worker","claimId",normal.get("claimId"),
                 "sidecar",Map.of("productionMode","STANDARD")));
         Map<String,Object>afterFirst=store.storyDetail(cluster.id);
         ok("QUEUED".equals(afterFirst.get("status"))
@@ -1713,7 +1749,7 @@ public final class SelfTest {
         ok(review!=null&&"VIDEO".equals(review.get("jobType"))
                 &&"FRAMING_EXPOSURE".equals(review.get("productionMode")),
                 "second video is claimed as framing exposure rather than another news report");
-        reloaded.complete(cluster.id,Map.of("workerId","updated-worker","claimId",review.get("claimId"),
+        completeWithSafety(reloaded,cluster.id,Map.of("workerId","updated-worker","claimId",review.get("claimId"),
                 "sidecar",Map.of("productionMode","FRAMING_EXPOSURE")));
         Map<String,Object>done=reloaded.storyDetail(cluster.id);
         ok("COMPLETE".equals(done.get("status"))
@@ -1758,7 +1794,7 @@ public final class SelfTest {
         Map<String,Object>autoJob=automatic.claim("old-worker",Map.of());
         ok(autoJob!=null&&"STANDARD".equals(autoJob.get("productionMode")),
                 "auto-selected videos begin with original news production");
-        automatic.complete(cluster.id,Map.of("workerId","old-worker","claimId",autoJob.get("claimId"),
+        completeWithSafety(automatic,cluster.id,Map.of("workerId","old-worker","claimId",autoJob.get("claimId"),
                 "sidecar",Map.of("productionMode","STANDARD")));
         ok("FRAMING_QUEUED".equals(automatic.storyDetail(cluster.id).get("pairedVideoState"))
                 &&"QUEUED".equals(automatic.storyDetail(cluster.id).get("status")),
@@ -1828,7 +1864,7 @@ public final class SelfTest {
         reloaded.action(cluster.id,"REMAKE");
         Map<String,Object>remake=reloaded.claim("updated-worker",Map.of());
         ok("STANDARD".equals(remake.get("productionMode")),"REMAKE starts a new normal video first");
-        reloaded.complete(cluster.id,Map.of("workerId","updated-worker","claimId",remake.get("claimId"),
+        completeWithSafety(reloaded,cluster.id,Map.of("workerId","updated-worker","claimId",remake.get("claimId"),
                 "sidecar",Map.of("productionMode","STANDARD")));
         ok(((List<?>)reloaded.snapshot().get("videos")).size()==3
                 &&"FRAMING_QUEUED".equals(reloaded.storyDetail(cluster.id).get("pairedVideoState")),
@@ -2791,11 +2827,14 @@ public final class SelfTest {
                 Map.of("mustNotShow",List.of("hologram")));
         String newsPositive=ComfyPromptProfiles.positive(news,false,0);
         String newsNegative=ComfyPromptProfiles.negative(config,news,false);
-        ok(newsPositive.contains("wire-service documentary photograph")
+        ok(newsPositive.contains("hand-illustrated editorial news artwork")
+                        &&!newsPositive.contains("wire-service documentary photograph")
                         &&newsPositive.contains("lower quarter")
+                        &&newsNegative.contains("exposed breasts")
+                        &&newsNegative.contains("exposed genitals")
                         &&newsNegative.contains("photographic watermark")
                         &&newsNegative.contains("hologram"),
-                "standard news SDXL profile is realistic and preserves scene-specific exclusions");
+                "standard SDXL profile is recognizably illustrated and enforces mandatory nudity exclusions");
         VisualPlan.Item meme=new VisualPlan.Item(0,"MEME_HOOK","Comedic hook",
                 "The city bought silly traffic signs",4,"goofy traffic-sign scene",Map.of());
         String memePositive=ComfyPromptProfiles.positive(meme,true,0);
