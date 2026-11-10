@@ -1672,6 +1672,160 @@ public final class SelfTest {
                 1,1,0,1,1,1,1,now);
         Path dir=Files.createTempDirectory("autonews-sequential-pair-");
         Path state=dir.resolve("state.json");
+        // Manual-first mode creates one news video, archives it, and schedules no review.
+        Path manualState=dir.resolve("manual-only.json");
+        CommandCenterStore onDemand=new CommandCenterStore(manualState,BiasRegistry.load(dir.resolve("bias.json")),
+                false,.68,12,null,75,.74,.82,0,0,1,false);
+        onDemand.applyDiscovery(discovery);
+        onDemand.action(cluster.id,"MAKE","manual-only-normal");
+        ok(!onDemand.storyDetail(cluster.id).containsKey("pairedVideoState")
+                &&((Number)onDemand.boardStories(1,25,"ALL","",0).get("total")).intValue()==1,
+                "manual-first MAKE queues only the original video, no waiting review card");
+        Map<String,Object>onDemandJob=onDemand.claim("normal-worker",Map.of("duration",70));
+        ok(onDemandJob!=null&&"STANDARD".equals(onDemandJob.get("productionMode")),
+                "manual-first mode claims standard news only");
+        completeWithSafety(onDemand,cluster.id,Map.of("workerId","normal-worker",
+                "claimId",onDemandJob.get("claimId"),"sidecar",Map.of("productionMode","STANDARD")));
+        ok("COMPLETE".equals(onDemand.storyDetail(cluster.id).get("status"))
+                &&"STANDARD".equals(onDemand.storyDetail(cluster.id).get("productionMode"))
+                &&!onDemand.storyDetail(cluster.id).containsKey("pairedVideoState")
+                &&((List<?>)onDemand.snapshot().get("videos")).size()==1
+                &&((Number)onDemand.boardStories(1,25,"ALL","",0).get("total")).intValue()==1,
+                "completed standard news does not create a second render or synthetic review board entry");
+        ok(onDemand.claim("normal-worker",Map.of())==null,
+                "no unused narrative review claim is spawned after standard production");
+        CommandCenterStore onDemandRestart=new CommandCenterStore(manualState,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82,0,0,1,false);
+        ok(onDemandRestart.claim("normal-worker",Map.of())==null,
+                "manual-first setting survives restart without retroactively queuing review");
+        String originalVersion=String.valueOf(onDemandRestart.storyDetail(cluster.id).get("currentVideoVersionId"));
+        onDemandRestart.action(cluster.id,"MAKE_FRAMING_EXPOSURE","manual-review-after-normal");
+        ok("QUEUED".equals(onDemandRestart.storyDetail(cluster.id).get("status"))
+                &&"FRAMING_EXPOSURE".equals(onDemandRestart.storyDetail(cluster.id).get("productionMode"))
+                &&((List<?>)onDemandRestart.snapshot().get("videos")).size()==1
+                &&((Number)onDemandRestart.boardStories(1,25,"ALL","",0).get("total")).intValue()==2,
+                "explicit review requested after completion is separately queued; archived news remains intact");
+        ok(((List<?>)onDemandRestart.snapshot().get("videos")).stream()
+                .anyMatch(v->v instanceof Map<?,?>m&&originalVersion.equals(m.get("versionId"))
+                        &&"STANDARD".equals(m.get("productionMode"))),
+                "manual review does not overwrite the archived standard version");
+        CommandCenterStore queuedManualRestart=new CommandCenterStore(manualState,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82,0,0,1,false);
+        ok("QUEUED".equals(queuedManualRestart.storyDetail(cluster.id).get("status"))
+                &&"FRAMING_EXPOSURE".equals(queuedManualRestart.storyDetail(cluster.id).get("productionMode"))
+                &&((Number)queuedManualRestart.boardStories(1,25,"ALL","",0).get("total")).intValue()==2,
+                "explicitly requested manual review persists across another restart");
+        // Complete a manual review without remaking the archived original.
+        Map<String,Object>manualAnalysisJob=onDemandRestart.claim("manual-analysis",Map.of());
+        ok(manualAnalysisJob!=null&&"POLITICAL_ANALYSIS".equals(manualAnalysisJob.get("jobType")),
+                "on-demand review prepares framing evidence without a new standard job");
+        Map<String,Object>manualAnalysis=new LinkedHashMap<>();
+        manualAnalysis.put("politicalRelevance",.12);
+        manualAnalysis.put("overallClassification","not_political");
+        manualAnalysis.put("overallConfidence",.7);
+        manualAnalysis.put("overallWeights",Map.of("left",.3,"center",.4,"right",.3));
+        manualAnalysis.put("summary","No documented partisan framing from the text.");
+        manualAnalysis.put("articles",List.of(Map.of("id",article.id(),"classification","not_political")));
+        onDemandRestart.politicalAnalysisComplete(cluster.id,manualAnalysis,"manual-analysis");
+        onDemandRestart.heartbeat("manual-review-worker",Map.of("id","manual-review-worker",
+                "capabilities",List.of("framing_exposure_v1")));
+        Map<String,Object>manualReviewJob=onDemandRestart.claim("manual-review-worker",Map.of("duration",75));
+        ok(manualReviewJob!=null&&"FRAMING_EXPOSURE".equals(manualReviewJob.get("productionMode")),
+                "explicit on-demand request claims only framing exposure");
+        completeWithSafety(onDemandRestart,cluster.id,Map.of("workerId","manual-review-worker",
+                "claimId",manualReviewJob.get("claimId"),"sidecar",Map.of("productionMode","FRAMING_EXPOSURE")));
+        onDemandRestart.setUploadStatus(cluster.id,originalVersion,true,"TikTok","original posted");
+        ok(((List<?>)onDemandRestart.snapshot().get("videos")).size()==2
+                &&((Number)onDemandRestart.boardStories(1,25,"ALL","",0).get("total")).intValue()==2
+                &&((Number)onDemandRestart.boardStories(1,25,"UPLOADED","",0).get("total")).intValue()==1,
+                "manual review and original retain separate archive and posting records");
+        onDemandRestart.action(cluster.id,"REMAKE","manual-only-remake");
+        Map<String,Object>singleRemake=onDemandRestart.claim("remake-worker",Map.of());
+        ok(singleRemake!=null&&"STANDARD".equals(singleRemake.get("productionMode")),
+                "manual-only news remake does not claim a review");
+        completeWithSafety(onDemandRestart,cluster.id,Map.of("workerId","remake-worker",
+                "claimId",singleRemake.get("claimId"),"sidecar",Map.of("productionMode","STANDARD")));
+        ok(onDemandRestart.claim("remake-worker",Map.of())==null
+                &&((List<?>)onDemandRestart.snapshot().get("videos")).size()==3
+                &&((Number)onDemandRestart.boardStories(1,25,"ALL","",0).get("total")).intValue()==2,
+                "manual-only remake archives a new standard version without recreating the review");
+        // A failed manually requested review must not render the completed news again.
+        onDemandRestart.action(cluster.id,"MAKE_FRAMING_EXPOSURE","manual-failed-review");
+        Map<String,Object>failedReviewJob=onDemandRestart.claim("manual-review-worker",Map.of());
+        ok(failedReviewJob!=null&&"FRAMING_EXPOSURE".equals(failedReviewJob.get("productionMode")),
+                "manual request after remake claims only review mode");
+        onDemandRestart.fail(cluster.id,"CONTENT_SAFETY: test rejection","manual-review-worker",
+                String.valueOf(failedReviewJob.get("claimId")));
+        ok("FAILED".equals(onDemandRestart.storyDetail(cluster.id).get("status"))
+                &&((List<?>)onDemandRestart.snapshot().get("videos")).size()==3,
+                "review safety failure leaves every completed archived version intact");
+        onDemandRestart.action(cluster.id,"MAKE_FRAMING_EXPOSURE","manual-review-retry");
+        Map<String,Object>retriedReviewJob=onDemandRestart.claim("manual-review-worker",Map.of());
+        ok(retriedReviewJob!=null&&"FRAMING_EXPOSURE".equals(retriedReviewJob.get("productionMode")),
+                "retry after review failure never re-renders standard news");
+        completeWithSafety(onDemandRestart,cluster.id,Map.of("workerId","manual-review-worker",
+                "claimId",retriedReviewJob.get("claimId"),"sidecar",Map.of("productionMode","FRAMING_EXPOSURE")));
+        ok(((List<?>)onDemandRestart.snapshot().get("videos")).size()==4,
+                "successful manual review retry creates one new archived review version");
+
+        // A queued STANDARD from the old paired configuration must not create
+        // a phantom waiting review when its next run uses manual-only defaults.
+        Path oldPairState=dir.resolve("old-queued-pair.json");
+        CommandCenterStore oldPair=new CommandCenterStore(oldPairState,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82,0,0,1,true);
+        oldPair.applyDiscovery(discovery);
+        oldPair.action(cluster.id,"MAKE");
+        ok(((Number)oldPair.boardStories(1,25,"ALL","",0).get("total")).intValue()==2,
+                "opted-in pairing initially shows its pending second video");
+        CommandCenterStore disabledPair=new CommandCenterStore(oldPairState,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82,0,0,1,false);
+        ok(!disabledPair.storyDetail(cluster.id).containsKey("pairedVideoState")
+                &&"QUEUED".equals(disabledPair.storyDetail(cluster.id).get("status"))
+                &&((Number)disabledPair.boardStories(1,25,"ALL","",0).get("total")).intValue()==1,
+                "migration keeps queued standard production but removes the uncommitted review");
+        Map<String,Object>disabledJob=disabledPair.claim("migrated-worker",Map.of());
+        ok(disabledJob!=null&&"STANDARD".equals(disabledJob.get("productionMode")),
+                "migrated legacy queue still claims the standard job");
+        completeWithSafety(disabledPair,cluster.id,Map.of("workerId","migrated-worker",
+                "claimId",disabledJob.get("claimId"),"sidecar",Map.of("productionMode","STANDARD")));
+        ok(disabledPair.claim("migrated-worker",Map.of())==null
+                &&((List<?>)disabledPair.snapshot().get("videos")).size()==1
+                &&((Number)disabledPair.boardStories(1,25,"ALL","",0).get("total")).intValue()==1,
+                "legacy standard completion with pairing disabled never creates an unrequested review");
+
+        // AUTO is likewise single-video by default; old paired mode remains opt-in below.
+        Path autoOnlyState=dir.resolve("auto-manual-only.json");
+        NewsPipeline.DiscoveryResult selectedDiscovery=new NewsPipeline.DiscoveryResult(
+                List.of(new NewsPipeline.DiscoveryItem(cluster,facts,true,"verified",0.95,false)),
+                1,1,0,1,1,1,1,now);
+        CommandCenterStore autoOnly=new CommandCenterStore(autoOnlyState,
+                BiasRegistry.load(dir.resolve("bias.json")),true,.68,12,null,75,.74,.82,0,0,1,false);
+        autoOnly.applyDiscovery(selectedDiscovery);
+        Map<String,Object>autoOnlyJob=autoOnly.claim("auto-worker",Map.of());
+        ok(autoOnlyJob!=null&&"STANDARD".equals(autoOnlyJob.get("productionMode")),
+                "AUTO selection continues making standard videos with manual-only reviews");
+        completeWithSafety(autoOnly,cluster.id,Map.of("workerId","auto-worker",
+                "claimId",autoOnlyJob.get("claimId"),"sidecar",Map.of("productionMode","STANDARD")));
+        ok("COMPLETE".equals(autoOnly.storyDetail(cluster.id).get("status"))
+                &&!autoOnly.storyDetail(cluster.id).containsKey("pairedVideoState")
+                &&((List<?>)autoOnly.snapshot().get("videos")).size()==1,
+                "AUTO completion also avoids generating unused framing videos");
+
+        Path worthState=dir.resolve("worth-manual-only.json");
+        CommandCenterStore worthOnly=new CommandCenterStore(worthState,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82,0,0,1,false);
+        worthOnly.applyDiscovery(discovery);
+        worthOnly.action(cluster.id,"WORTH");
+        Map<String,Object>worthJob=worthOnly.claim("worth-worker",Map.of());
+        ok(worthJob!=null&&"STANDARD".equals(worthJob.get("productionMode")),
+                "WORTH IT requests a normal video with automatic pairing disabled");
+        completeWithSafety(worthOnly,cluster.id,Map.of("workerId","worth-worker",
+                "claimId",worthJob.get("claimId"),"sidecar",Map.of("productionMode","STANDARD")));
+        ok(((List<?>)worthOnly.snapshot().get("videos")).size()==1
+                &&((Number)worthOnly.boardStories(1,25,"ALL","",0).get("total")).intValue()==1
+                &&worthOnly.claim("worth-worker",Map.of())==null,
+                "WORTH IT archives only standard news and does not start an unused review");
+
         CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),
                 false,.68,12,null,75,.74,.82,0,0,1,true);
         store.applyDiscovery(discovery);
@@ -1779,6 +1933,27 @@ public final class SelfTest {
                 "uploaded filter selects original while review remains ready to post");
         ok(reloaded.claim("updated-worker",Map.of())==null,
                 "a completed pair does not silently create a third video");
+        CommandCenterStore manualAfterHistoricalPair=new CommandCenterStore(state,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82,0,0,1,false);
+        manualAfterHistoricalPair.action(cluster.id,"REMAKE","historic-pair-manual-remake");
+        ok(!manualAfterHistoricalPair.storyDetail(cluster.id).containsKey("pairedVideoState")
+                &&((Number)manualAfterHistoricalPair.boardStories(1,25,"ALL","",0).get("total")).intValue()==2,
+                "standard remake after a historic pair does not create a phantom waiting review");
+        Map<String,Object>historicalRemakeJob=manualAfterHistoricalPair.claim("historic-remake-worker",Map.of());
+        ok(historicalRemakeJob!=null&&"STANDARD".equals(historicalRemakeJob.get("productionMode")),
+                "historical pairing does not change manually configured standard remake mode");
+        completeWithSafety(manualAfterHistoricalPair,cluster.id,Map.of(
+                "workerId","historic-remake-worker","claimId",historicalRemakeJob.get("claimId"),
+                "sidecar",Map.of("productionMode","STANDARD")));
+        ok(((List<?>)manualAfterHistoricalPair.snapshot().get("videos")).size()==3
+                &&((Number)manualAfterHistoricalPair.boardStories(1,25,"ALL","",0).get("total")).intValue()==2
+                &&((List<?>)manualAfterHistoricalPair.snapshot().get("videos")).stream().anyMatch(v->
+                        v instanceof Map<?,?>m&&firstVersion.equals(m.get("versionId"))
+                                &&"STANDARD".equals(m.get("productionMode"))
+                                &&Boolean.TRUE.equals(m.get("uploaded")))
+                &&((List<?>)manualAfterHistoricalPair.snapshot().get("videos")).stream().anyMatch(v->
+                        v instanceof Map<?,?>m&&"FRAMING_EXPOSURE".equals(m.get("productionMode"))),
+                "switching from paired production keeps earlier review and upload history intact");
 
         // AUTO-selected stories receive the same pair as manually queued ones.
         Path autoState=dir.resolve("auto-queue.json");
@@ -1799,6 +1974,12 @@ public final class SelfTest {
         ok("FRAMING_QUEUED".equals(automatic.storyDetail(cluster.id).get("pairedVideoState"))
                 &&"QUEUED".equals(automatic.storyDetail(cluster.id).get("status")),
                 "auto-selected standard video independently triggers its framing companion");
+        CommandCenterStore existingReviewOnSwitch=new CommandCenterStore(autoState,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82,0,0,1,false);
+        ok("FRAMING_EXPOSURE".equals(existingReviewOnSwitch.storyDetail(cluster.id).get("productionMode"))
+                &&"QUEUED".equals(existingReviewOnSwitch.storyDetail(cluster.id).get("status"))
+                &&((Number)existingReviewOnSwitch.boardStories(1,25,"ALL","",0).get("total")).intValue()==2,
+                "turning off future automatic pairing retains previously queued review work");
 
         // Failure of the review must preserve the successful normal video and
         // the retry action must target only FRAMING_EXPOSURE.
@@ -2611,7 +2792,8 @@ public final class SelfTest {
                         pipelineSource.contains("ComfyPromptProfiles.positive(chosen,memeImage,attempt)")&&
                         pipelineSource.contains("ComfyPromptProfiles.negative(cfg,chosen,memeImage)")&&
                         profilesSource.contains("assertNoExcludedConceptInPositive(item,prompt)")&&
-                        profilesSource.contains("neutral white balance")&&
+                        profilesSource.contains("unmistakably two-dimensional ink-and-gouache editorial illustration")&&
+                        profilesSource.contains("never documentary-style imagery")&&
                         pipelineSource.contains("imageSource.put(\"negativePrompt\",negativePrompt)")&&
                         !profilesSource.contains("no blue wash"),
                 "pipeline separates positive and negative image conditioning and records the negative prompt");
@@ -2827,7 +3009,8 @@ public final class SelfTest {
                 Map.of("mustNotShow",List.of("hologram")));
         String newsPositive=ComfyPromptProfiles.positive(news,false,0);
         String newsNegative=ComfyPromptProfiles.negative(config,news,false);
-        ok(newsPositive.contains("hand-illustrated editorial news artwork")
+        ok(newsPositive.contains("unmistakably two-dimensional ink-and-gouache editorial illustration")
+                        &&newsPositive.contains("never documentary-style imagery")
                         &&!newsPositive.contains("wire-service documentary photograph")
                         &&newsPositive.contains("lower quarter")
                         &&newsNegative.contains("exposed breasts")
@@ -2846,7 +3029,7 @@ public final class SelfTest {
                         &&!memeNegative.contains("photographic watermark"),
                 "meme image profile keeps caption exclusions in configurable negative conditioning");
         ok(ComfyPromptProfiles.positive(meme,true,1).contains("stronger visual punchline")
-                        &&ComfyPromptProfiles.positive(news,false,1).contains("clear subject separation"),
+                        &&ComfyPromptProfiles.positive(news,false,1).contains("source-grounded illustrated contextual object"),
                 "retry guidance is specialized for both image-producing modes");
         try{
             ComfyPromptProfiles.positive(new VisualPlan.Item(0,"HOOK","x","x",2,

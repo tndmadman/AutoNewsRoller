@@ -49,7 +49,7 @@ public final class CommandCenterServer {
                 cfg.getInt("commandCenterFailureMaxRetries",3),
                 cfg.getInt("commandCenterFailureRetryDelaySeconds",20),
                 cfg.getInt("commandCenterLeaseRecoveryMaxRetries",3),
-                cfg.getBool("commandCenterPairFramingVideos",true)
+                cfg.getBool("commandCenterPairFramingVideos",false)
         );
         this.store.configureMeme(cfg);
         try{this.assistant=new CommandCenterAssistant(root,cfg,this.store);}
