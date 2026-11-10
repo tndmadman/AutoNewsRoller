@@ -13,7 +13,7 @@ visualMotionIntensity=moderate
 visualNarrationSyncEnabled=true
 visualUseExactTtsTiming=true
 visualPostGenerationChecks=true
-visualImageReviewRetries=2
+visualImageReviewRetries=4
 visualGenerateContactSheet=true
 visualDebugFrames=true
 visualImageReviewModel=
@@ -61,8 +61,8 @@ imageWidth=832
 imageHeight=1472
 imageSteps=32
 imageCfg=5.5
-# Target photojournalistic realism: exclude text/artifacts and unsupported stylized imagery.
-imageNegative=text, watermark, logo, captions, low quality, distorted, deformed, plastic skin, waxy face, overly smooth skin, synthetic skin texture, crossed eyes, bad anatomy, extra fingers, malformed hands, duplicate faces, CGI, 3d render, illustration, cartoon, painting, cyan cast, teal cast, electric blue lighting, blue monochrome, neon blue, oversaturated blue, purple neon, artificial glow, sci-fi color grading, concept art, surreal, symbolic imagery, hologram, futuristic interface, glowing world map, cyberpunk, AI-generated stock photo look, dramatic silhouette
+# STANDARD: illustrated editorial ink-and-gouache artwork, not fabricated event photography. Four retries allow up to five attempts per required scene.
+imageNegative=text, watermark, logo, captions, low quality, distorted, deformed, crossed eyes, bad anatomy, extra fingers, malformed hands, duplicate faces, photorealistic, documentary photograph, fake CCTV, fabricated news photograph, cyan cast, teal cast, electric blue lighting, blue monochrome, neon blue, oversaturated blue, purple neon, artificial glow, sci-fi color grading, concept art, surreal, symbolic imagery, hologram, futuristic interface, glowing world map, cyberpunk, AI-generated stock photo look, dramatic silhouette
 # Optional illustration-oriented SDXL checkpoint for memes. Blank inherits imageCheckpoint.
 # The meme style remains satire; the model supplies imagery, Java overlays all captions.
 memeImageCheckpoint=
@@ -93,9 +93,10 @@ commandCenterAssistantModel=llama3.1:8b
 commandCenterAssistantOllamaUrl=http://127.0.0.1:11434/api/generate
 commandCenterAssistantContextTokens=16384
 commandCenterAssistantMaxOutputTokens=1400
-# Experimental branch: selected STANDARD video is automatically followed by a
-# separate FRAMING_EXPOSURE review; completed versions are retained independently.
-commandCenterPairFramingVideos=true
+# Narrative reviews are ON DEMAND: MAKE, WORTH IT, AUTO, and RE-MAKE create only
+# STANDARD videos. Select EXPOSE POLITICAL FRAMING to request a separate review.
+# Set true only when intentionally opting into automatic two-video pairing.
+commandCenterPairFramingVideos=false
 # Original two-tone breaking-news intro for both STANDARD and FRAMING_EXPOSURE.
 # Former experimental -14.00 dB, increased by 20*log10(3) = 9.54 dB.
 newsIntroSoundEnabled=true
@@ -165,3 +166,11 @@ memeWorthinessExplorationPercent=25
 memeWorthinessOtherJobsPerAnalysis=2
 memeWorthinessMaxRetries=2
 commandCenterAutoMeme=false
+
+# Mandatory local content safety (production has no disable switch)
+contentSafetyPython=auto
+contentSafetyImageTimeoutSeconds=120
+contentSafetyVideoTimeoutSeconds=3600
+# Requires dedicated .venv-safety Python 3.12 with NudeNet 3.4.2 + OpenNSFW2 0.19.0.
+# Windows: run setup_content_safety_windows.bat to create and verify it.
+# Explicit contentSafetyPython=PATH_TO_PYTHON_EXE overrides auto-selection.

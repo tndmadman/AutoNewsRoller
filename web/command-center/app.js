@@ -1,5 +1,15 @@
 const $=s=>document.querySelector(s);
 let state={stories:[],feeds:[],workers:[],videos:[],counts:{}}, token="", activeFilter="ALL", eventSource=null, refreshTimer=null;
+let safetyHealthStatus="NOT CHECKED",safetyHealthNext=0,safetyHealthInFlight=false;
+async function checkSafetyDetectorHealth(){
+  if(safetyHealthInFlight||Date.now()<safetyHealthNext)return;
+  safetyHealthInFlight=true;safetyHealthNext=Date.now()+60000;
+  try{
+    const h=await api("/api/safety/health");
+    safetyHealthStatus=h.status==="READY"?("READY / "+String(h.detector||"LOCAL")+" "+String(h.version||"")):"UNAVAILABLE";
+  }catch(e){safetyHealthStatus="SCANNER UNAVAILABLE";}
+  finally{safetyHealthInFlight=false;const el=$("#safetyHealth");if(el)el.textContent=safetyHealthStatus;}
+}
 const BOARD_PAGE_SIZES=new Set([10,25,50,100]);
 let boardPageSize=Number(localStorage.getItem("autonewsBoardPageSize")||25);
 if(!BOARD_PAGE_SIZES.has(boardPageSize))boardPageSize=25;
@@ -107,6 +117,7 @@ async function loadState(){
         if(sequence>liveAtStart)mergeLiveEntity(snapshot,event);
       }
       state=snapshot;
+      checkSafetyDetectorHealth().catch(()=>{});
       $("#connection").textContent="LIVE";$("#connection").className="pill ok";
       render();
     }catch(e){
@@ -259,7 +270,7 @@ function render(){
       " · FAILED: "+(c.memeRecentFailed??"—")+
       " · QUALIFIED: "+(c.memeRecentWorthy??"—");
   }
-  syncStoryAgeControl();syncMemeDiscoveryControl();renderWorkers();renderFeeds();renderFeedMatrix();renderVideos();drawRadar();
+  syncStoryAgeControl();syncMemeDiscoveryControl();renderWorkers();renderFeeds();renderFeedMatrix();renderVideos();renderSafety();drawRadar();
 }
 function renderRails(){
   const f=boardData.facets||{};
@@ -575,19 +586,21 @@ function storyCard(s){
     <div class="storyActions">
       ${!memeCandidate&&boardVideoUrl?`<a class="btn ghost" href="${esc(boardVideoUrl)}" target="_blank" rel="noopener">OPEN MP4</a>`:""}
       ${!memeCandidate&&!review&&!meme&&!completeLike?`
-        <button class="btn good" data-command="WORTH" title="Queue normal news followed by a narrative review" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
-        <button class="btn primary" data-command="MAKE" title="Make normal news, then a narrative review" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
+        <button class="btn good" data-command="WORTH" title="Queue standard news; automatic review pairing follows the configured setting" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
+        <button class="btn primary" data-command="MAKE" title="Make standard news; automatic review pairing follows the configured setting" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
         <button class="btn warn" data-command="HOLD" ${working?"disabled":""}>Ⅱ HOLD</button>
         <button class="btn bad" data-command="SKIP" ${working?"disabled":""}>× NOT WORTH</button>
         <button class="btn ghost" data-command="AUTO" ${working?"disabled":""}>↻ AUTO</button>`:""}
       ${!memeCandidate&&meme&&!completeLike?`<button class="btn primary" data-command="MAKE_MEME" ${working?"disabled":""}>${status==="FAILED"?"↻ RETRY MEME":"MAKE MEME / RAGEBAIT"}</button>`:""}
-       ${!memeCandidate&&!review&&!meme&&completeLike?`<button class="btn ghost" data-command="MAKE_MEME" ${s.pendingMemeRequest?"disabled":""}>${s.pendingMemeRequest?"MEME WAITING":"MAKE MEME / RAGEBAIT"}</button>`:""}
+       ${!memeCandidate&&!review&&!meme&&completeLike?`
+         <button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${!canRemake?"disabled":""} title="Create a narrative review on demand without remaking the news video">◉ EXPOSE POLITICAL FRAMING</button>
+         <button class="btn ghost" data-command="MAKE_MEME" ${s.pendingMemeRequest?"disabled":""}>${s.pendingMemeRequest?"MEME WAITING":"MAKE MEME / RAGEBAIT"}</button>`:""}
        ${!memeCandidate&&review&&!completeLike?`<button class="btn primary" data-command="MAKE_FRAMING_EXPOSURE"
         ${working||status==="SKIPPED"||status==="HOLD"?"disabled":""}>${status==="FAILED"?"↻ RETRY NARRATIVE REVIEW":status==="SKIPPED"?"REVIEW UNAVAILABLE":status==="HOLD"?"WAITING FOR ORIGINAL RETRY":status==="WAITING"?"WAITING FOR ORIGINAL VIDEO":working?"NARRATIVE REVIEW QUEUED":"◉ MAKE NARRATIVE REVIEW"}</button>`:""}
       ${!memeCandidate&&!review&&!meme&&!completeLike&&status!=="WAITING"?`
          <button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${working?"disabled":""}>◉ EXPOSE POLITICAL FRAMING</button>
          <button class="btn ghost" data-command="MAKE_MEME" ${s.pendingMemeRequest?"disabled":""}>${s.pendingMemeRequest?"MEME WAITING":"MAKE MEME / RAGEBAIT"}</button>`:""}
-      ${!memeCandidate&&completeLike&&canRemake?`<button class="btn primary" data-command="${review?"REMAKE_FRAMING_EXPOSURE":meme?"REMAKE_MEME":"REMAKE"}" title="${review?"Regenerate only the narrative review":meme?"Regenerate only this meme":"Remake news followed by its review"}">↻ ${review?"RE-MAKE REVIEW":meme?"RE-MAKE MEME":"RE-MAKE NEWS"}</button>`:""}
+      ${!memeCandidate&&completeLike&&canRemake?`<button class="btn primary" data-command="${review?"REMAKE_FRAMING_EXPOSURE":meme?"REMAKE_MEME":"REMAKE"}" title="${review?"Regenerate only the narrative review":meme?"Regenerate only this meme":"Remake standard news; automatic review pairing follows the configured setting"}">↻ ${review?"RE-MAKE REVIEW":meme?"RE-MAKE MEME":"RE-MAKE NEWS"}</button>`:""}
       ${!memeCandidate&&completeLike&&hasVideo?`
         ${s.scrapped
           ?`<button class="btn ghost" data-command="RESTORE">↩ RESTORE VIDEO</button>`
@@ -619,6 +632,30 @@ function renderFeeds(){
     return {key:String(f.url||f.name),html:`<div class="feed ${String(f.status||"").toLowerCase()} ${feedCategoryClass(f.category)}" title="${esc(title)}"><i class="lamp"></i><div class="feedText"><div class="feedName"><span class="feedPublisher">${esc(f.name)}</span><span class="feedCategory">${esc(category)}</span></div><div class="feedMeta"><span>${esc(f.status||"UNKNOWN")}${f.entries!=null?" // "+f.entries:""}</span>${endpoint?`<span class="feedEndpoint">${esc(endpoint)}</span>`:""}</div></div></div>`};
   })) ;
 }
+function renderSafety(){
+  const c=state.counts||{},vs=state.videos||[];
+  for(const [id,key] of [["safetyApproved","safetyApproved"],["safetyUnverified","safetyUnverified"],["safetyFailures","safetyFailures"]]){
+    const el=$("#"+id);if(el)el.textContent=num(c[key]);
+  }
+  const policy=$("#safetyPolicy");if(policy)policy.textContent="FAIL-CLOSED / POLICY 2026-10-28-V3";
+  const health=$("#safetyHealth");if(health)health.textContent=safetyHealthStatus;
+  const latest=vs.slice().sort((a,b)=>Date.parse(b.completedAt||0)-Date.parse(a.completedAt||0)).slice(0,12);
+  const panel=$("#safetyRecent");
+  if(panel)reconcileList(panel,latest.map(v=>{
+    const status=v.safetyStatus||"NOT_SCANNED";
+    const versions=String(v.versionId||v.storyId||"legacy");
+    const approval=v.safetyManifest||v.metadata?.sidecar?.contentSafety||{};
+    const scan=approval.finalVideoAudit||{},context=scan.contextAudit||{};
+    const detail=String(scan.reason||"No current detector evidence")+
+      (context.reason?" / Context: "+String(context.reason):"");
+    const coverage=scan.framesInspected===undefined?"NOT AUDITED":
+      ("FRAMES "+String(scan.framesInspected)+" / "+String(scan.framesExpected||"?"));
+    const models=scan.detector&&context.detector?
+      (String(scan.detector)+" "+String(scan.version||"?")+" + "+String(context.detector)+" "+String(context.version||"?")):
+      "DETECTOR RECORD INCOMPLETE";
+    return {key:versions,html:'<div class="safetyAuditRow"><div class="videoInfo"><strong>'+esc(v.productionMode||"STANDARD")+' / '+esc(versions)+' / '+esc(status)+'</strong><small>'+esc(v.filename||"")+' // '+esc(coverage)+' // '+esc(models)+'</small><small>'+esc(detail)+'</small></div></div>'};
+  }),"No videos with new safety manifests yet.");
+}
 function renderVideos(){
   const root=$("#videos"),vs=state.videos||[];
   root.className=vs.length?"videoList":"videoList emptyState";
@@ -637,7 +674,8 @@ function renderVideos(){
       :v.uploaded
         ?`<span class="uploadBadge uploaded">UPLOADED // ${esc(v.uploadedPlatform||"UNSPECIFIED")}${v.uploadedAt?" // "+new Date(v.uploadedAt).toLocaleDateString():""}</span>`
         :`<span class="uploadBadge pending">TO POST</span>`;
-    const uploadButton=v.scrapped?"":v.uploaded
+    const approved=v.safetyStatus==="APPROVED_FOR_EXPORT";
+    const uploadButton=!approved?"":v.scrapped?"":v.uploaded
       ?`<button class="btn uploadedBtn" data-command="UNUPLOAD">UNMARK</button>`
       :`<button class="btn publish" data-command="UPLOAD">MARK UPLOADED</button>`;
     const scrapButton=v.scrapped
@@ -646,7 +684,7 @@ function renderVideos(){
     const remakeButton=v.current
       ?`<button class="btn primary" data-command="${v.productionMode==="FRAMING_EXPOSURE"?"REMAKE_FRAMING_EXPOSURE":v.productionMode==="MEME_RAGEBAIT"?"REMAKE_MEME":"REMAKE"}">${v.productionMode==="FRAMING_EXPOSURE"?"RE-MAKE REVIEW":v.productionMode==="MEME_RAGEBAIT"?"RE-MAKE MEME":"RE-MAKE NEWS"}</button>`
       :"";
-    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.productionMode==="FRAMING_EXPOSURE"?"Narrative Review: "+String(v.topic||storyId).replace(/^Narrative Review:\s*/i,""):v.productionMode==="MEME_RAGEBAIT"?"Meme Roast: "+String(v.topic||storyId):v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${lifecycle}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions"><a href="${href}" target="_blank">OPEN MP4</a>${remakeButton}${uploadButton}${scrapButton}</div></div>`}
+    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.productionMode==="FRAMING_EXPOSURE"?"Narrative Review: "+String(v.topic||storyId).replace(/^Narrative Review:\s*/i,""):v.productionMode==="MEME_RAGEBAIT"?"Meme Roast: "+String(v.topic||storyId):v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${approved?lifecycle:`<span class="uploadBadge scrapped">NOT VERIFIED - DO NOT POST</span>`}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions">${approved?`<a href="${href}" target="_blank">OPEN MP4</a>`:""}${remakeButton}${uploadButton}${scrapButton}</div></div>`}
   }),"No completed videos yet.");
 }
 
@@ -691,7 +729,7 @@ document.addEventListener("click",e=>{
   const versionId=row.dataset.versionId||row.dataset.currentVersionId||"";
   const path="/api/stories/"+encodeURIComponent(id);
   if(["REMAKE","REMAKE_FRAMING_EXPOSURE","REMAKE_MEME"].includes(command)&&!confirm(command==="REMAKE"
-  ?"Remake normal news and its narrative review? Existing versions remain archived."
+  ?"Remake the standard news video? Existing versions remain archived."
   :(command==="REMAKE_MEME"?"Remake ONLY the meme? Existing news and review remain unchanged.":"Remake ONLY the narrative review? The normal news video remains unchanged.")))return;
   if(command==="MAKE_FRAMING_EXPOSURE"&&!confirm("Create or retry the narrative review from this article? Existing videos remain archived."))return;
   if(command==="MAKE_MEME"&&!confirm("Create a source-grounded comedic meme roast? Other queued videos remain intact."))return;
@@ -716,10 +754,11 @@ document.addEventListener("click",e=>{
       if(p===null)return;platform=p.trim();
       const n=prompt("Optional upload note (account, caption/version, etc.):","");
       if(n===null)return;note=n.trim();
+      if(!confirm("Confirm you reviewed the final video and verified that the platform's applicable AI-generated-content label is ENABLED on the actual post, including any automatic label. This control cannot change TikTok settings."))return;
       if(platform)localStorage.setItem("autonewsUploadPlatform",platform);
     }else if(!confirm("Mark this video as NOT uploaded? The history entry will be kept."))return;
     if(!versionId){toast("Video version not identified; reload before changing upload status.",true);return}
-    submitOperation(id,button,path+"/upload-status",{uploaded,platform,note,versionId},"POST",uploaded?"Marked manually uploaded.":"Upload mark removed.");
+    submitOperation(id,button,path+"/upload-status",{uploaded,platform,note,versionId,aigcLabelConfirmed:uploaded},"POST",uploaded?"Marked manually uploaded with AIGC confirmation.":"Upload mark removed.");
     return;
   }
   if(["SCRAP","RESTORE"].includes(command)){
@@ -735,7 +774,7 @@ document.addEventListener("click",e=>{
     return;
   }
   submitOperation(id,button,path+"/action",{action:command},"POST",
-    ["MAKE_MEME","REMAKE_MEME"].includes(command)?"Meme roast requested or queued.":["MAKE_FRAMING_EXPOSURE","REMAKE_FRAMING_EXPOSURE"].includes(command)?"Narrative review queued.":command==="MAKE"?"Queued original video, then framing review.":command==="WORTH"?"Queued original video, then framing review.":command==="REMAKE"?"Remake queued, followed by a framing review.":command+" saved.");
+    ["MAKE_MEME","REMAKE_MEME"].includes(command)?"Meme roast requested or queued.":["MAKE_FRAMING_EXPOSURE","REMAKE_FRAMING_EXPOSURE"].includes(command)?"Narrative review queued.":command==="MAKE"?"Standard news video queued.":command==="WORTH"?"Standard news video queued.":command==="REMAKE"?"Standard news remake queued.":command+" saved.");
 });
 // Toolbar actions also acknowledge the initial click and lock while the request runs.
 $("#autoVideoToggle").onclick=async()=>{

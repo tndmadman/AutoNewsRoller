@@ -236,6 +236,26 @@ test("any one-source story can request framing exposure without publisher compar
   }finally{await f.stop();}
 });
 
+test("completed standard video exposes optional narrative review action",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    f.state.stories=[{...f.story,boardEntryId:"story-1::STANDARD",
+      sourceStoryId:"story-1",entryMode:"STANDARD",productionMode:"STANDARD",
+      status:"COMPLETE",stage:"COMPLETE",progress:100,entryHasVideo:true,
+      entryMayRemake:true,videoFilename:"original.mp4",currentVideoVersionId:"story-1#v1"}];
+    await page.goto(url);
+    const card=page.locator("#stories .storyCard").first();
+    const action=card.locator('[data-command="MAKE_FRAMING_EXPOSURE"]');
+    await expect(action).toBeVisible();
+    await expect(action).toContainText("EXPOSE POLITICAL FRAMING");
+    await expect(card.locator('[data-command="REMAKE"]')).toBeVisible();
+    page.on("dialog",dialog=>dialog.accept());
+    await action.click();
+    await expect.poll(()=>f.posts.filter(p=>p.body.action==="MAKE_FRAMING_EXPOSURE").length).toBe(1);
+    expect(f.posts.filter(p=>p.body.action==="REMAKE")).toHaveLength(0);
+  }finally{await f.stop();}
+});
+
 test("paired normal and narrative review display as separate keyed board rows with independent version actions",async({page})=>{
   const f=fixture(),url=await f.start();
   try{
@@ -283,6 +303,8 @@ test("paired normal and narrative review display as separate keyed board rows wi
     await reviewRow.locator('[data-command="UPLOAD"]').click();
     await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/upload-status")
       &&p.body.versionId==="story-1#v2"&&p.body.uploaded).length).toBe(1);
+    expect(f.posts.filter(p=>p.path.endsWith("/upload-status")&&p.body.uploaded)
+      .every(p=>p.body.aigcLabelConfirmed===true)).toBe(true);
     await reviewRow.locator('[data-command="SCRAP"]').click();
     await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/scrap-status")
       &&p.body.versionId==="story-1#v2"&&p.body.scrapped).length).toBe(1);
@@ -892,5 +914,16 @@ test("terminal meme script failure is explicit and historical error does not mas
     await expect(card.locator(".failurePanel")).toHaveCount(0);
     await expect(card.locator(".liveDetail")).toContainText("retry 1/3 queued");
     await expect(card.locator(".liveDetail")).not.toContainText("Invalid continuation beats");
+  }finally{await f.stop();}
+});
+
+test("safety audit rows never collide with interactive posting ledger rows",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    await page.goto(url);
+    await expect(page.locator("#videos .videoRow")).toHaveCount(1);
+    await expect(page.locator("#safetyRecent .safetyAuditRow")).toHaveCount(1);
+    await expect(page.locator("#safetyRecent .videoRow")).toHaveCount(0);
+    await expect(page.locator(".videoRow")).toHaveCount(1);
   }finally{await f.stop();}
 });
