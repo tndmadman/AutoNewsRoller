@@ -1,6 +1,6 @@
 # Political framing exposure — single-article experiment
 
-Status: **experimental**, isolated from the standard pipeline on `main`. On this branch, the Command Center also pairs new standard video production with a framing review. Do not merge into `main` until validated with real local TTS and Ollama.
+Status: **experimental**, isolated from the standard pipeline on `main`. Narrative review video generation is **manual-only by default**; automatic pairing remains available as an explicit opt-in. Do not merge into `main` until validated with real local TTS and Ollama.
 
 ## Goal
 
@@ -8,9 +8,11 @@ Status: **experimental**, isolated from the standard pipeline on `main`. On this
 
 One attributable article is sufficient. Additional reporting may substantiate a factual claim in the upstream FactPackage, but is not a subject of narration, a required input, or an excuse to create side-by-side publisher comparisons. Political slant is not presumed: an evidence-based finding of insufficient or no observable political framing is a valid conclusion.
 
-## Automatic sequential two-video production
+## On-demand reviews (default) and optional automatic pairing
 
-With `commandCenterPairFramingVideos=true`, every story chosen for normal production by MAKE, WORTH IT, eligible AUTO queue or RE-MAKE gets **two separately archived video versions**: first `STANDARD`, then `FRAMING_EXPOSURE`.
+By default `commandCenterPairFramingVideos=false`: MAKE, WORTH IT, eligible AUTO queue and RE-MAKE produce **only a `STANDARD` news video**. No dependent Narrative Review job or review video is created. The operator can use **EXPOSE POLITICAL FRAMING** on a discovered story **or on an already completed standard video** to request a separate `FRAMING_EXPOSURE` version; prior standard videos and posting records remain in the archive.
+
+When an operator explicitly opts in with `commandCenterPairFramingVideos=true`, each normal video instead gets **two separately archived video versions**: `STANDARD`, then `FRAMING_EXPOSURE`.
 
 The controller queues the framing review **only after** the normal job succeeds and its video version is archived. The normal MP4 is never overwritten and retains its own version ID, story ID, upload/scrap state and metadata. The review receives another unique video version under the same story; it waits for article analysis and a compatible worker when necessary. A failed normal job cannot spawn a review. If the framing review fails after its retry budget, the original version remains archived. The handoff is stored across controller restarts. Re-making a completed story starts another two-video cycle, leaving old versions untouched.
 
@@ -90,7 +92,7 @@ The sting uses FFmpeg-generated 784 Hz and 1046 Hz tones, faded and mixed undern
 ## Settings
 
 - politicalExposureEnabled=true: controller/worker capability switch; paired reviews can be automatically queued after normal videos
-- commandCenterPairFramingVideos=true: complete normal video then queue framing review
+- commandCenterPairFramingVideos=false (default): no automatic review; set true only if you want every normal video followed by a narrative review
 - newsIntroSoundEnabled=true: add the original sting to the standard pipeline
 - newsIntroSoundGainDb=-4.46: standard sting input gain
 - politicalExposureDefaultDurationSeconds=75: minimum experimental duration target
