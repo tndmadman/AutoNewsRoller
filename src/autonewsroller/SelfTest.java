@@ -3009,7 +3009,8 @@ public final class SelfTest {
                 Map.of("mustNotShow",List.of("hologram")));
         String newsPositive=ComfyPromptProfiles.positive(news,false,0);
         String newsNegative=ComfyPromptProfiles.negative(config,news,false);
-        ok(newsPositive.contains("hand-illustrated editorial news artwork")
+        ok(newsPositive.contains("unmistakably two-dimensional ink-and-gouache editorial illustration")
+                        &&newsPositive.contains("never documentary-style imagery")
                         &&!newsPositive.contains("wire-service documentary photograph")
                         &&newsPositive.contains("lower quarter")
                         &&newsNegative.contains("exposed breasts")
@@ -3028,7 +3029,7 @@ public final class SelfTest {
                         &&!memeNegative.contains("photographic watermark"),
                 "meme image profile keeps caption exclusions in configurable negative conditioning");
         ok(ComfyPromptProfiles.positive(meme,true,1).contains("stronger visual punchline")
-                        &&ComfyPromptProfiles.positive(news,false,1).contains("clear subject separation"),
+                        &&ComfyPromptProfiles.positive(news,false,1).contains("source-grounded illustrated contextual object"),
                 "retry guidance is specialized for both image-producing modes");
         try{
             ComfyPromptProfiles.positive(new VisualPlan.Item(0,"HOOK","x","x",2,
