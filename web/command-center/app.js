@@ -586,8 +586,8 @@ function storyCard(s){
     <div class="storyActions">
       ${!memeCandidate&&boardVideoUrl?`<a class="btn ghost" href="${esc(boardVideoUrl)}" target="_blank" rel="noopener">OPEN MP4</a>`:""}
       ${!memeCandidate&&!review&&!meme&&!completeLike?`
-        <button class="btn good" data-command="WORTH" title="Queue one standard news video; narrative review is optional" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
-        <button class="btn primary" data-command="MAKE" title="Make one standard news video; narrative review is optional" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
+        <button class="btn good" data-command="WORTH" title="Queue standard news; automatic review pairing follows the configured setting" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
+        <button class="btn primary" data-command="MAKE" title="Make standard news; automatic review pairing follows the configured setting" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
         <button class="btn warn" data-command="HOLD" ${working?"disabled":""}>Ⅱ HOLD</button>
         <button class="btn bad" data-command="SKIP" ${working?"disabled":""}>× NOT WORTH</button>
         <button class="btn ghost" data-command="AUTO" ${working?"disabled":""}>↻ AUTO</button>`:""}
@@ -600,7 +600,7 @@ function storyCard(s){
       ${!memeCandidate&&!review&&!meme&&!completeLike&&status!=="WAITING"?`
          <button class="btn ghost" data-command="MAKE_FRAMING_EXPOSURE" ${working?"disabled":""}>◉ EXPOSE POLITICAL FRAMING</button>
          <button class="btn ghost" data-command="MAKE_MEME" ${s.pendingMemeRequest?"disabled":""}>${s.pendingMemeRequest?"MEME WAITING":"MAKE MEME / RAGEBAIT"}</button>`:""}
-      ${!memeCandidate&&completeLike&&canRemake?`<button class="btn primary" data-command="${review?"REMAKE_FRAMING_EXPOSURE":meme?"REMAKE_MEME":"REMAKE"}" title="${review?"Regenerate only the narrative review":meme?"Regenerate only this meme":"Remake only the standard news video"}">↻ ${review?"RE-MAKE REVIEW":meme?"RE-MAKE MEME":"RE-MAKE NEWS"}</button>`:""}
+      ${!memeCandidate&&completeLike&&canRemake?`<button class="btn primary" data-command="${review?"REMAKE_FRAMING_EXPOSURE":meme?"REMAKE_MEME":"REMAKE"}" title="${review?"Regenerate only the narrative review":meme?"Regenerate only this meme":"Remake standard news; automatic review pairing follows the configured setting"}">↻ ${review?"RE-MAKE REVIEW":meme?"RE-MAKE MEME":"RE-MAKE NEWS"}</button>`:""}
       ${!memeCandidate&&completeLike&&hasVideo?`
         ${s.scrapped
           ?`<button class="btn ghost" data-command="RESTORE">↩ RESTORE VIDEO</button>`
@@ -729,7 +729,7 @@ document.addEventListener("click",e=>{
   const versionId=row.dataset.versionId||row.dataset.currentVersionId||"";
   const path="/api/stories/"+encodeURIComponent(id);
   if(["REMAKE","REMAKE_FRAMING_EXPOSURE","REMAKE_MEME"].includes(command)&&!confirm(command==="REMAKE"
-  ?"Remake only the standard news video? Existing versions remain archived."
+  ?"Remake the standard news video? Existing versions remain archived."
   :(command==="REMAKE_MEME"?"Remake ONLY the meme? Existing news and review remain unchanged.":"Remake ONLY the narrative review? The normal news video remains unchanged.")))return;
   if(command==="MAKE_FRAMING_EXPOSURE"&&!confirm("Create or retry the narrative review from this article? Existing videos remain archived."))return;
   if(command==="MAKE_MEME"&&!confirm("Create a source-grounded comedic meme roast? Other queued videos remain intact."))return;
@@ -774,7 +774,7 @@ document.addEventListener("click",e=>{
     return;
   }
   submitOperation(id,button,path+"/action",{action:command},"POST",
-    ["MAKE_MEME","REMAKE_MEME"].includes(command)?"Meme roast requested or queued.":["MAKE_FRAMING_EXPOSURE","REMAKE_FRAMING_EXPOSURE"].includes(command)?"Narrative review queued.":command==="MAKE"?"Standard news video queued; review available on demand.":command==="WORTH"?"Standard news video queued; review available on demand.":command==="REMAKE"?"Standard news remake queued; review available on demand.":command+" saved.");
+    ["MAKE_MEME","REMAKE_MEME"].includes(command)?"Meme roast requested or queued.":["MAKE_FRAMING_EXPOSURE","REMAKE_FRAMING_EXPOSURE"].includes(command)?"Narrative review queued.":command==="MAKE"?"Standard news video queued.":command==="WORTH"?"Standard news video queued.":command==="REMAKE"?"Standard news remake queued.":command+" saved.");
 });
 // Toolbar actions also acknowledge the initial click and lock while the request runs.
 $("#autoVideoToggle").onclick=async()=>{
