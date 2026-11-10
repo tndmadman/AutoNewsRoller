@@ -236,6 +236,26 @@ test("any one-source story can request framing exposure without publisher compar
   }finally{await f.stop();}
 });
 
+test("completed standard video exposes optional narrative review action",async({page})=>{
+  const f=fixture(),url=await f.start();
+  try{
+    f.state.stories=[{...f.story,boardEntryId:"story-1::STANDARD",
+      sourceStoryId:"story-1",entryMode:"STANDARD",productionMode:"STANDARD",
+      status:"COMPLETE",stage:"COMPLETE",progress:100,entryHasVideo:true,
+      entryMayRemake:true,videoFilename:"original.mp4",currentVideoVersionId:"story-1#v1"}];
+    await page.goto(url);
+    const card=page.locator("#stories .storyCard").first();
+    const action=card.locator('[data-command="MAKE_FRAMING_EXPOSURE"]');
+    await expect(action).toBeVisible();
+    await expect(action).toContainText("EXPOSE POLITICAL FRAMING");
+    await expect(card.locator('[data-command="REMAKE"]')).toBeVisible();
+    page.on("dialog",dialog=>dialog.accept());
+    await action.click();
+    await expect.poll(()=>f.posts.filter(p=>p.body.action==="MAKE_FRAMING_EXPOSURE").length).toBe(1);
+    expect(f.posts.filter(p=>p.body.action==="REMAKE")).toHaveLength(0);
+  }finally{await f.stop();}
+});
+
 test("paired normal and narrative review display as separate keyed board rows with independent version actions",async({page})=>{
   const f=fixture(),url=await f.start();
   try{
