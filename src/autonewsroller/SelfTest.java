@@ -1672,6 +1672,62 @@ public final class SelfTest {
                 1,1,0,1,1,1,1,now);
         Path dir=Files.createTempDirectory("autonews-sequential-pair-");
         Path state=dir.resolve("state.json");
+        // Manual-first mode creates one news video, archives it, and schedules no review.
+        Path manualState=dir.resolve("manual-only.json");
+        CommandCenterStore onDemand=new CommandCenterStore(manualState,BiasRegistry.load(dir.resolve("bias.json")),
+                false,.68,12,null,75,.74,.82,0,0,1,false);
+        onDemand.applyDiscovery(discovery);
+        onDemand.action(cluster.id,"MAKE","manual-only-normal");
+        ok(!onDemand.storyDetail(cluster.id).containsKey("pairedVideoState")
+                &&((Number)onDemand.boardStories(1,25,"ALL","",0).get("total")).intValue()==1,
+                "manual-first MAKE queues only the original video, no waiting review card");
+        Map<String,Object>onDemandJob=onDemand.claim("normal-worker",Map.of("duration",70));
+        ok(onDemandJob!=null&&"STANDARD".equals(onDemandJob.get("productionMode")),
+                "manual-first mode claims standard news only");
+        completeWithSafety(onDemand,cluster.id,Map.of("workerId","normal-worker",
+                "claimId",onDemandJob.get("claimId"),"sidecar",Map.of("productionMode","STANDARD")));
+        ok("COMPLETE".equals(onDemand.storyDetail(cluster.id).get("status"))
+                &&"STANDARD".equals(onDemand.storyDetail(cluster.id).get("productionMode"))
+                &&!onDemand.storyDetail(cluster.id).containsKey("pairedVideoState")
+                &&((List<?>)onDemand.snapshot().get("videos")).size()==1
+                &&((Number)onDemand.boardStories(1,25,"ALL","",0).get("total")).intValue()==1,
+                "completed standard news does not create a second render or synthetic review board entry");
+        ok(onDemand.claim("normal-worker",Map.of())==null,
+                "no unused narrative review claim is spawned after standard production");
+        CommandCenterStore onDemandRestart=new CommandCenterStore(manualState,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82,0,0,1,false);
+        ok(onDemandRestart.claim("normal-worker",Map.of())==null,
+                "manual-first setting survives restart without retroactively queuing review");
+        String originalVersion=String.valueOf(onDemandRestart.storyDetail(cluster.id).get("currentVideoVersionId"));
+        onDemandRestart.action(cluster.id,"MAKE_FRAMING_EXPOSURE","manual-review-after-normal");
+        ok("QUEUED".equals(onDemandRestart.storyDetail(cluster.id).get("status"))
+                &&"FRAMING_EXPOSURE".equals(onDemandRestart.storyDetail(cluster.id).get("productionMode"))
+                &&((List<?>)onDemandRestart.snapshot().get("videos")).size()==1
+                &&((Number)onDemandRestart.boardStories(1,25,"ALL","",0).get("total")).intValue()==2,
+                "explicit review requested after completion is separately queued; archived news remains intact");
+        ok(((List<?>)onDemandRestart.snapshot().get("videos")).stream()
+                .anyMatch(v->v instanceof Map<?,?>m&&originalVersion.equals(m.get("versionId"))
+                        &&"STANDARD".equals(m.get("productionMode"))),
+                "manual review does not overwrite the archived standard version");
+
+        // AUTO is likewise single-video by default; old paired mode remains opt-in below.
+        Path autoOnlyState=dir.resolve("auto-manual-only.json");
+        NewsPipeline.DiscoveryResult selectedDiscovery=new NewsPipeline.DiscoveryResult(
+                List.of(new NewsPipeline.DiscoveryItem(cluster,facts,true,"verified",0.95,false)),
+                1,1,0,1,1,1,1,now);
+        CommandCenterStore autoOnly=new CommandCenterStore(autoOnlyState,
+                BiasRegistry.load(dir.resolve("bias.json")),true,.68,12,null,75,.74,.82,0,0,1,false);
+        autoOnly.applyDiscovery(selectedDiscovery);
+        Map<String,Object>autoOnlyJob=autoOnly.claim("auto-worker",Map.of());
+        ok(autoOnlyJob!=null&&"STANDARD".equals(autoOnlyJob.get("productionMode")),
+                "AUTO selection continues making standard videos with manual-only reviews");
+        completeWithSafety(autoOnly,cluster.id,Map.of("workerId","auto-worker",
+                "claimId",autoOnlyJob.get("claimId"),"sidecar",Map.of("productionMode","STANDARD")));
+        ok("COMPLETE".equals(autoOnly.storyDetail(cluster.id).get("status"))
+                &&!autoOnly.storyDetail(cluster.id).containsKey("pairedVideoState")
+                &&((List<?>)autoOnly.snapshot().get("videos")).size()==1,
+                "AUTO completion also avoids generating unused framing videos");
+
         CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),
                 false,.68,12,null,75,.74,.82,0,0,1,true);
         store.applyDiscovery(discovery);
