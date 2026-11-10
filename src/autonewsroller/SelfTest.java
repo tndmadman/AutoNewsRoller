@@ -2792,7 +2792,8 @@ public final class SelfTest {
                         pipelineSource.contains("ComfyPromptProfiles.positive(chosen,memeImage,attempt)")&&
                         pipelineSource.contains("ComfyPromptProfiles.negative(cfg,chosen,memeImage)")&&
                         profilesSource.contains("assertNoExcludedConceptInPositive(item,prompt)")&&
-                        profilesSource.contains("neutral white balance")&&
+                        profilesSource.contains("unmistakably two-dimensional ink-and-gouache editorial illustration")&&
+                        profilesSource.contains("never documentary-style imagery")&&
                         pipelineSource.contains("imageSource.put(\"negativePrompt\",negativePrompt)")&&
                         !profilesSource.contains("no blue wash"),
                 "pipeline separates positive and negative image conditioning and records the negative prompt");
