@@ -323,7 +323,9 @@ public final class CommandCenterStore {
                     throw new IllegalStateException("Existing version missing; cannot archive.");
                 m.put("manualWorth",true);m.put("worthy",true);m.put("decision",a);
                 m.put("manualFramingRequested",true);m.put("politicalCandidate",true);
-                if("FRAMING_FAILED".equals(m.get("pairedVideoState")))
+                // A manual review is independent of any historical automatic pair.
+                if(!pairFramingAfterStandard)m.remove("pairedVideoState");
+                else if("FRAMING_FAILED".equals(m.get("pairedVideoState")))
                     m.put("pairedVideoState","FRAMING_QUEUED");
                 m.put("productionMode",ProductionMode.FRAMING_EXPOSURE.name());
                 m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("progress",15);
@@ -974,7 +976,13 @@ public final class CommandCenterStore {
     }
 
     private void markStandardPairQueued(Map<String,Object>m){
-        if(!pairFramingAfterStandard)return;
+        if(!pairFramingAfterStandard){
+            // Preserve archived versions, but do not carry a previous pair request
+            // into a newly requested STANDARD render.
+            m.remove("pairedVideoState");
+            m.remove("manualFramingRequested");
+            return;
+        }
         m.put("pairedVideoState","STANDARD_QUEUED");
         m.remove("pairedStandardVersionId");
         m.remove("pairedFramingVersionId");
@@ -1282,9 +1290,11 @@ public final class CommandCenterStore {
         for(Map<String,Object>story:stories.values()){
             String id=String.valueOf(story.get("id"));
             Map<ProductionMode,Map<String,Object>>modes=latest.getOrDefault(id,Map.of());
-            boolean paired=story.containsKey("pairedVideoState")
+            // Historical paired versions are shown from the archive. In manual-only
+            // mode, legacy pairing flags must not invent a new waiting review.
+            boolean paired=pairFramingAfterStandard&&(story.containsKey("pairedVideoState")
                     ||story.containsKey("pairedStandardVersionId")
-                    ||story.containsKey("pairedFramingVersionId");
+                    ||story.containsKey("pairedFramingVersionId"));
             ProductionMode active=ProductionMode.fromPersisted(story.get("productionMode"));
             // Untouched RSS discovery entries are still one normal story card.
             boolean standard=paired||modes.containsKey(ProductionMode.STANDARD)
@@ -1756,6 +1766,17 @@ public final class CommandCenterStore {
             if(root.get("autoQueue") instanceof Boolean b)autoQueue=b;
             Object scan=root.get("lastScan");if(scan instanceof Map<?,?>)lastScan=new LinkedHashMap<>(Json.object(scan));
             boolean migrated=migrateVideoArchive();
+            if(!pairFramingAfterStandard){
+                for(Map<String,Object>story:stories.values()){
+                    // Legacy STANDARD jobs remain queued or in flight. Only the
+                    // not-yet-created follow-up is disabled by the new setting.
+                    if(ProductionMode.fromPersisted(story.get("productionMode"))==ProductionMode.STANDARD
+                            &&String.valueOf(story.getOrDefault("pairedVideoState","")).startsWith("STANDARD_")){
+                        story.remove("pairedVideoState");
+                        migrated=true;
+                    }
+                }
+            }
             if(migrated||recoverExpiredLeases(false)+recoverExpiredBiasLeases(false)+recoverExpiredMemeLeases(false)>0)persistQuiet();
         }catch(Exception e){System.err.println("Command center state load failed: "+e.getMessage());}
     }
