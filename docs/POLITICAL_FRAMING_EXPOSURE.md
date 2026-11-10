@@ -107,6 +107,21 @@ The sting uses FFmpeg-generated 784 Hz and 1046 Hz tones, faded and mixed undern
 
 To turn the experiment off, set politicalExposureEnabled=false in controller and workers and restart them. Explicitly manage queued experimental jobs if disabling the worker capability.
 
+
+## Upgrade existing Windows installations to on-demand reviews
+
+1. Keep PR #58 and PR #59 out of production until their validation gates pass.
+2. In Command Center, inspect the QUEUED and PRODUCING views. Note any active Narrative Review jobs. A review already queued in the old paired mode remains a committed job when automatic pairing is disabled. Use its HOLD control to pause it if needed. Do not delete its video or the controller state file.
+3. Drain or stop the GPU worker using its web console at `http://127.0.0.1:8788`. Stop Command Center at `http://127.0.0.1:8787` after current uploads finish. Back up `defaults.txt`, `output/runtime` and archived video output before changing software.
+4. Deploy the same validated commit to the Windows Command Center and GPU worker. In the active repository root's `defaults.txt`, set `commandCenterPairFramingVideos=false`. `NewsConfig.load` reads this file at startup. An existing local `true` value overrides the new repository default if it was retained during updates.
+5. Run `batch_create_news_videos_windows.bat --self-test`, then start `command_center_windows.bat`. This launcher compiles Java and starts the worker UI when it is not already running. Check the worker UI at `http://127.0.0.1:8788` and the Command Center at `http://127.0.0.1:8787`.
+6. Make one test STANDARD video. Confirm its job reaches COMPLETE and no unrequested FRAMING_EXPOSURE review is queued. On the completed standard card, choose EXPOSE POLITICAL FRAMING to request a separate review. Verify that the archived standard MP4 and its posting status remain unchanged. If an old FRAMING_EXPOSURE job was already queued, its queue record remains; handle it explicitly.
+7. For rollback, stop and drain both services, restore the previous validated controller and worker commit together, restore the backed-up settings, and restart. Do not restore an old state file over more recent published video records without reconciling the archives.
+
+With automatic pairing disabled, existing STANDARD jobs previously marked STANDARD_QUEUED, STANDARD_PRODUCING or STANDARD_FAILED remain in their queue or failure state, but no uncommitted companion review is generated from those flags. Reviews already in FRAMING_EXPOSURE mode are not canceled. Archived review versions remain visible and are not rewritten. If you re-enable `commandCenterPairFramingVideos=true`, new STANDARD jobs again queue reviews only after successful standard completion.
+
+This change does not remove political classification or meme scoring. The only work omitted by default is unrequested review-video scripting, narration, visuals and rendering. No CPU, GPU, or disk savings have been benchmarked by these regression fixtures.
+
 ## Validation and release gate
 
 The Java fixture checks one-source enqueue/claim, worker capability protection, state restart, archived versions, safe standard remake, exact headline+teaser ordering, per-article evidence scoping, and nonpolitical single-source requests surviving rescans. Playwright verifies that the new button exists even when a story is not automatically political and has only one source.
