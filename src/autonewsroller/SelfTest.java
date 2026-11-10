@@ -1709,6 +1709,12 @@ public final class SelfTest {
                 .anyMatch(v->v instanceof Map<?,?>m&&originalVersion.equals(m.get("versionId"))
                         &&"STANDARD".equals(m.get("productionMode"))),
                 "manual review does not overwrite the archived standard version");
+        CommandCenterStore queuedManualRestart=new CommandCenterStore(manualState,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82,0,0,1,false);
+        ok("QUEUED".equals(queuedManualRestart.storyDetail(cluster.id).get("status"))
+                &&"FRAMING_EXPOSURE".equals(queuedManualRestart.storyDetail(cluster.id).get("productionMode"))
+                &&((Number)queuedManualRestart.boardStories(1,25,"ALL","",0).get("total")).intValue()==2,
+                "explicitly requested manual review persists across another restart");
         // Complete a manual review without remaking the archived original.
         Map<String,Object>manualAnalysisJob=onDemandRestart.claim("manual-analysis",Map.of());
         ok(manualAnalysisJob!=null&&"POLITICAL_ANALYSIS".equals(manualAnalysisJob.get("jobType")),
@@ -1743,6 +1749,24 @@ public final class SelfTest {
                 &&((List<?>)onDemandRestart.snapshot().get("videos")).size()==3
                 &&((Number)onDemandRestart.boardStories(1,25,"ALL","",0).get("total")).intValue()==2,
                 "manual-only remake archives a new standard version without recreating the review");
+        // A failed manually requested review must not render the completed news again.
+        onDemandRestart.action(cluster.id,"MAKE_FRAMING_EXPOSURE","manual-failed-review");
+        Map<String,Object>failedReviewJob=onDemandRestart.claim("manual-review-worker",Map.of());
+        ok(failedReviewJob!=null&&"FRAMING_EXPOSURE".equals(failedReviewJob.get("productionMode")),
+                "manual request after remake claims only review mode");
+        onDemandRestart.fail(cluster.id,"CONTENT_SAFETY: test rejection","manual-review-worker",
+                String.valueOf(failedReviewJob.get("claimId")));
+        ok("FAILED".equals(onDemandRestart.storyDetail(cluster.id).get("status"))
+                &&((List<?>)onDemandRestart.snapshot().get("videos")).size()==3,
+                "review safety failure leaves every completed archived version intact");
+        onDemandRestart.action(cluster.id,"MAKE_FRAMING_EXPOSURE","manual-review-retry");
+        Map<String,Object>retriedReviewJob=onDemandRestart.claim("manual-review-worker",Map.of());
+        ok(retriedReviewJob!=null&&"FRAMING_EXPOSURE".equals(retriedReviewJob.get("productionMode")),
+                "retry after review failure never re-renders standard news");
+        completeWithSafety(onDemandRestart,cluster.id,Map.of("workerId","manual-review-worker",
+                "claimId",retriedReviewJob.get("claimId"),"sidecar",Map.of("productionMode","FRAMING_EXPOSURE")));
+        ok(((List<?>)onDemandRestart.snapshot().get("videos")).size()==4,
+                "successful manual review retry creates one new archived review version");
 
         // A queued STANDARD from the old paired configuration must not create
         // a phantom waiting review when its next run uses manual-only defaults.
@@ -1786,6 +1810,21 @@ public final class SelfTest {
                 &&!autoOnly.storyDetail(cluster.id).containsKey("pairedVideoState")
                 &&((List<?>)autoOnly.snapshot().get("videos")).size()==1,
                 "AUTO completion also avoids generating unused framing videos");
+
+        Path worthState=dir.resolve("worth-manual-only.json");
+        CommandCenterStore worthOnly=new CommandCenterStore(worthState,
+                BiasRegistry.load(dir.resolve("bias.json")),false,.68,12,null,75,.74,.82,0,0,1,false);
+        worthOnly.applyDiscovery(discovery);
+        worthOnly.action(cluster.id,"WORTH");
+        Map<String,Object>worthJob=worthOnly.claim("worth-worker",Map.of());
+        ok(worthJob!=null&&"STANDARD".equals(worthJob.get("productionMode")),
+                "WORTH IT requests a normal video with automatic pairing disabled");
+        completeWithSafety(worthOnly,cluster.id,Map.of("workerId","worth-worker",
+                "claimId",worthJob.get("claimId"),"sidecar",Map.of("productionMode","STANDARD")));
+        ok(((List<?>)worthOnly.snapshot().get("videos")).size()==1
+                &&((Number)worthOnly.boardStories(1,25,"ALL","",0).get("total")).intValue()==1
+                &&worthOnly.claim("worth-worker",Map.of())==null,
+                "WORTH IT archives only standard news and does not start an unused review");
 
         CommandCenterStore store=new CommandCenterStore(state,BiasRegistry.load(dir.resolve("bias.json")),
                 false,.68,12,null,75,.74,.82,0,0,1,true);
