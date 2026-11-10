@@ -1908,7 +1908,12 @@ public final class SelfTest {
                 "sidecar",Map.of("productionMode","STANDARD")));
         ok(((List<?>)manualAfterHistoricalPair.snapshot().get("videos")).size()==3
                 &&((Number)manualAfterHistoricalPair.boardStories(1,25,"ALL","",0).get("total")).intValue()==2
-                &&((Number)manualAfterHistoricalPair.boardStories(1,25,"UPLOADED","",0).get("total")).intValue()==1,
+                &&((List<?>)manualAfterHistoricalPair.snapshot().get("videos")).stream().anyMatch(v->
+                        v instanceof Map<?,?>m&&firstVersion.equals(m.get("versionId"))
+                                &&"STANDARD".equals(m.get("productionMode"))
+                                &&Boolean.TRUE.equals(m.get("uploaded")))
+                &&((List<?>)manualAfterHistoricalPair.snapshot().get("videos")).stream().anyMatch(v->
+                        v instanceof Map<?,?>m&&"FRAMING_EXPOSURE".equals(m.get("productionMode"))),
                 "switching from paired production keeps earlier review and upload history intact");
 
         // AUTO-selected stories receive the same pair as manually queued ones.
