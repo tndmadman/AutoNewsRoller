@@ -37,11 +37,19 @@ public final class FailurePolicy {
     public record Decision(Code code,boolean automaticRetry,String action){}
 
     public static Decision fromCode(String reported,String stage,String message){
+        Decision inferred=classify(stage,message);
         if(reported!=null&&!reported.isBlank()){
-            try{return decision(Code.valueOf(reported.trim().toUpperCase(Locale.ROOT)));}
-            catch(IllegalArgumentException ignored){}
+            try{
+                Decision typed=decision(Code.valueOf(reported.trim().toUpperCase(Locale.ROOT)));
+                // A malformed or compromised worker must not be able to
+                // override a clearly terminal policy or safety error with
+                // a self-declared recoverable category.
+                if(!inferred.automaticRetry()&&typed.automaticRetry())
+                    return inferred;
+                return typed;
+            }catch(IllegalArgumentException ignored){}
         }
-        return classify(stage,message);
+        return inferred;
     }
 
     public static Decision classify(String stage,String message){
