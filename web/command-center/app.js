@@ -433,7 +433,8 @@ function renderStories(){
   renderPagination();
 }
 function failurePanelHtml(s,status){
-  if(status!=="FAILED")return "";
+  if(status!=="FAILED"&&!(status==="QUEUED"&&num(s.failureCount)>0))return "";
+  const retryPending=status==="QUEUED";
   const attempts=Array.isArray(s.productionAttempts)?s.productionAttempts:[];
   const recent=attempts.slice(-5).reverse().map(a=>{
     const when=a.at?new Date(a.at).toLocaleString():"";
@@ -443,7 +444,7 @@ function failurePanelHtml(s,status){
   }).join("");
   const history=recent?'<details class="attemptHistory"><summary>SHOW RECENT ATTEMPTS ('+attempts.length+')</summary>'+recent+'</details>':"";
   return '<div class="failurePanel">'+
-    '<div class="failureHead"><b>PRODUCTION FAILED</b><span>'+esc(s.failureType||"PRODUCTION_FAILURE")+'</span></div>'+
+    '<div class="failureHead"><b>'+(retryPending?'RETRY QUEUED':'PRODUCTION FAILED')+'</b><span>'+esc(s.failureType||"PRODUCTION_FAILURE")+'</span></div>'+
     '<div class="failureStats">'+
       '<span><b>CLAIMS</b> '+num(s.claimCount)+'</span>'+
       '<span><b>FAILURES</b> '+num(s.failureCount)+'</span>'+
@@ -451,6 +452,9 @@ function failurePanelHtml(s,status){
       '<span><b>LAST WORKER</b> '+esc(s.lastAssignedWorker||"unknown")+'</span>'+
     '</div>'+
     '<div class="failureReason">'+esc(s.lastFailure||s.error||s.detail||"Automatic retry or lease-recovery guard was exhausted.")+'</div>'+
+    (s.lastFailedAt?'<div class="failureReason"><b>LAST FAILED:</b> '+esc(new Date(s.lastFailedAt).toLocaleString())+'</div>':"")+
+    (s.retryNotBefore?'<div class="failureReason"><b>NEXT RETRY:</b> '+esc(new Date(s.retryNotBefore).toLocaleString())+'</div>':"")+
+    (s.recommendedAction?'<div class="failureReason"><b>RECOMMENDED ACTION:</b> '+esc(s.recommendedAction)+'</div>':"")+
     history+
   '</div>';
 }
