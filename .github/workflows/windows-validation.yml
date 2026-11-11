@@ -1,9 +1,9 @@
 name: Cross-platform validation
 on:
   push:
-    branches: [main, feature/news-video-pipeline, feature/political-framing-exposure-video, feature/rss-meme-ragebait-pipeline, fix/narrative-reviews-on-demand-20261110, integration/autonewsroller-5branch-illustrated-safe-retry-20261107]
+    branches: [main, feature/news-video-pipeline, feature/political-framing-exposure-video, feature/rss-meme-ragebait-pipeline, fix/narrative-reviews-on-demand-20261110, integration/autonewsroller-5branch-illustrated-safe-retry-20261107, fix/video-failure-recovery-resource-optimization-20261111]
   pull_request:
-    branches: [main]
+    branches: [main, integration/autonewsroller-5branch-illustrated-safe-retry-20261107]
 
 jobs:
   scanner-python-313:
