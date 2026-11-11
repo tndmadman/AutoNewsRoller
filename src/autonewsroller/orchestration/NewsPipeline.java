@@ -311,7 +311,34 @@ public final class NewsPipeline {
         }
 
         Path wav=slotDir.resolve("narration/narration.wav");
-        NarrationResult nr=narrate(c,script,wav,worker,slot);
+        Path narrationMetadata=wav.resolveSibling("narration.wav.json");
+        Path timingSidecar=wav.resolveSibling("narration.timing.tsv");
+        String narrationFingerprint=Hashing.sha256(scriptFingerprint+"|"+
+                Json.stringify(script.toMap())+"|"+cfg.get("ttsPrimary","kokoro")+
+                "|"+cfg.get("ttsFallback","qwen3")+"|"+cfg.getDouble("kokoroSpeed",0.92)+
+                "|"+cfg.get("kokoroVoices","")+"|"+cfg.get("qwenVoices",""));
+        NarrationResult nr=null;
+        boolean narrationReused=false;
+        Map<String,Object>oldNarration=checkpoint.metadata("NARRATION",narrationFingerprint);
+        if(oldNarration!=null){
+            Map<String,Path>narrationFiles=new LinkedHashMap<>();
+            narrationFiles.put("wav",wav);
+            narrationFiles.put("metadata",narrationMetadata);
+            if(Boolean.TRUE.equals(oldNarration.get("hasTiming")))narrationFiles.put("timing",timingSidecar);
+            Map<String,Object>valid=checkpoint.validated("NARRATION",narrationFingerprint,narrationFiles);
+            if(valid!=null){
+                try{
+                    if(!Boolean.TRUE.equals(valid.get("hasTiming")))Files.deleteIfExists(timingSidecar);
+                    if(audioDuration(wav)>0.5){
+                        nr=new NarrationResult(String.valueOf(valid.get("engine")),
+                                String.valueOf(valid.get("voice")),wav,narrationMetadata);
+                        narrationReused=true;
+                        events.emit(worker,slot,PipelineStage.TTS,"RESUMED VALIDATED WAV engine="+nr.engine());
+                    }
+                }catch(Exception invalid){nr=null;}
+            }
+        }
+        if(nr==null)nr=narrate(c,script,wav,worker,slot);
         double narrationSeconds=audioDuration(nr.wav());
         // Standard videos retain their established floor. Narrative reviews must
         // actually meet the requested minimum in measured TTS audio, not just
@@ -338,11 +365,25 @@ public final class NewsPipeline {
             Json.write(scriptPath,script.toMap());
             checkpoint.accept("SCRIPT",scriptFingerprint,Map.of("script",scriptPath),
                     Map.of("words",Text.words(script.narration()),"durationRepaired",true));
+            narrationFingerprint=Hashing.sha256(scriptFingerprint+"|"+
+                    Json.stringify(script.toMap())+"|"+cfg.get("ttsPrimary","kokoro")+
+                    "|"+cfg.get("ttsFallback","qwen3")+"|"+cfg.getDouble("kokoroSpeed",0.92)+
+                    "|"+cfg.get("kokoroVoices","")+"|"+cfg.get("qwenVoices",""));
             nr=narrate(c,script,wav,worker,slot);
+            narrationReused=false;
             narrationSeconds=audioDuration(nr.wav());
             logs.worker(worker,String.format(Locale.ROOT,"slot=%d repaired narration duration=%.2fs words=%d",slot,narrationSeconds,Text.words(script.narration())));
             if(narrationSeconds<minimumFinalSeconds)
                 throw new IllegalStateException(String.format(Locale.ROOT,"Narration audio still too short after repair: %.2fs; minimum is %.2fs",narrationSeconds,minimumFinalSeconds));
+        }
+
+        if(!narrationReused){
+            Map<String,Path>files=new LinkedHashMap<>();
+            files.put("wav",wav);files.put("metadata",narrationMetadata);
+            boolean hasTiming=Files.isRegularFile(timingSidecar);
+            if(hasTiming)files.put("timing",timingSidecar);
+            checkpoint.accept("NARRATION",narrationFingerprint,files,
+                    Map.of("engine",nr.engine(),"voice",nr.voice(),"hasTiming",hasTiming));
         }
 
         GroundedVisualPromptGenerator.Result visualPrompts=mode==ProductionMode.MEME_RAGEBAIT
@@ -355,7 +396,6 @@ public final class NewsPipeline {
                 :new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
         Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
-        Path timingSidecar=nr.wav().resolveSibling(nr.wav().getFileName().toString().replaceFirst("\\.wav$",".timing.tsv"));
         SpeechTiming.Alignment alignment=SpeechTiming.align(script.narration(),script.segments(),
                 cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null,narrationSeconds);
         if(mode==ProductionMode.FRAMING_EXPOSURE){
