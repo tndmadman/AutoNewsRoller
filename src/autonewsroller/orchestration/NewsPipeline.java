@@ -180,6 +180,31 @@ public final class NewsPipeline {
                 }
             }
         }
+        // Check required worker-local image services before spending Ollama or
+        // TTS time. The controller's service health does not establish readiness
+        // of a separate Windows GPU worker.
+        if(!dryRun&&useComfy){
+            try{
+                ComfyRuntime.ensureRunning(root,cfg);
+                ComfyImageGenerator health=new ComfyImageGenerator(root,
+                        cfg.get("comfyUrl","http://127.0.0.1:8188"),
+                        cfg.get("qwenUrl","http://127.0.0.1:8765"));
+                if(!health.reachable())
+                    throw new IllegalStateException("ComfyUI system endpoint is not reachable");
+                List<String>choices=health.checkpoints();
+                String selected=mode==ProductionMode.MEME_RAGEBAIT
+                        ?cfg.get("memeImageCheckpoint",""):"";
+                if(selected.isBlank())selected=cfg.get("imageCheckpoint","");
+                if(!selected.isBlank()&&choices.stream().noneMatch(x->checkpointMatches(x,selected)))
+                    throw new IllegalArgumentException("CONFIGURATION_INVALID: configured checkpoint is unavailable: "+selected);
+                if(selected.isBlank()&&choices.isEmpty())
+                    throw new IllegalArgumentException("CONFIGURATION_INVALID: no ComfyUI checkpoint is available");
+            }catch(IllegalArgumentException wrongConfiguration){throw wrongConfiguration;}
+            catch(Exception serviceFailure){
+                throw new IllegalStateException("SERVICE_UNAVAILABLE: ComfyUI preflight failed: "+
+                        serviceFailure.getMessage(),serviceFailure);
+            }
+        }
         StoryCluster c=mode==ProductionMode.FRAMING_EXPOSURE?cand.cluster():enrichForProduction(cand.cluster());
         VerificationResult refreshed=new SourceVerifier().verify(c,cfg.minimumIndependentSources());
         FactPackage fp=refreshed.factPackage();
