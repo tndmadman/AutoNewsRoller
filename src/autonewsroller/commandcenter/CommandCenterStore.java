@@ -1097,6 +1097,7 @@ public final class CommandCenterStore {
         m.put("failureCount",failures);
         m.put("lastFailure",message);
         m.put("lastFailedAt",now.toString());
+        m.put("lastFailedStage",failedStage);
         m.put("failureType",failureType);
         m.put("failureRecoverable",failure.automaticRetry());
         m.put("recommendedAction",failure.action());
@@ -1530,7 +1531,7 @@ public final class CommandCenterStore {
         catch(Exception ignored){return true;}
     }
     private static void resetFailureRetryState(Map<String,Object>m){
-        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("failureType");m.remove("failureRecoverable");m.remove("recommendedAction");m.remove("leaseRecoveries");m.remove("productionEpoch");
+        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("lastFailedStage");m.remove("failureType");m.remove("failureRecoverable");m.remove("recommendedAction");m.remove("leaseRecoveries");m.remove("productionEpoch");
     }
     private static boolean isToPost(Map<String,Object>m){
         return "COMPLETE".equals(String.valueOf(m.get("status")))
