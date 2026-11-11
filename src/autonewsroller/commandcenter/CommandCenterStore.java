@@ -442,6 +442,7 @@ public final class CommandCenterStore {
             if("FRAMING_QUEUED".equals(m.get("pairedVideoState"))
                     &&ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE)
                 m.put("pairedVideoState","FRAMING_PRODUCING");
+            m.putIfAbsent("productionEpoch",UUID.randomUUID().toString());
             m.put("claimId",UUID.randomUUID().toString());m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
             int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
             appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY"));
@@ -449,7 +450,7 @@ public final class CommandCenterStore {
             persistQuiet();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
             job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
-            job.put("claimId",m.get("claimId"));job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
+            job.put("claimId",m.get("claimId"));job.put("productionEpoch",m.get("productionEpoch"));job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
             Map<String,Object>sourceMix=m.get("sourceMix") instanceof Map<?,?>?Json.object(m.get("sourceMix")):Map.of();
             Map<String,Object>framing=m.get("framingAnalysis") instanceof Map<?,?>?Json.object(m.get("framingAnalysis")):Map.of();
             PoliticalVisualData political=PoliticalVisualData.from(
@@ -1529,7 +1530,7 @@ public final class CommandCenterStore {
         catch(Exception ignored){return true;}
     }
     private static void resetFailureRetryState(Map<String,Object>m){
-        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("failureType");m.remove("failureRecoverable");m.remove("recommendedAction");m.remove("leaseRecoveries");
+        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("failureType");m.remove("failureRecoverable");m.remove("recommendedAction");m.remove("leaseRecoveries");m.remove("productionEpoch");
     }
     private static boolean isToPost(Map<String,Object>m){
         return "COMPLETE".equals(String.valueOf(m.get("status")))
