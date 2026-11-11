@@ -157,7 +157,7 @@ public final class NewsPipeline {
                 "|"+cfg.get("ttsFallback","qwen3")+"|"+
                 (Files.isRegularFile(root.resolve("defaults.txt"))
                         ?ContentSafetyService.hash(root.resolve("defaults.txt")):"no-defaults"));
-        ProductionCheckpoint checkpoint=new ProductionCheckpoint(batchDir,settingsFingerprint);
+        ProductionCheckpoint checkpoint=new ProductionCheckpoint(slotDir,slotDir.getParent(),settingsFingerprint);
         Map<String,Object>cachedFinal=checkpoint.metadata("FINAL",settingsFingerprint);
         if(cachedFinal!=null&&!dryRun){
             String name=String.valueOf(cachedFinal.getOrDefault("filename",""));
