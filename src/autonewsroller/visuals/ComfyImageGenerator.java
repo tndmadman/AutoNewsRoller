@@ -64,7 +64,65 @@ public final class ComfyImageGenerator {
         return false;
     }
 
-    private Map<String,Object> waitForImage(String promptId,int timeoutSeconds)throws Exception{long end=System.nanoTime()+Duration.ofSeconds(timeoutSeconds).toNanos();while(System.nanoTime()<end){HttpResponse<String>h=get("/history/"+URLEncoder.encode(promptId,java.nio.charset.StandardCharsets.UTF_8),10);if(h.statusCode()/100==2){Object rootObj=Json.parse(h.body());Map<String,Object>rootMap=Json.object(rootObj);Object entry=rootMap.get(promptId);if(entry instanceof Map<?,?>em){Object outputs=((Map<?,?>)em).get("outputs");if(outputs instanceof Map<?,?>om){for(Object ov:om.values())if(ov instanceof Map<?,?>node){Object images=node.get("images");if(images instanceof List<?>l&&!l.isEmpty()&&l.get(0) instanceof Map<?,?>m){Map<String,Object>out=new LinkedHashMap<>();for(var e:m.entrySet())out.put(String.valueOf(e.getKey()),e.getValue());return out;}}}}}Thread.sleep(750);}throw new IllegalStateException("ComfyUI timed out waiting for prompt "+promptId);}
+    private Map<String,Object> waitForImage(String promptId,int timeoutSeconds)throws Exception{
+        long end=System.nanoTime()+Duration.ofSeconds(timeoutSeconds).toNanos();
+        String encoded=URLEncoder.encode(promptId,java.nio.charset.StandardCharsets.UTF_8);
+        while(System.nanoTime()<end){
+            HttpResponse<String>h=get("/history/"+encoded,10);
+            if(h.statusCode()/100==2){
+                Map<String,Object>history=Json.object(Json.parse(h.body()));
+                Object raw=history.get(promptId);
+                if(raw instanceof Map<?,?>){
+                    Map<String,Object>entry=Json.object(raw);
+                    String failure=executionFailure(entry);
+                    if(!failure.isBlank())
+                        throw new IllegalStateException("COMFY_EXECUTION_FAILED: prompt "+promptId+": "+failure);
+                    Object outputs=entry.get("outputs");
+                    if(outputs instanceof Map<?,?>om)
+                        for(Object ov:om.values())if(ov instanceof Map<?,?>node){
+                            Object images=node.get("images");
+                            if(images instanceof List<?>l&&!l.isEmpty()&&l.get(0) instanceof Map<?,?>m){
+                                Map<String,Object>out=new LinkedHashMap<>();
+                                for(var e:m.entrySet())out.put(String.valueOf(e.getKey()),e.getValue());
+                                return out;
+                            }
+                        }
+                    Map<String,Object>status=entry.get("status") instanceof Map<?,?>m?Json.object(m):Map.of();
+                    if("success".equalsIgnoreCase(String.valueOf(status.get("status_str")))
+                            &&Boolean.TRUE.equals(status.get("completed")))
+                        throw new IllegalStateException("COMFY_EXECUTION_FAILED: completed prompt "+promptId+" has no image output");
+                }
+            }else if(h.statusCode()!=404)
+                throw new IllegalStateException("ComfyUI history HTTP "+h.statusCode()+" for prompt "+promptId);
+            Thread.sleep(750);
+        }
+        throw new IllegalStateException("COMFY_TIMEOUT: ComfyUI timed out waiting for prompt "+promptId);
+    }
+
+    /** Interpret only terminal errors for the requested prompt; never clear global queues. */
+    public static String executionFailure(Map<String,Object>entry){
+        Map<String,Object>status=entry.get("status") instanceof Map<?,?>m?Json.object(m):Map.of();
+        Object messages=status.get("messages");
+        String detail="";
+        if(messages instanceof List<?>list){
+            for(Object event:list){
+                if(!(event instanceof List<?>parts)||parts.size()<2)continue;
+                String type=String.valueOf(parts.get(0));
+                if(!"execution_error".equals(type)&&!"execution_interrupted".equals(type))continue;
+                if(parts.get(1) instanceof Map<?,?>m){
+                    Map<String,Object>data=Json.object(m);
+                    detail=compact(String.valueOf(data.getOrDefault("exception_message",
+                            data.getOrDefault("exception_type",type))));
+                }else detail=compact(String.valueOf(parts.get(1)));
+                if(detail.isBlank())detail=type;
+                return type+": "+detail;
+            }
+        }
+        String code=String.valueOf(status.getOrDefault("status_str","")).toLowerCase(Locale.ROOT);
+        if(code.equals("error")||code.equals("failed")||code.equals("interrupted"))
+            return "status="+code+(detail.isBlank()?"":": "+detail);
+        return "";
+    }
     private void requestQwenRelease(){try{HttpRequest r=HttpRequest.newBuilder(URI.create(qwenUrl+"/release-gpu")).timeout(Duration.ofSeconds(15)).POST(HttpRequest.BodyPublishers.noBody()).build();client.send(r,HttpResponse.BodyHandlers.discarding());}catch(Exception ignored){}}
     private HttpResponse<String>get(String path,int seconds)throws Exception{return client.send(HttpRequest.newBuilder(URI.create(baseUrl+path)).timeout(Duration.ofSeconds(seconds)).GET().build(),HttpResponse.BodyHandlers.ofString());}
     private HttpResponse<String>postJson(String path,String body,int seconds)throws Exception{return client.send(HttpRequest.newBuilder(URI.create(baseUrl+path)).timeout(Duration.ofSeconds(seconds)).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(),HttpResponse.BodyHandlers.ofString());}
