@@ -7,6 +7,7 @@ import autonewsroller.model.Article;
 import autonewsroller.model.StoryCluster;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.NewsPipeline;
+import autonewsroller.orchestration.FailurePolicy;
 import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.orchestration.ProductionMode;
 import autonewsroller.orchestration.WorkerState;
@@ -1080,6 +1081,9 @@ public final class CommandCenterStore {
     public synchronized void fail(String jobId,String error){fail(jobId,error,"","");}
     public synchronized void fail(String jobId,String error,String workerId){fail(jobId,error,workerId,"");}
     public synchronized void fail(String jobId,String error,String workerId,String claimId){
+        fail(jobId,error,workerId,claimId,"");
+    }
+    public synchronized void fail(String jobId,String error,String workerId,String claimId,String reportedCode){
         Map<String,Object>m=stories.get(jobId);
         if(m==null||!workerOwnsActiveJob(m,workerId,claimId))return;
         Instant now=Instant.now();
@@ -1087,11 +1091,14 @@ public final class CommandCenterStore {
         String message=safe(error);
         String failedStage=String.valueOf(m.getOrDefault("stage","UNKNOWN"));
         String worker=String.valueOf(m.getOrDefault("assignedWorker","unknown"));
-        String failureType=failureTypeForStage(failedStage,message);
+        FailurePolicy.Decision failure=FailurePolicy.fromCode(reportedCode,failedStage,message);
+        String failureType=failure.code().name();
         m.put("failureCount",failures);
         m.put("lastFailure",message);
         m.put("lastFailedAt",now.toString());
         m.put("failureType",failureType);
+        m.put("failureRecoverable",failure.automaticRetry());
+        m.put("recommendedAction",failure.action());
         m.put("lastAssignedWorker",worker);
         m.put("error",message);
         m.put("updatedAt",now.toString());
@@ -1107,18 +1114,21 @@ public final class CommandCenterStore {
 
         // Deterministic evidence, JSON/validation exhaustion and stale snapshots cannot
         // be repaired by starting the entire video job repeatedly. Manual retry remains available.
-        boolean nonTransient=nonTransientFailure(message);
+        boolean nonTransient=!failure.automaticRetry()||nonTransientFailure(message);
         if(!nonTransient&&failures<=failureMaxRetries){
-            Instant retryAt=now.plusSeconds(failureRetryDelaySeconds);
+            // Bounded exponential backoff; a controller restart retains the deadline.
+            long delay=Math.min(900L,(long)failureRetryDelaySeconds*(1L<<Math.min(10,Math.max(0,failures-1))));
+            Instant retryAt=now.plusSeconds(delay);
             m.put("status","QUEUED");m.put("stage","QUEUED");m.put("progress",15);m.put("queuedAt",now.toString());
             m.put("retryNotBefore",retryAt.toString());
             // Do not show a prior failure as the error on a newly queued attempt.
             m.remove("error");
-            m.put("detail","Production failed; automatic retry "+failures+"/"+failureMaxRetries+" queued"+(failureRetryDelaySeconds>0?" in "+failureRetryDelaySeconds+"s":""));
+            m.put("detail","Production failed ("+failureType+"); automatic retry "+
+                    failures+"/"+failureMaxRetries+" queued"+(delay>0?" in "+delay+"s":""));
         }else{
             m.put("status","FAILED");m.put("stage","FAILED");m.put("progress",0);m.remove("retryNotBefore");
             m.put("detail",nonTransient
-                    ?"Non-transient production error; manual retry or new source evidence required"
+                    ?"Automatic retry blocked ("+failureType+"): "+failure.action()
                     :"Production failed after "+failureMaxRetries+" automatic retries; manual action required");
             if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE&&
                     String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("FRAMING_"))
@@ -1519,7 +1529,7 @@ public final class CommandCenterStore {
         catch(Exception ignored){return true;}
     }
     private static void resetFailureRetryState(Map<String,Object>m){
-        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("failureType");m.remove("leaseRecoveries");
+        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("failureType");m.remove("failureRecoverable");m.remove("recommendedAction");m.remove("leaseRecoveries");
     }
     private static boolean isToPost(Map<String,Object>m){
         return "COMPLETE".equals(String.valueOf(m.get("status")))
