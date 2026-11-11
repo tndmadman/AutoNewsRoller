@@ -386,10 +386,27 @@ public final class NewsPipeline {
                     Map.of("engine",nr.engine(),"voice",nr.voice(),"hasTiming",hasTiming));
         }
 
-        GroundedVisualPromptGenerator.Result visualPrompts=mode==ProductionMode.MEME_RAGEBAIT
-                ?new GroundedVisualPromptGenerator.Result(List.of(),0,0,0,"meme-script-scene-prompts")
-                :generateVisualPrompts(script,fp,c,false,worker,slot);
-        Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
+        String visualPromptFingerprint=Hashing.sha256(evidenceFingerprint+"|"+
+                Json.stringify(script.toMap())+"|"+Json.stringify(political.toMap())+
+                "|"+cfg.get("visualPromptModel","")+"|"+cfg.get("visualPromptEnabled","true"));
+        Path visualPromptPath=slotDir.resolve("visual_prompt_plan.json");
+        GroundedVisualPromptGenerator.Result visualPrompts=null;
+        if(mode!=ProductionMode.MEME_RAGEBAIT
+                &&checkpoint.validated("VISUAL_PROMPTS",visualPromptFingerprint,
+                        Map.of("plan",visualPromptPath))!=null){
+            try{visualPrompts=GroundedVisualPromptGenerator.Result.fromMap(
+                    Json.object(Json.read(visualPromptPath)));}
+            catch(Exception invalid){visualPrompts=null;}
+        }
+        if(visualPrompts==null){
+            visualPrompts=mode==ProductionMode.MEME_RAGEBAIT
+                    ?new GroundedVisualPromptGenerator.Result(List.of(),0,0,0,"meme-script-scene-prompts")
+                    :generateVisualPrompts(script,fp,c,false,worker,slot);
+            Json.write(visualPromptPath,visualPrompts.toMap());
+            if(mode!=ProductionMode.MEME_RAGEBAIT)
+                checkpoint.accept("VISUAL_PROMPTS",visualPromptFingerprint,
+                        Map.of("plan",visualPromptPath),Map.of("scenes",visualPrompts.scenes().size()));
+        }else events.emit(worker,slot,PipelineStage.VISUALS,"RESUMED VISUAL PROMPT PLAN");
         VisualPlan plan=mode==ProductionMode.FRAMING_EXPOSURE
                 ?new PoliticalFramingVisualPlanner().plan(script,evidence)
                 :mode==ProductionMode.MEME_RAGEBAIT?new MemeVisualPlanner().plan(script)
