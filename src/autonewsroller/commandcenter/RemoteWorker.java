@@ -179,9 +179,17 @@ public final class RemoteWorker {
             }
             event("progress",Map.of("stage","CLAIMED","detail","mode="+productionMode.name()+
                     "; durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy));
-            String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
-            Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+stamp);
+            // The epoch changes on a new manual production request, not on retry.
+            // Each retry resumes the same workspace after a worker restart.
+            String epoch=String.valueOf(job.getOrDefault("productionEpoch",currentClaimId));
+            Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+safeName(epoch));
+            Files.createDirectories(batch);
             event("job-dir",Map.of("dir",batch.toString()));
+            try(FileChannel workspaceChannel=FileChannel.open(batch.resolve(".production.lock"),
+                    StandardOpenOption.CREATE,StandardOpenOption.WRITE)){
+                FileLock workspaceLock=workspaceChannel.tryLock();
+                if(workspaceLock==null)throw new IllegalStateException("WORKSPACE_BUSY: Another worker owns this production epoch");
+                try(workspaceLock){
             final String claimId=currentClaimId;
             NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,e->progressSafe(jobId,claimId,e));
             PoliticalVisualData political=job.get("politicalVisualData") instanceof Map<?,?>?PoliticalVisualData.fromMap(Json.object(job.get("politicalVisualData"))):null;
@@ -203,6 +211,8 @@ public final class RemoteWorker {
             }
             event("job-finish",Map.of("jobId",jobId,"result","COMPLETE","stage","COMPLETE","outputPath",output.toString()));
             System.out.println("Worker completed: "+currentTopic);
+                }
+            }
         }catch(Exception e){
             if("MEME_ANALYSIS".equals(type)&&supersededMemeAnalysis(e)){
                 // Discovery invalidated this claim while analysis was running.
@@ -222,7 +232,8 @@ public final class RemoteWorker {
                             "analysisInputFingerprint",String.valueOf(job.getOrDefault("analysisInputFingerprint","")),
                             "error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
                 else
-                    post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"claimId",currentClaimId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
+                    post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"claimId",currentClaimId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString(),
+                            "failureCode",FailurePolicy.classify(stage,e.getMessage()).code().name(),"failedStage",stage));
                 acknowledged=true;
             }
             catch(Exception callback){error("failure-callback",callback);}

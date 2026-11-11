@@ -112,6 +112,8 @@ public final class SelfTest {
         testVisualV5();
         testComfyPromptProfiles();
         testComfyMock();
+        testFailureRecoveryPolicy();
+        testProductionCheckpoint();
         testWorthyHourFilterContract(root);
         testFeedCardIdentityContract(root);
         testTtsFallback();
@@ -641,7 +643,7 @@ public final class SelfTest {
                 "meme-worker",String.valueOf(terminalClaim.get("claimId")));
         Map<String,Object>terminalMeme=resumed.storyDetail(cluster.id);
         ok("FAILED".equals(terminalMeme.get("status"))
-                &&"MEME_SCRIPT_VALIDATION_FAILURE".equals(terminalMeme.get("failureType"))
+                &&"SCRIPT_VALIDATION_FAILED".equals(terminalMeme.get("failureType"))
                 &&terminalMeme.get("retryNotBefore")==null,
                 "exhausted meme script fails permanently rather than recycling queued 15%");
         CommandCenterStore failedReload=new CommandCenterStore(state,
@@ -2013,7 +2015,7 @@ public final class SelfTest {
                 String.valueOf(retryReview.get("claimId")));
         automatic.fail(cluster.id,"FRAMING_SCRIPT_VALIDATION_FAILED after 5 attempts",
                 "updated-worker",String.valueOf(retryReview.get("claimId")));
-        ok("SCRIPT_FAILURE".equals(automatic.storyDetail(cluster.id).get("failureType"))
+        ok("SCRIPT_VALIDATION_FAILED".equals(automatic.storyDetail(cluster.id).get("failureType"))
                 &&((List<?>)automatic.snapshot().get("videos")).size()==1,
                 "script-generation failure is correctly labeled and the normal video stays archived");
 
@@ -3040,6 +3042,71 @@ public final class SelfTest {
             ok(expected.getMessage().contains("excluded concept"),
                     "grounded news prompts reject excluded details in positive conditioning");
         }
+    }
+
+    private void testProductionCheckpoint()throws Exception{
+        Path workspace=Files.createTempDirectory("autonews-checkpoint-fixture-");
+        Path script=workspace.resolve("script.json");
+        Files.writeString(script,"{\"validated\":true}");
+        ProductionCheckpoint first=new ProductionCheckpoint(workspace,"contract-A");
+        first.accept("SCRIPT","source-A",Map.of("script",script),Map.of("words",180));
+        ProductionCheckpoint resumed=new ProductionCheckpoint(workspace,"contract-A");
+        ok(resumed.validated("SCRIPT","source-A",Map.of("script",script))!=null,
+                "durable checkpoint survives a worker restart");
+        ok(resumed.validated("SCRIPT","source-B",Map.of("script",script))==null,
+                "source fingerprint change invalidates a checkpoint stage");
+        ok(new ProductionCheckpoint(workspace,"contract-B")
+                .validated("SCRIPT","source-A",Map.of("script",script))==null,
+                "production configuration change invalidates prior outputs");
+        Files.writeString(script,"{\"validated\":false}");
+        ok(resumed.validated("SCRIPT","source-A",Map.of("script",script))==null,
+                "modified stage artifact does not pass the recorded content hash");
+        boolean refusedOutside=false;
+        try{
+            resumed.accept("OUTSIDE","bad",Map.of("other",Files.createTempFile("anr-outside-", ".json")),Map.of());
+        }catch(IllegalArgumentException expected){refusedOutside=true;}
+        ok(refusedOutside,"checkpoint refuses paths outside the job workspace");
+        Files.writeString(workspace.resolve("production_checkpoint.json"),"{\"corrupted\":");
+        ProductionCheckpoint corrupt=new ProductionCheckpoint(workspace,"contract-A");
+        ok(corrupt.validated("SCRIPT","source-A",Map.of("script",script))==null,
+                "corrupt checkpoint is rejected instead of treating any output as approved");
+        FactPackage facts=new FactPackage("checkpoint-story","City opens public library",
+                "Library services expand.",List.of(),List.of(),List.of(),2,2,0.9,false);
+        NewsScript original=NewsScriptGenerator.deterministic(facts,70);
+        NewsScript roundtrip=NewsScript.fromMap(Json.object(Json.parse(Json.stringify(original.toMap()))));
+        ok(roundtrip.toMap().equals(original.toMap()),
+                "validated script JSON restores its complete narration and segment structure");
+    }
+
+    private void testFailureRecoveryPolicy(){
+        FactPackage sensitive=new FactPackage("story-1","Police investigate reported shooting",
+                "An incident is under investigation.",List.of(),List.of(),List.of(),1,1,.8,false);
+        FactPackage ordinary=new FactPackage("story-2","City opens a new public library",
+                "New local library services are available.",List.of(),List.of(),List.of(),1,1,.8,false);
+        ok(!ProductionPreflight.checkPolicy(sensitive,ProductionMode.STANDARD).eligible()
+                &&ProductionPreflight.checkPolicy(sensitive,ProductionMode.FRAMING_EXPOSURE).eligible(),
+                "preflight blocks sensitive standard images while preserving evidence-graphics review mode");
+        ok(ProductionPreflight.checkPolicy(ordinary,ProductionMode.STANDARD).eligible(),
+                "ordinary news is not rejected by policy preflight");
+        ok(!FailurePolicy.classify("VISUALS","VISUAL_IMAGE_REQUIRED: 5/6 illustrations").automaticRetry(),
+                "missing mandatory illustrations do not trigger another whole-video run");
+        ok(!FailurePolicy.classify("VISUALS","SCANNER_UNAVAILABLE: detector missing").automaticRetry(),
+                "missing safety scanner never causes an automatic publish or full-job retry");
+        ok(FailurePolicy.classify("VISUALS","COMFY_EXECUTION_FAILED: transient CUDA fault").automaticRetry(),
+                "ComfyUI execution faults remain eligible for bounded retry");
+        ok(!FailurePolicy.classify("SCRIPT","FRAMING_SCRIPT_VALIDATION_FAILED").automaticRetry(),
+                "exhausted script validation is a permanent failure");
+        ok(!FailurePolicy.fromCode("COMFY_TIMEOUT","VISUALS",
+                "VISUAL_IMAGE_REQUIRED: five accepted images").automaticRetry(),
+                "worker-reported transient code cannot override local permanent visual rejection");
+        Map<String,Object>execution=Map.of("status",Map.of("status_str","error","completed",false,
+                "messages",List.of(List.of("execution_error",Map.of("exception_type","RuntimeError",
+                    "exception_message","out of memory")))));
+        ok(ComfyImageGenerator.executionFailure(execution).contains("out of memory"),
+                "ComfyUI surfaces terminal execution errors immediately");
+        ok(ComfyImageGenerator.executionFailure(Map.of("status",
+                Map.of("status_str","running","completed",false))).isEmpty(),
+                "ComfyUI queued or running work is not mistaken for an execution failure");
     }
 
     private void testComfyMock()throws Exception{

@@ -7,6 +7,7 @@ import autonewsroller.model.Article;
 import autonewsroller.model.StoryCluster;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.NewsPipeline;
+import autonewsroller.orchestration.FailurePolicy;
 import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.orchestration.ProductionMode;
 import autonewsroller.orchestration.WorkerState;
@@ -441,6 +442,7 @@ public final class CommandCenterStore {
             if("FRAMING_QUEUED".equals(m.get("pairedVideoState"))
                     &&ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE)
                 m.put("pairedVideoState","FRAMING_PRODUCING");
+            m.putIfAbsent("productionEpoch",UUID.randomUUID().toString());
             m.put("claimId",UUID.randomUUID().toString());m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
             int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
             appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY"));
@@ -448,7 +450,7 @@ public final class CommandCenterStore {
             persistQuiet();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
             job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
-            job.put("claimId",m.get("claimId"));job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
+            job.put("claimId",m.get("claimId"));job.put("productionEpoch",m.get("productionEpoch"));job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
             Map<String,Object>sourceMix=m.get("sourceMix") instanceof Map<?,?>?Json.object(m.get("sourceMix")):Map.of();
             Map<String,Object>framing=m.get("framingAnalysis") instanceof Map<?,?>?Json.object(m.get("framingAnalysis")):Map.of();
             PoliticalVisualData political=PoliticalVisualData.from(
@@ -1080,6 +1082,9 @@ public final class CommandCenterStore {
     public synchronized void fail(String jobId,String error){fail(jobId,error,"","");}
     public synchronized void fail(String jobId,String error,String workerId){fail(jobId,error,workerId,"");}
     public synchronized void fail(String jobId,String error,String workerId,String claimId){
+        fail(jobId,error,workerId,claimId,"");
+    }
+    public synchronized void fail(String jobId,String error,String workerId,String claimId,String reportedCode){
         Map<String,Object>m=stories.get(jobId);
         if(m==null||!workerOwnsActiveJob(m,workerId,claimId))return;
         Instant now=Instant.now();
@@ -1087,11 +1092,15 @@ public final class CommandCenterStore {
         String message=safe(error);
         String failedStage=String.valueOf(m.getOrDefault("stage","UNKNOWN"));
         String worker=String.valueOf(m.getOrDefault("assignedWorker","unknown"));
-        String failureType=failureTypeForStage(failedStage,message);
+        FailurePolicy.Decision failure=FailurePolicy.fromCode(reportedCode,failedStage,message);
+        String failureType=failure.code().name();
         m.put("failureCount",failures);
         m.put("lastFailure",message);
         m.put("lastFailedAt",now.toString());
+        m.put("lastFailedStage",failedStage);
         m.put("failureType",failureType);
+        m.put("failureRecoverable",failure.automaticRetry());
+        m.put("recommendedAction",failure.action());
         m.put("lastAssignedWorker",worker);
         m.put("error",message);
         m.put("updatedAt",now.toString());
@@ -1107,18 +1116,21 @@ public final class CommandCenterStore {
 
         // Deterministic evidence, JSON/validation exhaustion and stale snapshots cannot
         // be repaired by starting the entire video job repeatedly. Manual retry remains available.
-        boolean nonTransient=nonTransientFailure(message);
+        boolean nonTransient=!failure.automaticRetry()||nonTransientFailure(message);
         if(!nonTransient&&failures<=failureMaxRetries){
-            Instant retryAt=now.plusSeconds(failureRetryDelaySeconds);
+            // Bounded exponential backoff; a controller restart retains the deadline.
+            long delay=Math.min(900L,(long)failureRetryDelaySeconds*(1L<<Math.min(10,Math.max(0,failures-1))));
+            Instant retryAt=now.plusSeconds(delay);
             m.put("status","QUEUED");m.put("stage","QUEUED");m.put("progress",15);m.put("queuedAt",now.toString());
             m.put("retryNotBefore",retryAt.toString());
             // Do not show a prior failure as the error on a newly queued attempt.
             m.remove("error");
-            m.put("detail","Production failed; automatic retry "+failures+"/"+failureMaxRetries+" queued"+(failureRetryDelaySeconds>0?" in "+failureRetryDelaySeconds+"s":""));
+            m.put("detail","Production failed ("+failureType+"); automatic retry "+
+                    failures+"/"+failureMaxRetries+" queued"+(delay>0?" in "+delay+"s":""));
         }else{
             m.put("status","FAILED");m.put("stage","FAILED");m.put("progress",0);m.remove("retryNotBefore");
             m.put("detail",nonTransient
-                    ?"Non-transient production error; manual retry or new source evidence required"
+                    ?"Automatic retry blocked ("+failureType+"): "+failure.action()
                     :"Production failed after "+failureMaxRetries+" automatic retries; manual action required");
             if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE&&
                     String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("FRAMING_"))
@@ -1519,7 +1531,7 @@ public final class CommandCenterStore {
         catch(Exception ignored){return true;}
     }
     private static void resetFailureRetryState(Map<String,Object>m){
-        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("failureType");m.remove("leaseRecoveries");
+        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("lastFailedStage");m.remove("failureType");m.remove("failureRecoverable");m.remove("recommendedAction");m.remove("leaseRecoveries");m.remove("productionEpoch");
     }
     private static boolean isToPost(Map<String,Object>m){
         return "COMPLETE".equals(String.valueOf(m.get("status")))

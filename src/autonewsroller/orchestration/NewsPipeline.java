@@ -142,11 +142,78 @@ public final class NewsPipeline {
         return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,suppliedPolitical,mode,Map.of(),dryRun);
     }
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis,boolean dryRun)throws Exception{
-        if(mode==null)throw new IllegalArgumentException("Production mode required");
+        ProductionPreflight.check(cand,mode,useComfy,requireComfy,maxComfyImages,dryRun,cfg)
+                .requireEligible();
         Files.createDirectories(slotDir);
+        // Controller retries share an epoch workspace. Contract changes invalidate
+        // all stored results, including previously approved media.
+        String settingsFingerprint=Hashing.sha256(
+                Json.stringify(cand.toMap())+"|"+mode+"|"+targetSeconds+"|"+encoder+
+                "|"+useComfy+"|"+requireComfy+"|"+maxComfyImages+"|"+dryRun+
+                "|"+Json.stringify(rawAnalysis)+"|"+
+                Json.stringify(suppliedPolitical==null?Map.of():suppliedPolitical.toMap())+
+                "|"+cfg.get("ollamaModel","")+"|"+cfg.get("imageCheckpoint","")+
+                "|"+cfg.get("memeImageCheckpoint","")+"|"+cfg.get("ttsPrimary","kokoro")+
+                "|"+cfg.get("ttsFallback","qwen3")+"|"+
+                (Files.isRegularFile(root.resolve("defaults.txt"))
+                        ?ContentSafetyService.hash(root.resolve("defaults.txt")):"no-defaults"));
+        ProductionCheckpoint checkpoint=new ProductionCheckpoint(slotDir,slotDir.getParent(),settingsFingerprint);
+        Map<String,Object>cachedFinal=checkpoint.metadata("FINAL",settingsFingerprint);
+        if(cachedFinal!=null&&!dryRun){
+            String name=String.valueOf(cachedFinal.getOrDefault("filename",""));
+            if(!name.isBlank()&&!name.contains("/")&&!name.contains("\\")
+                    &&name.toLowerCase(Locale.ROOT).endsWith(".mp4")){
+                Path finalVideo=slotDir.getParent().resolve("final_videos").resolve(name);
+                Path sidecar=finalVideo.resolveSibling(finalVideo.getFileName()+".json");
+                if(checkpoint.validated("FINAL",settingsFingerprint,
+                        Map.of("video",finalVideo,"sidecar",sidecar))!=null){
+                    try{
+                        Map<String,Object>saved=Json.object(Json.read(sidecar));
+                        Map<String,Object>approval=Json.object(saved.get("contentSafety"));
+                        ContentSafetyService.verify(finalVideo,approval,false);
+                        events.emit(worker,slot,PipelineStage.APPROVED,"RESUMED APPROVED VIDEO: "+name);
+                        logs.worker(worker,"slot="+slot+" approved MP4 reused without model or renderer calls");
+                        return finalVideo;
+                    }catch(Exception invalid){
+                        logs.worker(worker,"slot="+slot+" prior final approval invalid; rebuilding: "+invalid.getMessage());
+                    }
+                }
+            }
+        }
+        // Check required worker-local image services before spending Ollama or
+        // TTS time. The controller's service health does not establish readiness
+        // of a separate Windows GPU worker.
+        if(!dryRun&&useComfy){
+            try{
+                ComfyRuntime.ensureRunning(root,cfg);
+                ComfyImageGenerator health=new ComfyImageGenerator(root,
+                        cfg.get("comfyUrl","http://127.0.0.1:8188"),
+                        cfg.get("qwenUrl","http://127.0.0.1:8765"));
+                if(!health.reachable())
+                    throw new IllegalStateException("ComfyUI system endpoint is not reachable");
+                List<String>choices=health.checkpoints();
+                String requestedCheckpoint=mode==ProductionMode.MEME_RAGEBAIT
+                        ?cfg.get("memeImageCheckpoint",""):"";
+                if(requestedCheckpoint.isBlank())requestedCheckpoint=cfg.get("imageCheckpoint","");
+                final String selected=requestedCheckpoint;
+                if(!selected.isBlank()&&choices.stream().noneMatch(x->checkpointMatches(x,selected)))
+                    throw new IllegalArgumentException("CONFIGURATION_INVALID: configured checkpoint is unavailable: "+selected);
+                if(selected.isBlank()&&choices.isEmpty())
+                    throw new IllegalArgumentException("CONFIGURATION_INVALID: no ComfyUI checkpoint is available");
+            }catch(IllegalArgumentException wrongConfiguration){throw wrongConfiguration;}
+            catch(Exception serviceFailure){
+                throw new IllegalStateException("SERVICE_UNAVAILABLE: ComfyUI preflight failed: "+
+                        serviceFailure.getMessage(),serviceFailure);
+            }
+        }
         StoryCluster c=mode==ProductionMode.FRAMING_EXPOSURE?cand.cluster():enrichForProduction(cand.cluster());
         VerificationResult refreshed=new SourceVerifier().verify(c,cfg.minimumIndependentSources());
         FactPackage fp=refreshed.factPackage();
+        String evidenceFingerprint=Hashing.sha256(settingsFingerprint+"|"+
+                Json.stringify(fp.toMap())+"|"+Json.stringify(c.toMap()));
+        // Re-evaluate after enrichment because refreshed headlines and summaries
+        // can change. Keep the later visual asset gate as a separate fail-closed defense.
+        ProductionPreflight.checkPolicy(fp,mode).requireEligible();
         logs.worker(worker,"slot="+slot+" story="+c.topic+" started facts="+fp.facts().size()+" enrichedBodies="+c.articles.stream().filter(a->a.bodyText()!=null&&!a.bodyText().isBlank()).count());
         events.emit(worker,slot,PipelineStage.VERIFY,fp.independentSourceCount()+" independent sources; "+fp.facts().size()+" narration facts");
 
@@ -205,13 +272,30 @@ public final class NewsPipeline {
         events.emit(worker,slot,PipelineStage.SCRIPT,
                 "Generating "+(mode==ProductionMode.FRAMING_EXPOSURE?"narrative review":
                     mode==ProductionMode.MEME_RAGEBAIT?"source-grounded meme":"standard news")+" narration");
-        NewsScript script=mode==ProductionMode.FRAMING_EXPOSURE
-                ?exposureGenerator.generate(fp,evidence,targetSeconds,dryRun)
-                :mode==ProductionMode.MEME_RAGEBAIT
-                    ?memeGenerator.generate(fp,memeEvidence,dryRun,
-                            slotDir.resolve("meme_script_diagnostics.json"))
-                    :scriptGenerator.generate(fp,targetSeconds,dryRun);
-        Json.write(slotDir.resolve("script.json"),script.toMap());
+        String scriptFingerprint=Hashing.sha256(evidenceFingerprint+"|"+mode+"|"+
+                targetSeconds+"|"+Json.stringify(political.toMap())+
+                "|"+cfg.get("ollamaModel","")+"|"+cfg.getInt("ollamaRetries",5));
+        Path scriptPath=slotDir.resolve("script.json");
+        NewsScript script=null;
+        if(checkpoint.validated("SCRIPT",scriptFingerprint,Map.of("script",scriptPath))!=null){
+            try{
+                script=NewsScript.fromMap(Json.object(Json.read(scriptPath)));
+                if(!fp.storyId().equals(script.storyId()))script=null;
+            }catch(Exception invalid){script=null;}
+        }
+        if(script==null){
+            script=mode==ProductionMode.FRAMING_EXPOSURE
+                    ?exposureGenerator.generate(fp,evidence,targetSeconds,dryRun)
+                    :mode==ProductionMode.MEME_RAGEBAIT
+                        ?memeGenerator.generate(fp,memeEvidence,dryRun,
+                                slotDir.resolve("meme_script_diagnostics.json"))
+                        :scriptGenerator.generate(fp,targetSeconds,dryRun);
+            Json.write(scriptPath,script.toMap());
+            checkpoint.accept("SCRIPT",scriptFingerprint,Map.of("script",scriptPath),
+                    Map.of("words",Text.words(script.narration())));
+        }else{
+            events.emit(worker,slot,PipelineStage.SCRIPT,"RESUMED VALIDATED SCRIPT");
+        }
         if(mode==ProductionMode.FRAMING_EXPOSURE)
             logs.worker(worker,"slot="+slot+" framing duration: requestedMinimum="+targetSeconds+
                     "s selectedTarget="+(int)Math.round(script.estimatedDuration())+
@@ -253,7 +337,34 @@ public final class NewsPipeline {
         }
 
         Path wav=slotDir.resolve("narration/narration.wav");
-        NarrationResult nr=narrate(c,script,wav,worker,slot);
+        Path narrationMetadata=wav.resolveSibling("narration.wav.json");
+        Path timingSidecar=wav.resolveSibling("narration.timing.tsv");
+        String narrationFingerprint=Hashing.sha256(scriptFingerprint+"|"+
+                Json.stringify(script.toMap())+"|"+cfg.get("ttsPrimary","kokoro")+
+                "|"+cfg.get("ttsFallback","qwen3")+"|"+cfg.getDouble("kokoroSpeed",0.92)+
+                "|"+cfg.get("kokoroVoices","")+"|"+cfg.get("qwenVoices",""));
+        NarrationResult nr=null;
+        boolean narrationReused=false;
+        Map<String,Object>oldNarration=checkpoint.metadata("NARRATION",narrationFingerprint);
+        if(oldNarration!=null){
+            Map<String,Path>narrationFiles=new LinkedHashMap<>();
+            narrationFiles.put("wav",wav);
+            narrationFiles.put("metadata",narrationMetadata);
+            if(Boolean.TRUE.equals(oldNarration.get("hasTiming")))narrationFiles.put("timing",timingSidecar);
+            Map<String,Object>valid=checkpoint.validated("NARRATION",narrationFingerprint,narrationFiles);
+            if(valid!=null){
+                try{
+                    if(!Boolean.TRUE.equals(valid.get("hasTiming")))Files.deleteIfExists(timingSidecar);
+                    if(audioDuration(wav)>0.5){
+                        nr=new NarrationResult(String.valueOf(valid.get("engine")),
+                                String.valueOf(valid.get("voice")),wav,narrationMetadata);
+                        narrationReused=true;
+                        events.emit(worker,slot,PipelineStage.TTS,"RESUMED VALIDATED WAV engine="+nr.engine());
+                    }
+                }catch(Exception invalid){nr=null;}
+            }
+        }
+        if(nr==null)nr=narrate(c,script,wav,worker,slot);
         double narrationSeconds=audioDuration(nr.wav());
         // Standard videos retain their established floor. Narrative reviews must
         // actually meet the requested minimum in measured TTS audio, not just
@@ -277,25 +388,57 @@ public final class NewsPipeline {
             logs.worker(worker,"slot="+slot+" "+retry);
 
             script=mode==ProductionMode.FRAMING_EXPOSURE?exposureGenerator.generate(fp,evidence,adjustedTarget,false):scriptGenerator.generate(fp,adjustedTarget,false);
-            Json.write(slotDir.resolve("script.json"),script.toMap());
+            Json.write(scriptPath,script.toMap());
+            checkpoint.accept("SCRIPT",scriptFingerprint,Map.of("script",scriptPath),
+                    Map.of("words",Text.words(script.narration()),"durationRepaired",true));
+            narrationFingerprint=Hashing.sha256(scriptFingerprint+"|"+
+                    Json.stringify(script.toMap())+"|"+cfg.get("ttsPrimary","kokoro")+
+                    "|"+cfg.get("ttsFallback","qwen3")+"|"+cfg.getDouble("kokoroSpeed",0.92)+
+                    "|"+cfg.get("kokoroVoices","")+"|"+cfg.get("qwenVoices",""));
             nr=narrate(c,script,wav,worker,slot);
+            narrationReused=false;
             narrationSeconds=audioDuration(nr.wav());
             logs.worker(worker,String.format(Locale.ROOT,"slot=%d repaired narration duration=%.2fs words=%d",slot,narrationSeconds,Text.words(script.narration())));
             if(narrationSeconds<minimumFinalSeconds)
                 throw new IllegalStateException(String.format(Locale.ROOT,"Narration audio still too short after repair: %.2fs; minimum is %.2fs",narrationSeconds,minimumFinalSeconds));
         }
 
-        GroundedVisualPromptGenerator.Result visualPrompts=mode==ProductionMode.MEME_RAGEBAIT
-                ?new GroundedVisualPromptGenerator.Result(List.of(),0,0,0,"meme-script-scene-prompts")
-                :generateVisualPrompts(script,fp,c,false,worker,slot);
-        Json.write(slotDir.resolve("visual_prompt_plan.json"),visualPrompts.toMap());
+        if(!narrationReused){
+            Map<String,Path>files=new LinkedHashMap<>();
+            files.put("wav",wav);files.put("metadata",narrationMetadata);
+            boolean hasTiming=Files.isRegularFile(timingSidecar);
+            if(hasTiming)files.put("timing",timingSidecar);
+            checkpoint.accept("NARRATION",narrationFingerprint,files,
+                    Map.of("engine",nr.engine(),"voice",nr.voice(),"hasTiming",hasTiming));
+        }
+
+        String visualPromptFingerprint=Hashing.sha256(evidenceFingerprint+"|"+
+                Json.stringify(script.toMap())+"|"+Json.stringify(political.toMap())+
+                "|"+cfg.get("visualPromptModel","")+"|"+cfg.get("visualPromptEnabled","true"));
+        Path visualPromptPath=slotDir.resolve("visual_prompt_plan.json");
+        GroundedVisualPromptGenerator.Result visualPrompts=null;
+        if(mode!=ProductionMode.MEME_RAGEBAIT
+                &&checkpoint.validated("VISUAL_PROMPTS",visualPromptFingerprint,
+                        Map.of("plan",visualPromptPath))!=null){
+            try{visualPrompts=GroundedVisualPromptGenerator.Result.fromMap(
+                    Json.object(Json.read(visualPromptPath)));}
+            catch(Exception invalid){visualPrompts=null;}
+        }
+        if(visualPrompts==null){
+            visualPrompts=mode==ProductionMode.MEME_RAGEBAIT
+                    ?new GroundedVisualPromptGenerator.Result(List.of(),0,0,0,"meme-script-scene-prompts")
+                    :generateVisualPrompts(script,fp,c,false,worker,slot);
+            Json.write(visualPromptPath,visualPrompts.toMap());
+            if(mode!=ProductionMode.MEME_RAGEBAIT)
+                checkpoint.accept("VISUAL_PROMPTS",visualPromptFingerprint,
+                        Map.of("plan",visualPromptPath),Map.of("scenes",visualPrompts.scenes().size()));
+        }else events.emit(worker,slot,PipelineStage.VISUALS,"RESUMED VISUAL PROMPT PLAN");
         VisualPlan plan=mode==ProductionMode.FRAMING_EXPOSURE
                 ?new PoliticalFramingVisualPlanner().plan(script,evidence)
                 :mode==ProductionMode.MEME_RAGEBAIT?new MemeVisualPlanner().plan(script)
                 :new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
         Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
-        Path timingSidecar=nr.wav().resolveSibling(nr.wav().getFileName().toString().replaceFirst("\\.wav$",".timing.tsv"));
         SpeechTiming.Alignment alignment=SpeechTiming.align(script.narration(),script.segments(),
                 cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null,narrationSeconds);
         if(mode==ProductionMode.FRAMING_EXPOSURE){
@@ -417,6 +560,69 @@ public final class NewsPipeline {
                     VisualPlan.Item chosen=plan.items().get(replace);
                     boolean memeImage=mode==ProductionMode.MEME_RAGEBAIT;
                     String negativePrompt=ComfyPromptProfiles.negative(cfg,chosen,memeImage);
+                    String sceneKey="IMAGE_SCENE_"+replace;
+                    String sceneFingerprint=Hashing.sha256(evidenceFingerprint+"|"+
+                            Json.stringify(script.toMap())+"|"+Json.stringify(plan.toMap())+
+                            "|"+Json.stringify(chosen.toMap())+"|"+usedCheckpoint+
+                            "|"+requestedWidth+"x"+requestedHeight+"|"+requestedSteps+
+                            "|"+requestedCfg+"|"+negativePrompt+
+                            "|"+cfg.get("visualImageReviewModel",""));
+                    Map<String,Object>savedScene=checkpoint.metadata(sceneKey,sceneFingerprint);
+                    if(savedScene!=null){
+                        int acceptedAttempt=savedScene.get("attempt") instanceof Number n?n.intValue():0;
+                        if(acceptedAttempt>0&&acceptedAttempt<=maxRetries+1){
+                            Path priorGenerated=visuals.resolve(String.format("%02d_comfy_attempt_%02d.png",replace,acceptedAttempt));
+                            Path priorComposed=visuals.resolve(String.format("%02d_post_%02d.png",replace,acceptedAttempt));
+                            Path priorBackground=visuals.resolve(String.format("%02d_cropped_%02d.png",replace,acceptedAttempt));
+                            Path priorOverlay=visuals.resolve(String.format("%02d_overlay_%02d.png",replace,acceptedAttempt));
+                            Map<String,Path>priorFiles=Map.of("generated",priorGenerated,"composed",priorComposed,
+                                    "background",priorBackground,"overlay",priorOverlay);
+                            if(checkpoint.validated(sceneKey,sceneFingerprint,priorFiles)!=null){
+                                ImageQualityInspector.Result priorQuality=inspector.inspect(priorGenerated,
+                                        requestedWidth,requestedHeight,acceptedHashes);
+                                if(priorQuality.accepted()){
+                                    Map<String,Object>originalScan=safety.inspectImage(priorGenerated);
+                                    Map<String,Object>composedScan=safety.inspectImage(priorComposed);
+                                    Map<String,Object>backgroundScan=safety.inspectImage(priorBackground);
+                                    if("SCANNER_UNAVAILABLE".equals(originalScan.get("status"))
+                                            ||"SCANNER_UNAVAILABLE".equals(composedScan.get("status"))
+                                            ||"SCANNER_UNAVAILABLE".equals(backgroundScan.get("status")))
+                                        throw new IllegalStateException("SCANNER_UNAVAILABLE: cannot approve reused image");
+                                    List<String>expected=chosen.data().get("anchorEntities") instanceof List<?> l
+                                            ?l.stream().map(String::valueOf).toList():List.of();
+                                    List<String>forbidden=chosen.data().get("mustNotShow") instanceof List<?> l
+                                            ?l.stream().map(String::valueOf).toList():List.of();
+                                    OllamaVisionReviewer.Result priorVision=visionReviewer.review(priorGenerated,
+                                            chosen.prompt(),expected,forbidden);
+                                    if("SAFE".equals(originalScan.get("status"))
+                                            &&"SAFE".equals(composedScan.get("status"))
+                                            &&"SAFE".equals(backgroundScan.get("status"))
+                                            &&priorVision.accepted()&&savedScene.get("source") instanceof Map<?,?> savedSource){
+                                        Map<String,Object>source=new LinkedHashMap<>(Json.object(savedSource));
+                                        source.put("path",priorComposed.toString());
+                                        source.put("generatedPath",priorGenerated.toString());
+                                        source.put("backgroundPath",priorBackground.toString());
+                                        source.put("overlayPath",priorOverlay.toString());
+                                        source.put("inspection",priorQuality.toMap());
+                                        source.put("visionReview",priorVision.toMap());
+                                        imgs.set(replace,priorComposed);
+                                        renderBackgrounds.set(replace,priorBackground);
+                                        renderOverlays.set(replace,priorOverlay);
+                                        renderMotion.set(replace,!classic&&!"off".equalsIgnoreCase(cfg.get("visualMotionIntensity","moderate")));
+                                        imageSources.set(replace,source);
+                                        acceptedHashes.add(priorQuality.perceptualHash());
+                                        comfyGenerated++;
+                                        imageReviews.add(Map.of("sceneIndex",replace,"resumed",true,"accepted",true,
+                                                "contentSafety",originalScan,"composedSafety",composedScan,
+                                                "backgroundSafety",backgroundScan));
+                                        events.emit(worker,slot,PipelineStage.VISUALS,
+                                                "COMFYUI REUSED APPROVED SCENE "+replace+" (no GPU generation)");
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     for(int attempt=0;attempt<=maxRetries;attempt++){
                         String prompt=ComfyPromptProfiles.positive(chosen,memeImage,attempt);
                         long seed=Integer.toUnsignedLong(Objects.hash(c.id,replace,usedCheckpoint,attempt));
@@ -506,6 +712,10 @@ public final class NewsPipeline {
                         imageSource.put("anchorEntities",chosen.data().getOrDefault("anchorEntities",List.of()));
                         imageSource.put("groundingScore",chosen.data().getOrDefault("groundingScore",0));
                         imageSources.set(replace,imageSource);
+                        checkpoint.accept(sceneKey,sceneFingerprint,
+                                Map.of("generated",generated,"composed",composed,
+                                        "background",background,"overlay",overlay),
+                                Map.of("attempt",attempt+1,"source",imageSource));
                         comfyGenerated++;
                         String comfyUsed="COMFYUI USED checkpoint="+usedCheckpoint+" image="+generated.getFileName()+" count="+comfyGenerated;
                         events.emit(worker,slot,PipelineStage.VISUALS,comfyUsed);
@@ -634,7 +844,11 @@ public final class NewsPipeline {
             Files.deleteIfExists(sidecar);
             throw publishFailure;
         }
-        history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
+        history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);
+        checkpoint.accept("FINAL",settingsFingerprint,
+                Map.of("video",finalVideo,"sidecar",sidecar),
+                Map.of("filename",finalVideo.getFileName().toString()));
+        events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
     }
 
     private GroundedVisualPromptGenerator.Result generateVisualPrompts(NewsScript script,FactPackage fp,StoryCluster cluster,boolean dryRun,int worker,int slot){

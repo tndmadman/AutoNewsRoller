@@ -13,6 +13,7 @@ The detailed project knowledge is maintained under docs/:
 - [Architecture and data flow](docs/ARCHITECTURE_AND_DATA_FLOW.md)
 - [Configuration reference](docs/CONFIGURATION_REFERENCE.md)
 - [Windows operations](docs/WINDOWS_OPERATIONS.md)
+- [Production failure recovery (draft repair branch)](docs/PRODUCTION_FAILURE_RECOVERY.md)
 - [Command Center](docs/COMMAND_CENTER.md)
 - [Political framing exposure experiment](docs/POLITICAL_FRAMING_EXPOSURE.md)
 - [News sources, polling, bot behavior, and content use](docs/NEWS_SOURCES_AND_CONTENT_USE.md)

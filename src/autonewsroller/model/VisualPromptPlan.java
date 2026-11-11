@@ -56,6 +56,23 @@ public record VisualPromptPlan(
         m.put("groundingScore",Math.round(groundingScore*100.0)/100.0);m.put("valid",valid);m.put("validationIssues",validationIssues);
         m.put("repairAttempts",repairAttempts);m.put("fallback",fallback);return m;
     }
+    public static VisualPromptPlan fromMap(Map<String,Object>m){
+        return new VisualPromptPlan(integer(m.get("segmentIndex")),str(m,"strategy"),
+                strings(m.get("factIds")),strings(m.get("anchorEntities")),str(m,"subject"),
+                str(m,"action"),str(m,"setting"),str(m,"location"),str(m,"timeContext"),
+                str(m,"people"),strings(m.get("visibleObjects")),strings(m.get("mustNotShow")),
+                str(m,"composition"),str(m,"prompt"),number(m.get("groundingScore")),
+                Boolean.TRUE.equals(m.get("valid")),strings(m.get("validationIssues")),
+                integer(m.get("repairAttempts")),Boolean.TRUE.equals(m.get("fallback")));
+    }
+    private static String str(Map<String,Object>m,String key){return String.valueOf(m.getOrDefault(key,""));}
+    private static int integer(Object value){return value instanceof Number n?n.intValue():0;}
+    private static double number(Object value){return value instanceof Number n?n.doubleValue():0;}
+    private static List<String>strings(Object raw){
+        if(!(raw instanceof List<?>list))return List.of();
+        return list.stream().map(String::valueOf).toList();
+    }
+
     private static String clean(String s){return s==null?"":s.replaceAll("\\s+"," ").trim();}
     private static List<String>copy(List<String>x){return x==null?List.of():List.copyOf(x.stream().filter(Objects::nonNull).map(String::trim).filter(s->!s.isBlank()).toList());}
 }
