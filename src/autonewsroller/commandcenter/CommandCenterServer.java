@@ -374,7 +374,7 @@ public final class CommandCenterServer {
                 }
                 case "fail"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    Map<String,Object>b=bodyObject(x);store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")));json(x,200,Map.of("ok",true));
+                    Map<String,Object>b=bodyObject(x);store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")),String.valueOf(b.getOrDefault("failureCode","")));json(x,200,Map.of("ok",true));
                 }
                 case "meme-complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
