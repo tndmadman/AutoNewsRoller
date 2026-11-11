@@ -112,6 +112,7 @@ public final class SelfTest {
         testVisualV5();
         testComfyPromptProfiles();
         testComfyMock();
+        testFailureRecoveryPolicy();
         testWorthyHourFilterContract(root);
         testFeedCardIdentityContract(root);
         testTtsFallback();
@@ -2013,7 +2014,7 @@ public final class SelfTest {
                 String.valueOf(retryReview.get("claimId")));
         automatic.fail(cluster.id,"FRAMING_SCRIPT_VALIDATION_FAILED after 5 attempts",
                 "updated-worker",String.valueOf(retryReview.get("claimId")));
-        ok("SCRIPT_FAILURE".equals(automatic.storyDetail(cluster.id).get("failureType"))
+        ok("SCRIPT_VALIDATION_FAILED".equals(automatic.storyDetail(cluster.id).get("failureType"))
                 &&((List<?>)automatic.snapshot().get("videos")).size()==1,
                 "script-generation failure is correctly labeled and the normal video stays archived");
 
@@ -3040,6 +3041,34 @@ public final class SelfTest {
             ok(expected.getMessage().contains("excluded concept"),
                     "grounded news prompts reject excluded details in positive conditioning");
         }
+    }
+
+    private void testFailureRecoveryPolicy(){
+        FactPackage sensitive=new FactPackage("story-1","Police investigate reported shooting",
+                "An incident is under investigation.",List.of(),List.of(),List.of(),1,1,.8,false);
+        FactPackage ordinary=new FactPackage("story-2","City opens a new public library",
+                "New local library services are available.",List.of(),List.of(),List.of(),1,1,.8,false);
+        ok(!ProductionPreflight.checkPolicy(sensitive,ProductionMode.STANDARD).eligible()
+                &&ProductionPreflight.checkPolicy(sensitive,ProductionMode.FRAMING_EXPOSURE).eligible(),
+                "preflight blocks sensitive standard images while preserving evidence-graphics review mode");
+        ok(ProductionPreflight.checkPolicy(ordinary,ProductionMode.STANDARD).eligible(),
+                "ordinary news is not rejected by policy preflight");
+        ok(!FailurePolicy.classify("VISUALS","VISUAL_IMAGE_REQUIRED: 5/6 illustrations").automaticRetry(),
+                "missing mandatory illustrations do not trigger another whole-video run");
+        ok(!FailurePolicy.classify("VISUALS","SCANNER_UNAVAILABLE: detector missing").automaticRetry(),
+                "missing safety scanner never causes an automatic publish or full-job retry");
+        ok(FailurePolicy.classify("VISUALS","COMFY_EXECUTION_FAILED: transient CUDA fault").automaticRetry(),
+                "ComfyUI execution faults remain eligible for bounded retry");
+        ok(!FailurePolicy.classify("SCRIPT","FRAMING_SCRIPT_VALIDATION_FAILED").automaticRetry(),
+                "exhausted script validation is a permanent failure");
+        Map<String,Object>execution=Map.of("status",Map.of("status_str","error","completed",false,
+                "messages",List.of(List.of("execution_error",Map.of("exception_type","RuntimeError",
+                    "exception_message","out of memory")))));
+        ok(ComfyImageGenerator.executionFailure(execution).contains("out of memory"),
+                "ComfyUI surfaces terminal execution errors immediately");
+        ok(ComfyImageGenerator.executionFailure(Map.of("status",
+                Map.of("status_str","running","completed",false))).isEmpty(),
+                "ComfyUI queued or running work is not mistaken for an execution failure");
     }
 
     private void testComfyMock()throws Exception{
