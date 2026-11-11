@@ -642,7 +642,7 @@ public final class SelfTest {
                 "meme-worker",String.valueOf(terminalClaim.get("claimId")));
         Map<String,Object>terminalMeme=resumed.storyDetail(cluster.id);
         ok("FAILED".equals(terminalMeme.get("status"))
-                &&"MEME_SCRIPT_VALIDATION_FAILURE".equals(terminalMeme.get("failureType"))
+                &&"SCRIPT_VALIDATION_FAILED".equals(terminalMeme.get("failureType"))
                 &&terminalMeme.get("retryNotBefore")==null,
                 "exhausted meme script fails permanently rather than recycling queued 15%");
         CommandCenterStore failedReload=new CommandCenterStore(state,
