@@ -246,13 +246,30 @@ public final class NewsPipeline {
         events.emit(worker,slot,PipelineStage.SCRIPT,
                 "Generating "+(mode==ProductionMode.FRAMING_EXPOSURE?"narrative review":
                     mode==ProductionMode.MEME_RAGEBAIT?"source-grounded meme":"standard news")+" narration");
-        NewsScript script=mode==ProductionMode.FRAMING_EXPOSURE
-                ?exposureGenerator.generate(fp,evidence,targetSeconds,dryRun)
-                :mode==ProductionMode.MEME_RAGEBAIT
-                    ?memeGenerator.generate(fp,memeEvidence,dryRun,
-                            slotDir.resolve("meme_script_diagnostics.json"))
-                    :scriptGenerator.generate(fp,targetSeconds,dryRun);
-        Json.write(slotDir.resolve("script.json"),script.toMap());
+        String scriptFingerprint=Hashing.sha256(evidenceFingerprint+"|"+mode+"|"+
+                targetSeconds+"|"+Json.stringify(political.toMap())+
+                "|"+cfg.get("ollamaModel","")+"|"+cfg.getInt("ollamaRetries",5));
+        Path scriptPath=slotDir.resolve("script.json");
+        NewsScript script=null;
+        if(checkpoint.validated("SCRIPT",scriptFingerprint,Map.of("script",scriptPath))!=null){
+            try{
+                script=NewsScript.fromMap(Json.object(Json.read(scriptPath)));
+                if(!fp.storyId().equals(script.storyId()))script=null;
+            }catch(Exception invalid){script=null;}
+        }
+        if(script==null){
+            script=mode==ProductionMode.FRAMING_EXPOSURE
+                    ?exposureGenerator.generate(fp,evidence,targetSeconds,dryRun)
+                    :mode==ProductionMode.MEME_RAGEBAIT
+                        ?memeGenerator.generate(fp,memeEvidence,dryRun,
+                                slotDir.resolve("meme_script_diagnostics.json"))
+                        :scriptGenerator.generate(fp,targetSeconds,dryRun);
+            Json.write(scriptPath,script.toMap());
+            checkpoint.accept("SCRIPT",scriptFingerprint,Map.of("script",scriptPath),
+                    Map.of("words",Text.words(script.narration())));
+        }else{
+            events.emit(worker,slot,PipelineStage.SCRIPT,"RESUMED VALIDATED SCRIPT");
+        }
         if(mode==ProductionMode.FRAMING_EXPOSURE)
             logs.worker(worker,"slot="+slot+" framing duration: requestedMinimum="+targetSeconds+
                     "s selectedTarget="+(int)Math.round(script.estimatedDuration())+
@@ -318,7 +335,9 @@ public final class NewsPipeline {
             logs.worker(worker,"slot="+slot+" "+retry);
 
             script=mode==ProductionMode.FRAMING_EXPOSURE?exposureGenerator.generate(fp,evidence,adjustedTarget,false):scriptGenerator.generate(fp,adjustedTarget,false);
-            Json.write(slotDir.resolve("script.json"),script.toMap());
+            Json.write(scriptPath,script.toMap());
+            checkpoint.accept("SCRIPT",scriptFingerprint,Map.of("script",scriptPath),
+                    Map.of("words",Text.words(script.narration()),"durationRepaired",true));
             nr=narrate(c,script,wav,worker,slot);
             narrationSeconds=audioDuration(nr.wav());
             logs.worker(worker,String.format(Locale.ROOT,"slot=%d repaired narration duration=%.2fs words=%d",slot,narrationSeconds,Text.words(script.narration())));
