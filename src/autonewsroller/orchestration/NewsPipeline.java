@@ -534,6 +534,69 @@ public final class NewsPipeline {
                     VisualPlan.Item chosen=plan.items().get(replace);
                     boolean memeImage=mode==ProductionMode.MEME_RAGEBAIT;
                     String negativePrompt=ComfyPromptProfiles.negative(cfg,chosen,memeImage);
+                    String sceneKey="IMAGE_SCENE_"+replace;
+                    String sceneFingerprint=Hashing.sha256(evidenceFingerprint+"|"+
+                            Json.stringify(script.toMap())+"|"+Json.stringify(plan.toMap())+
+                            "|"+Json.stringify(chosen.toMap())+"|"+usedCheckpoint+
+                            "|"+requestedWidth+"x"+requestedHeight+"|"+requestedSteps+
+                            "|"+requestedCfg+"|"+negativePrompt+
+                            "|"+cfg.get("visualImageReviewModel",""));
+                    Map<String,Object>savedScene=checkpoint.metadata(sceneKey,sceneFingerprint);
+                    if(savedScene!=null){
+                        int acceptedAttempt=savedScene.get("attempt") instanceof Number n?n.intValue():0;
+                        if(acceptedAttempt>0&&acceptedAttempt<=maxRetries+1){
+                            Path priorGenerated=visuals.resolve(String.format("%02d_comfy_attempt_%02d.png",replace,acceptedAttempt));
+                            Path priorComposed=visuals.resolve(String.format("%02d_post_%02d.png",replace,acceptedAttempt));
+                            Path priorBackground=visuals.resolve(String.format("%02d_cropped_%02d.png",replace,acceptedAttempt));
+                            Path priorOverlay=visuals.resolve(String.format("%02d_overlay_%02d.png",replace,acceptedAttempt));
+                            Map<String,Path>priorFiles=Map.of("generated",priorGenerated,"composed",priorComposed,
+                                    "background",priorBackground,"overlay",priorOverlay);
+                            if(checkpoint.validated(sceneKey,sceneFingerprint,priorFiles)!=null){
+                                ImageQualityInspector.Result priorQuality=inspector.inspect(priorGenerated,
+                                        requestedWidth,requestedHeight,acceptedHashes);
+                                if(priorQuality.accepted()){
+                                    Map<String,Object>originalScan=safety.inspectImage(priorGenerated);
+                                    Map<String,Object>composedScan=safety.inspectImage(priorComposed);
+                                    Map<String,Object>backgroundScan=safety.inspectImage(priorBackground);
+                                    if("SCANNER_UNAVAILABLE".equals(originalScan.get("status"))
+                                            ||"SCANNER_UNAVAILABLE".equals(composedScan.get("status"))
+                                            ||"SCANNER_UNAVAILABLE".equals(backgroundScan.get("status")))
+                                        throw new IllegalStateException("SCANNER_UNAVAILABLE: cannot approve reused image");
+                                    List<String>expected=chosen.data().get("anchorEntities") instanceof List<?> l
+                                            ?l.stream().map(String::valueOf).toList():List.of();
+                                    List<String>forbidden=chosen.data().get("mustNotShow") instanceof List<?> l
+                                            ?l.stream().map(String::valueOf).toList():List.of();
+                                    OllamaVisionReviewer.Result priorVision=visionReviewer.review(priorGenerated,
+                                            chosen.prompt(),expected,forbidden);
+                                    if("SAFE".equals(originalScan.get("status"))
+                                            &&"SAFE".equals(composedScan.get("status"))
+                                            &&"SAFE".equals(backgroundScan.get("status"))
+                                            &&priorVision.accepted()&&savedScene.get("source") instanceof Map<?,?> savedSource){
+                                        Map<String,Object>source=new LinkedHashMap<>(Json.object(savedSource));
+                                        source.put("path",priorComposed.toString());
+                                        source.put("generatedPath",priorGenerated.toString());
+                                        source.put("backgroundPath",priorBackground.toString());
+                                        source.put("overlayPath",priorOverlay.toString());
+                                        source.put("inspection",priorQuality.toMap());
+                                        source.put("visionReview",priorVision.toMap());
+                                        imgs.set(replace,priorComposed);
+                                        renderBackgrounds.set(replace,priorBackground);
+                                        renderOverlays.set(replace,priorOverlay);
+                                        renderMotion.set(replace,!classic&&!"off".equalsIgnoreCase(cfg.get("visualMotionIntensity","moderate")));
+                                        imageSources.set(replace,source);
+                                        acceptedHashes.add(priorQuality.perceptualHash());
+                                        comfyGenerated++;
+                                        imageReviews.add(Map.of("sceneIndex",replace,"resumed",true,"accepted",true,
+                                                "contentSafety",originalScan,"composedSafety",composedScan,
+                                                "backgroundSafety",backgroundScan));
+                                        events.emit(worker,slot,PipelineStage.VISUALS,
+                                                "COMFYUI REUSED APPROVED SCENE "+replace+" (no GPU generation)");
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     for(int attempt=0;attempt<=maxRetries;attempt++){
                         String prompt=ComfyPromptProfiles.positive(chosen,memeImage,attempt);
                         long seed=Integer.toUnsignedLong(Objects.hash(c.id,replace,usedCheckpoint,attempt));
@@ -623,6 +686,10 @@ public final class NewsPipeline {
                         imageSource.put("anchorEntities",chosen.data().getOrDefault("anchorEntities",List.of()));
                         imageSource.put("groundingScore",chosen.data().getOrDefault("groundingScore",0));
                         imageSources.set(replace,imageSource);
+                        checkpoint.accept(sceneKey,sceneFingerprint,
+                                Map.of("generated",generated,"composed",composed,
+                                        "background",background,"overlay",overlay),
+                                Map.of("attempt",attempt+1,"source",imageSource));
                         comfyGenerated++;
                         String comfyUsed="COMFYUI USED checkpoint="+usedCheckpoint+" image="+generated.getFileName()+" count="+comfyGenerated;
                         events.emit(worker,slot,PipelineStage.VISUALS,comfyUsed);
