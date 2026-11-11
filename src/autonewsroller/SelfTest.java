@@ -113,6 +113,7 @@ public final class SelfTest {
         testComfyPromptProfiles();
         testComfyMock();
         testFailureRecoveryPolicy();
+        testProductionCheckpoint();
         testWorthyHourFilterContract(root);
         testFeedCardIdentityContract(root);
         testTtsFallback();
@@ -3041,6 +3042,40 @@ public final class SelfTest {
             ok(expected.getMessage().contains("excluded concept"),
                     "grounded news prompts reject excluded details in positive conditioning");
         }
+    }
+
+    private void testProductionCheckpoint()throws Exception{
+        Path workspace=Files.createTempDirectory("autonews-checkpoint-fixture-");
+        Path script=workspace.resolve("script.json");
+        Files.writeString(script,"{\"validated\":true}");
+        ProductionCheckpoint first=new ProductionCheckpoint(workspace,"contract-A");
+        first.accept("SCRIPT","source-A",Map.of("script",script),Map.of("words",180));
+        ProductionCheckpoint resumed=new ProductionCheckpoint(workspace,"contract-A");
+        ok(resumed.validated("SCRIPT","source-A",Map.of("script",script))!=null,
+                "durable checkpoint survives a worker restart");
+        ok(resumed.validated("SCRIPT","source-B",Map.of("script",script))==null,
+                "source fingerprint change invalidates a checkpoint stage");
+        ok(new ProductionCheckpoint(workspace,"contract-B")
+                .validated("SCRIPT","source-A",Map.of("script",script))==null,
+                "production configuration change invalidates prior outputs");
+        Files.writeString(script,"{\"validated\":false}");
+        ok(resumed.validated("SCRIPT","source-A",Map.of("script",script))==null,
+                "modified stage artifact does not pass the recorded content hash");
+        boolean refusedOutside=false;
+        try{
+            resumed.accept("OUTSIDE","bad",Map.of("other",Files.createTempFile("anr-outside-", ".json")),Map.of());
+        }catch(IllegalArgumentException expected){refusedOutside=true;}
+        ok(refusedOutside,"checkpoint refuses paths outside the job workspace");
+        Files.writeString(workspace.resolve("production_checkpoint.json"),"{\"corrupted\":");
+        ProductionCheckpoint corrupt=new ProductionCheckpoint(workspace,"contract-A");
+        ok(corrupt.validated("SCRIPT","source-A",Map.of("script",script))==null,
+                "corrupt checkpoint is rejected instead of treating any output as approved");
+        FactPackage facts=new FactPackage("checkpoint-story","City opens public library",
+                "Library services expand.",List.of(),List.of(),List.of(),2,2,0.9,false);
+        NewsScript original=NewsScriptGenerator.deterministic(facts,70);
+        NewsScript roundtrip=NewsScript.fromMap(Json.object(Json.parse(Json.stringify(original.toMap()))));
+        ok(roundtrip.toMap().equals(original.toMap()),
+                "validated script JSON restores its complete narration and segment structure");
     }
 
     private void testFailureRecoveryPolicy(){
