@@ -145,9 +145,46 @@ public final class NewsPipeline {
         ProductionPreflight.check(cand,mode,useComfy,requireComfy,maxComfyImages,dryRun,cfg)
                 .requireEligible();
         Files.createDirectories(slotDir);
+        // Controller retries share an epoch workspace. Contract changes invalidate
+        // all stored results, including previously approved media.
+        String settingsFingerprint=Hashing.sha256(
+                Json.stringify(cand.toMap())+"|"+mode+"|"+targetSeconds+"|"+encoder+
+                "|"+useComfy+"|"+requireComfy+"|"+maxComfyImages+"|"+dryRun+
+                "|"+Json.stringify(rawAnalysis)+"|"+
+                Json.stringify(suppliedPolitical==null?Map.of():suppliedPolitical.toMap())+
+                "|"+cfg.get("ollamaModel","")+"|"+cfg.get("imageCheckpoint","")+
+                "|"+cfg.get("memeImageCheckpoint","")+"|"+cfg.get("ttsPrimary","kokoro")+
+                "|"+cfg.get("ttsFallback","qwen3")+"|"+
+                (Files.isRegularFile(root.resolve("defaults.txt"))
+                        ?ContentSafetyService.hash(root.resolve("defaults.txt")):"no-defaults"));
+        ProductionCheckpoint checkpoint=new ProductionCheckpoint(batchDir,settingsFingerprint);
+        Map<String,Object>cachedFinal=checkpoint.metadata("FINAL",settingsFingerprint);
+        if(cachedFinal!=null&&!dryRun){
+            String name=String.valueOf(cachedFinal.getOrDefault("filename",""));
+            if(!name.isBlank()&&!name.contains("/")&&!name.contains("\\")
+                    &&name.toLowerCase(Locale.ROOT).endsWith(".mp4")){
+                Path finalVideo=slotDir.getParent().resolve("final_videos").resolve(name);
+                Path sidecar=finalVideo.resolveSibling(finalVideo.getFileName()+".json");
+                if(checkpoint.validated("FINAL",settingsFingerprint,
+                        Map.of("video",finalVideo,"sidecar",sidecar))!=null){
+                    try{
+                        Map<String,Object>saved=Json.object(Json.read(sidecar));
+                        Map<String,Object>approval=Json.object(saved.get("contentSafety"));
+                        ContentSafetyService.verify(finalVideo,approval,false);
+                        events.emit(worker,slot,PipelineStage.APPROVED,"RESUMED APPROVED VIDEO: "+name);
+                        logs.worker(worker,"slot="+slot+" approved MP4 reused without model or renderer calls");
+                        return finalVideo;
+                    }catch(Exception invalid){
+                        logs.worker(worker,"slot="+slot+" prior final approval invalid; rebuilding: "+invalid.getMessage());
+                    }
+                }
+            }
+        }
         StoryCluster c=mode==ProductionMode.FRAMING_EXPOSURE?cand.cluster():enrichForProduction(cand.cluster());
         VerificationResult refreshed=new SourceVerifier().verify(c,cfg.minimumIndependentSources());
         FactPackage fp=refreshed.factPackage();
+        String evidenceFingerprint=Hashing.sha256(settingsFingerprint+"|"+
+                Json.stringify(fp.toMap())+"|"+Json.stringify(c.toMap()));
         // Re-evaluate after enrichment because refreshed headlines and summaries
         // can change. Keep the later visual asset gate as a separate fail-closed defense.
         ProductionPreflight.checkPolicy(fp,mode).requireEligible();
@@ -638,7 +675,11 @@ public final class NewsPipeline {
             Files.deleteIfExists(sidecar);
             throw publishFailure;
         }
-        history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
+        history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);
+        checkpoint.accept("FINAL",settingsFingerprint,
+                Map.of("video",finalVideo,"sidecar",sidecar),
+                Map.of("filename",finalVideo.getFileName().toString()));
+        events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
     }
 
     private GroundedVisualPromptGenerator.Result generateVisualPrompts(NewsScript script,FactPackage fp,StoryCluster cluster,boolean dryRun,int worker,int slot){
