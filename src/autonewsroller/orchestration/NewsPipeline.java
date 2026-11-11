@@ -192,9 +192,10 @@ public final class NewsPipeline {
                 if(!health.reachable())
                     throw new IllegalStateException("ComfyUI system endpoint is not reachable");
                 List<String>choices=health.checkpoints();
-                String selected=mode==ProductionMode.MEME_RAGEBAIT
+                String requestedCheckpoint=mode==ProductionMode.MEME_RAGEBAIT
                         ?cfg.get("memeImageCheckpoint",""):"";
-                if(selected.isBlank())selected=cfg.get("imageCheckpoint","");
+                if(requestedCheckpoint.isBlank())requestedCheckpoint=cfg.get("imageCheckpoint","");
+                final String selected=requestedCheckpoint;
                 if(!selected.isBlank()&&choices.stream().noneMatch(x->checkpointMatches(x,selected)))
                     throw new IllegalArgumentException("CONFIGURATION_INVALID: configured checkpoint is unavailable: "+selected);
                 if(selected.isBlank()&&choices.isEmpty())
