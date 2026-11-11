@@ -12,12 +12,23 @@ import java.util.*;
  */
 public final class ProductionCheckpoint {
     private static final int SCHEMA=1;
-    private final Path workspace,manifest;
+    private final Path workspace,artifactRoot,manifest;
     private final String contract;
     private final Map<String,Object> entries=new LinkedHashMap<>();
 
     public ProductionCheckpoint(Path workspace,String contract)throws Exception{
+        this(workspace,workspace,contract);
+    }
+
+    /**
+     * A job may stage its approved MP4 in a sibling final_videos directory.
+     * All artifact paths must remain under this explicit trusted batch root.
+     */
+    public ProductionCheckpoint(Path workspace,Path artifactRoot,String contract)throws Exception{
         this.workspace=workspace.toAbsolutePath().normalize();
+        this.artifactRoot=artifactRoot.toAbsolutePath().normalize();
+        if(!this.workspace.startsWith(this.artifactRoot))
+            throw new IllegalArgumentException("Checkpoint workspace outside authorized artifact root");
         this.manifest=this.workspace.resolve("production_checkpoint.json");
         this.contract=Objects.requireNonNull(contract);
         Files.createDirectories(this.workspace);
@@ -93,7 +104,7 @@ public final class ProductionCheckpoint {
 
     private Path inside(Path file){
         Path path=file.toAbsolutePath().normalize();
-        if(!path.startsWith(workspace))throw new IllegalArgumentException("Artifact outside job workspace");
+        if(!path.startsWith(artifactRoot))throw new IllegalArgumentException("Artifact outside authorized batch root");
         return path;
     }
     private void persist()throws Exception{
