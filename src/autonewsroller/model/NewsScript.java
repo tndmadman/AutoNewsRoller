@@ -21,8 +21,7 @@ public record NewsScript(
         hook=hook==null?Map.of():Collections.unmodifiableMap(new LinkedHashMap<>(hook));
     }
 
-    public record Segment(int index,String narration,String purpose,String visualType,String visualPrompt,double durationTarget){
-        /** Rehydrate a previously validated, content-hashed script from a checkpoint. */
+    /** Rehydrate a previously validated, content-hashed script from a checkpoint. */
     public static NewsScript fromMap(Map<String,Object>m){
         List<Segment>segments=new ArrayList<>();
         if(m.get("segments") instanceof List<?>rows)
@@ -49,7 +48,8 @@ public record NewsScript(
                     ?new LinkedHashMap<>(autonewsroller.util.Json.object(hook)):Map.of());
     }
 
-    public Map<String,Object> toMap(){
+    public record Segment(int index,String narration,String purpose,String visualType,String visualPrompt,double durationTarget){
+        public Map<String,Object> toMap(){
             Map<String,Object>m=new LinkedHashMap<>();
             m.put("index",index);
             m.put("narration",narration);
