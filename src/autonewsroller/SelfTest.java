@@ -3096,6 +3096,9 @@ public final class SelfTest {
                 "ComfyUI execution faults remain eligible for bounded retry");
         ok(!FailurePolicy.classify("SCRIPT","FRAMING_SCRIPT_VALIDATION_FAILED").automaticRetry(),
                 "exhausted script validation is a permanent failure");
+        ok(!FailurePolicy.fromCode("COMFY_TIMEOUT","VISUALS",
+                "VISUAL_IMAGE_REQUIRED: five accepted images").automaticRetry(),
+                "worker-reported transient code cannot override local permanent visual rejection");
         Map<String,Object>execution=Map.of("status",Map.of("status_str","error","completed",false,
                 "messages",List.of(List.of("execution_error",Map.of("exception_type","RuntimeError",
                     "exception_message","out of memory")))));
