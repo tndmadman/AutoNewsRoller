@@ -32,7 +32,8 @@ This repair branch implements an initial recoverable production contract:
    `productionEpoch`. Automatic retry claims use the same
    `output/remote_worker/<job>_<epoch>/` workspace, guarded by an exclusive file
    lock. A new manual request gets a new epoch. The checkpoint manifest is
-   `production_checkpoint.json`, written atomically and rejected when corrupt.
+   `slot_001/production_checkpoint.json` for worker jobs (one manifest per
+   production slot), written atomically and rejected when corrupt.
 5. **Stage-level reuse.** Script, narration WAV and timing metadata, visual
    prompt plan, individual accepted ComfyUI scene artifacts, and the final
    approved video can be reused. Every recorded file is compared against the
@@ -80,7 +81,7 @@ python tools/analyze_production_failures.py --state data/command_center_state.js
 Optional inputs can be repeated:
 
 ```powershell
-python tools/analyze_production_failures.py --state data/command_center_state.json --events output/runtime/events.jsonl --log output/runtime/worker_001.log --checkpoint output/remote_worker/JOB_EPOCH/production_checkpoint.json
+python tools/analyze_production_failures.py --state data/command_center_state.json --events output/runtime/events.jsonl --log output/runtime/worker_001.log --checkpoint output/remote_worker/JOB_EPOCH/slot_001/production_checkpoint.json
 ```
 
 This utility does not delete, requeue, or alter a job. Historical data may not
