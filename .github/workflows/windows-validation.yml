@@ -63,6 +63,7 @@ jobs:
           cmd /c setup_content_safety_windows.bat
           if ($LASTEXITCODE -ne 0) { throw 'Dedicated safety environment setup failed' }
           python tools/test_historical_audit.py
+          python tools/test_production_failures.py
       - name: Self test
         shell: cmd
         run: |
@@ -153,6 +154,7 @@ jobs:
           java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
           java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
           python3 tools/test_historical_audit.py
+          python3 tools/test_production_failures.py
           python3 -m py_compile tools/content_safety_scan.py tools/audit_historical_outputs.py
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264
