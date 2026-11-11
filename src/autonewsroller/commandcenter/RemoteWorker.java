@@ -222,7 +222,8 @@ public final class RemoteWorker {
                             "analysisInputFingerprint",String.valueOf(job.getOrDefault("analysisInputFingerprint","")),
                             "error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
                 else
-                    post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"claimId",currentClaimId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
+                    post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"claimId",currentClaimId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString(),
+                            "failureCode",FailurePolicy.classify(stage,e.getMessage()).code().name(),"failedStage",stage));
                 acknowledged=true;
             }
             catch(Exception callback){error("failure-callback",callback);}
