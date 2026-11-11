@@ -5,6 +5,10 @@ on:
   pull_request:
     branches: [main, integration/autonewsroller-5branch-illustrated-safe-retry-20261107]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scanner-python-313:
     name: Windows scanner Python 3.13 bootstrap
