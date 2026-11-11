@@ -142,11 +142,15 @@ public final class NewsPipeline {
         return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,suppliedPolitical,mode,Map.of(),dryRun);
     }
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis,boolean dryRun)throws Exception{
-        if(mode==null)throw new IllegalArgumentException("Production mode required");
+        ProductionPreflight.check(cand,mode,useComfy,requireComfy,maxComfyImages,dryRun,cfg)
+                .requireEligible();
         Files.createDirectories(slotDir);
         StoryCluster c=mode==ProductionMode.FRAMING_EXPOSURE?cand.cluster():enrichForProduction(cand.cluster());
         VerificationResult refreshed=new SourceVerifier().verify(c,cfg.minimumIndependentSources());
         FactPackage fp=refreshed.factPackage();
+        // Re-evaluate after enrichment because refreshed headlines and summaries
+        // can change. Keep the later visual asset gate as a separate fail-closed defense.
+        ProductionPreflight.checkPolicy(fp,mode).requireEligible();
         logs.worker(worker,"slot="+slot+" story="+c.topic+" started facts="+fp.facts().size()+" enrichedBodies="+c.articles.stream().filter(a->a.bodyText()!=null&&!a.bodyText().isBlank()).count());
         events.emit(worker,slot,PipelineStage.VERIFY,fp.independentSourceCount()+" independent sources; "+fp.facts().size()+" narration facts");
 
