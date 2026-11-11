@@ -16,6 +16,18 @@ public final class GroundedVisualPromptGenerator {
             Map<String,Object>m=new LinkedHashMap<>();m.put("scenes",scenes.stream().map(VisualPromptPlan::toMap).toList());
             m.put("repairAttempts",repairAttempts);m.put("fallbackCount",fallbackCount);m.put("rejectedCount",rejectedCount);m.put("model",model);return m;
         }
+        public static Result fromMap(Map<String,Object>m){
+            List<VisualPromptPlan>scenes=new ArrayList<>();
+            if(m.get("scenes") instanceof List<?>list)
+                for(Object raw:list)if(raw instanceof Map<?,?>)
+                    scenes.add(VisualPromptPlan.fromMap(Json.object(raw)));
+            if(scenes.isEmpty()||scenes.stream().anyMatch(p->p.prompt().isBlank()))
+                throw new IllegalArgumentException("Incomplete saved visual prompt plan");
+            return new Result(List.copyOf(scenes),integer(m.get("repairAttempts")),
+                    integer(m.get("fallbackCount")),integer(m.get("rejectedCount")),
+                    String.valueOf(m.getOrDefault("model","")));
+        }
+        private static int integer(Object x){return x instanceof Number n?n.intValue():0;}
         public double lowestScore(){return scenes.stream().mapToDouble(VisualPromptPlan::groundingScore).min().orElse(0);}
     }
 
