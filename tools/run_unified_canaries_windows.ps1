@@ -27,7 +27,7 @@ try {
 $report = [ordered]@{
     startedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     gitSha = $sha
-    sourceBranch = (& git -C $source branch --show-current).Trim()
+    sourceBranch = ([string](& git -C $source branch --show-current)).Trim()
     runRoot = $RunRoot
     syntheticSourceFixtures = $true
     mode = $(if ($RunLive) { "LIVE_HARDWARE_REQUESTED" } else { "DRY_CHECK_ONLY" })
