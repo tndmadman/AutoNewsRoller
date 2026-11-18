@@ -1,7 +1,11 @@
 package autonewsroller.orchestration;
 
 import com.sun.net.httpserver.HttpServer;
+import autonewsroller.util.Json;
 import java.net.*;
+import java.nio.file.Path;
+import java.util.Locale;
+import java.util.Map;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -18,9 +22,39 @@ public final class ProductionServiceReadinessSelfTest {
         try{action.run();}catch(Exception expected){denied=true;}
         ok(denied,label);
     }
-    public static void main(String[]args)throws Exception{System.out.println("Passed: "+run());}
+    public static void main(String[]args)throws Exception{
+        if(args.length>0&&"--scanner-noisy-stderr".equals(args[0])){
+            System.err.println("2026-11-17 tensorflow: oneDNN CPU startup diagnostics");
+            System.out.println("{\\"status\\":\\"READY\\",\\"detector\\":\\"OpenNSFW2\\",\\"version\\":\\"0.19.0\\"}");
+            return;
+        }
+        if(args.length>0&&"--scanner-error".equals(args[0])){
+            System.err.println("failed to load model weights");
+            System.exit(2);
+        }
+        System.out.println("Passed: "+run());
+    }
     public static int run()throws Exception{
         passed=0;
+        // Regression: TensorFlow emits diagnostics to stderr while the scanner
+        // returns one JSON document on stdout. Diagnostics must not poison JSON.
+        String javaName=System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("win")
+                ?"java.exe":"java";
+        String javaExe=Path.of(System.getProperty("java.home"),"bin",javaName).toString();
+        String javaClass=ProductionServiceReadinessSelfTest.class.getName();
+        String classpath=System.getProperty("java.class.path");
+        String scannerJson=ProductionServiceReadiness.run(javaExe,20,"-cp",classpath,
+                javaClass,"--scanner-noisy-stderr");
+        Map<String,Object>modelHealth=Json.object(Json.parse(scannerJson.trim()));
+        ok("READY".equals(modelHealth.get("status"))
+                        &&"OpenNSFW2".equals(modelHealth.get("detector"))
+                        &&"0.19.0".equals(modelHealth.get("version")),
+                "scanner health JSON is isolated from TensorFlow stderr diagnostics");
+        reject(()->{
+            try{ProductionServiceReadiness.run(javaExe,20,"-cp",classpath,
+                    javaClass,"--scanner-error");}
+            catch(Exception error){throw new IllegalStateException(error);}
+        },"nonzero scanner exit remains a hard failure");
         AtomicInteger tags=new AtomicInteger(),inference=new AtomicInteger();
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         server.createContext("/api/tags",x->{
