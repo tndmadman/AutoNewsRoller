@@ -42,7 +42,7 @@ public final class VisualPlanner {
             }else{
                 type=idx==0?"HOOK":((idx%3==0)?"TIMELINE":"CONTEXT");
                 prompt=seg.visualPrompt()==null?"":seg.visualPrompt();
-                if(prompt.isBlank())prompt="Realistic editorial news photograph grounded only in verified reporting about: "+seg.narration();
+                if(prompt.isBlank())prompt="Clearly hand-drawn, two-dimensional editorial illustration grounded only in this verified narration: "+seg.narration();
             }
             if(idx==0)type="HOOK";
             else type=editorialType(seg,fp,grounded,idx);
