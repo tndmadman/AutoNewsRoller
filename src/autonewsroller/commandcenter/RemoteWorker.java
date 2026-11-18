@@ -4,6 +4,7 @@ import autonewsroller.config.NewsConfig;
 import autonewsroller.meme.MemeWorthinessAnalyzer;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.*;
+import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.util.Json;
 import autonewsroller.util.Hashing;
 import java.io.IOException;
@@ -38,6 +39,7 @@ public final class RemoteWorker {
     private volatile Instant lastContact,lastHeartbeat,lastErrorAt;
     private volatile int failures;
     private volatile boolean running=true,paused=false,draining=false;
+    private volatile ProductionStageTelemetry telemetry;
 
     public RemoteWorker(Path root,NewsConfig cfg,String controller,String workerId,String token){
         this(root,cfg,controller,workerId,token,null,null);
@@ -139,6 +141,13 @@ public final class RemoteWorker {
         detail="Controller job claimed";jobStartedAt=Instant.now().toString();
         actualEncoder="";actualTts="";actualVoice="";comfyActivity="";
         event("job-start",Map.of("jobId",jobId,"jobType",type,"topic",currentTopic,"stage",stage,"workerId",workerId));
+        if("VIDEO".equals(type)){
+            int attempt=job.get("attemptNumber") instanceof Number n?n.intValue():1;
+            telemetry=new ProductionStageTelemetry(root.resolve("output/runtime/production_stage_metrics.jsonl"),
+                    jobId,workerId,currentClaimId,
+                    String.valueOf(job.getOrDefault("productionEpoch","")),
+                    ProductionMode.fromPersisted(job.get("productionMode")).name(),attempt);
+        }
         try{
             if("POLITICAL_ANALYSIS".equals(type)){runPoliticalAnalysis(job);return;}
             if("MEME_ANALYSIS".equals(type)){runMemeAnalysis(job);return;}
@@ -179,31 +188,49 @@ public final class RemoteWorker {
             }
             event("progress",Map.of("stage","CLAIMED","detail","mode="+productionMode.name()+
                     "; durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy));
-            String stamp=DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
-            Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+stamp);
+            // The epoch changes on a new manual production request, not on retry.
+            // Each retry resumes the same workspace after a worker restart.
+            String epoch=String.valueOf(job.getOrDefault("productionEpoch",currentClaimId));
+            Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+safeName(epoch));
+            Files.createDirectories(batch);
             event("job-dir",Map.of("dir",batch.toString()));
+            try(FileChannel workspaceChannel=FileChannel.open(batch.resolve(".production.lock"),
+                    StandardOpenOption.CREATE,StandardOpenOption.WRITE)){
+                FileLock workspaceLock=workspaceChannel.tryLock();
+                if(workspaceLock==null)throw new IllegalStateException("WORKSPACE_BUSY: Another worker owns this production epoch");
+                try(workspaceLock){
             final String claimId=currentClaimId;
             NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,e->progressSafe(jobId,claimId,e));
             PoliticalVisualData political=job.get("politicalVisualData") instanceof Map<?,?>?PoliticalVisualData.fromMap(Json.object(job.get("politicalVisualData"))):null;
             Map<String,Object>framingAnalysis=job.get("framingAnalysis") instanceof Map<?,?>?Json.object(job.get("framingAnalysis")):Map.of();
             Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,framingAnalysis,dryRun);
             stage="UPLOAD";detail="Local output ready; awaiting controller acknowledgement";
+            if(telemetry!=null)telemetry.progress(stage,detail);
             event("progress",Map.of("stage",stage,"detail",detail));
             if(!dryRun&&output.toString().toLowerCase(Locale.ROOT).endsWith(".mp4")){
-                Map<String,Object> upload=uploadVideo(jobId,claimId,output);
+                Map<String,Object> upload=uploadVideo(jobId,claimId,epoch,output);
+                if(telemetry!=null)telemetry.setHash(ContentSafetyService.hash(output));
                 event("progress",Map.of("stage","UPLOAD","detail","Video uploaded; final completion pending"));
                 Map<String,Object> complete=new LinkedHashMap<>();
-                complete.put("workerId",workerId);complete.put("claimId",claimId);complete.put("localPath",output.toString());complete.put("uploaded",upload);
+                complete.put("workerId",workerId);complete.put("claimId",claimId);complete.put("productionEpoch",epoch);complete.put("localPath",output.toString());complete.put("uploaded",upload);
                 complete.put("completedAt",Instant.now().toString());
                 Path sidecar=output.resolveSibling(output.getFileName()+".json");
                 if(Files.isRegularFile(sidecar))try{complete.put("sidecar",Json.read(sidecar));}catch(Exception ignored){}
-                post("/api/jobs/"+enc(jobId)+"/complete",complete);
+                post("/api/jobs/"+enc(jobId)+"/complete",complete,completionAckTimeout(cfg));
             }else{
-                post("/api/jobs/"+enc(jobId)+"/complete",Map.of("workerId",workerId,"claimId",claimId,"dryRun",true,"localPath",output.toString(),"completedAt",Instant.now().toString()));
+                post("/api/jobs/"+enc(jobId)+"/complete",Map.of("workerId",workerId,"claimId",claimId,"productionEpoch",epoch,"dryRun",true,"localPath",output.toString(),"completedAt",Instant.now().toString()));
+            }
+            if(telemetry!=null){
+                telemetry.progress("COMPLETE_ACK","Controller completion acknowledged");
+                telemetry.complete(true,"");
             }
             event("job-finish",Map.of("jobId",jobId,"result","COMPLETE","stage","COMPLETE","outputPath",output.toString()));
             System.out.println("Worker completed: "+currentTopic);
+                }
+            }
         }catch(Exception e){
+            if(telemetry!=null)telemetry.complete(false,
+                    FailurePolicy.classify(stage,e.getMessage()).code().name());
             if("MEME_ANALYSIS".equals(type)&&supersededMemeAnalysis(e)){
                 // Discovery invalidated this claim while analysis was running.
                 // Controller already owns the newer evidence/claim; do not send
@@ -222,12 +249,14 @@ public final class RemoteWorker {
                             "analysisInputFingerprint",String.valueOf(job.getOrDefault("analysisInputFingerprint","")),
                             "error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
                 else
-                    post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"claimId",currentClaimId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString()));
+                    post("/api/jobs/"+enc(jobId)+"/fail",Map.of("workerId",workerId,"claimId",currentClaimId,"error",safe(e.getMessage()),"failedAt",Instant.now().toString(),
+                            "failureCode",FailurePolicy.classify(stage,e.getMessage()).code().name(),"failedStage",stage));
                 acknowledged=true;
             }
             catch(Exception callback){error("failure-callback",callback);}
             event("job-finish",Map.of("jobId",jobId,"result",acknowledged?"FAILED":"UNKNOWN","error",safe(e.getMessage()),"stage",stage));
         }finally{
+            telemetry=null;
             state="IDLE";currentJob="";currentTopic="";currentClaimId="";jobType="";stage="";detail="";jobStartedAt="";
         }
     }
@@ -276,23 +305,31 @@ public final class RemoteWorker {
                         "candidate",prepared.toMap(),"analysisInputFingerprint",claimedHash));
         event("job-finish",Map.of("jobId",String.valueOf(job.get("jobId")),"result","COMPLETE","stage","POLITICAL_ANALYSIS"));
     }
-    private Map<String,Object> uploadVideo(String jobId,String claimId,Path file)throws Exception{
+    private Map<String,Object> uploadVideo(String jobId,String claimId,String epoch,Path file)throws Exception{
+        String sha=autonewsroller.safety.ContentSafetyService.hash(file);
         HttpRequest.Builder b=request("/api/jobs/"+enc(jobId)+"/video").timeout(Duration.ofMinutes(30))
                 .header("Content-Type","video/mp4").header("X-Filename",file.getFileName().toString())
-                .header("X-Worker-Id",workerId).header("X-Claim-Id",claimId);
+                .header("X-Worker-Id",workerId).header("X-Claim-Id",claimId)
+                .header("X-Production-Epoch",epoch).header("X-Media-Sha256",sha);
         HttpResponse<String> r=http.send(b.PUT(HttpRequest.BodyPublishers.ofFile(file)).build(),HttpResponse.BodyHandlers.ofString());
         if(r.statusCode()!=200)throw new IllegalStateException("video upload HTTP "+r.statusCode());
         lastContact=Instant.now();return Json.object(Json.parse(r.body()));
     }
     private void progressSafe(String jobId,String claimId,WorkerState update){
         stage=update.stage().name();detail=update.detail()==null?"":update.detail();
+        if(telemetry!=null)telemetry.progress(stage,detail);
         if(detail.startsWith("ENCODER ACTUAL="))actualEncoder=detail.substring("ENCODER ACTUAL=".length());
         if(detail.startsWith("KOKORO USED")){actualTts="Kokoro";actualVoice=extract(detail,"voice=");}
         if(detail.startsWith("QWEN3 FALLBACK USED")){actualTts="Qwen3 fallback";actualVoice=extract(detail,"voice=");}
         if(detail.startsWith("COMFYUI "))comfyActivity=detail;
         event("progress",Map.of("stage",stage,"detail",detail,"timestamp",update.timestamp().toString()));
         try{post("/api/jobs/"+enc(jobId)+"/progress",Map.of("stage",stage,"detail",detail,"timestamp",update.timestamp().toString(),"workerId",workerId,"claimId",claimId));}
-        catch(Exception e){error("progress-callback",e);}
+        catch(Exception e){
+            error("progress-callback",e);
+            // A superseded worker must not continue spending GPU time.
+            if(e.getMessage()!=null&&e.getMessage().contains("HTTP 409"))
+                throw new IllegalStateException("WORKER_LEASE_EXPIRED: controller rejected progress",e);
+        }
     }
     private void heartbeatSafe(){
         try{
@@ -308,8 +345,19 @@ public final class RemoteWorker {
             post("/api/workers/heartbeat",m);lastHeartbeat=Instant.now();
         }catch(Exception e){error("heartbeat",e);}
     }
+    /**
+     * Both required scanners run on the controller after upload. The normal
+     * 30-second API timeout would otherwise report a false failed production.
+     */
+    static Duration completionAckTimeout(NewsConfig cfg){
+        long scanSeconds=Math.max(1L,cfg.getInt("contentSafetyVideoTimeoutSeconds",3600));
+        return Duration.ofSeconds(Math.min(43200L,Math.max(600L,scanSeconds*2L+300L)));
+    }
     private Map<String,Object> post(String path,Map<String,Object> body)throws Exception{
-        HttpRequest req=request(path).timeout(Duration.ofSeconds(30)).header("Content-Type","application/json")
+        return post(path,body,Duration.ofSeconds(30));
+    }
+    private Map<String,Object> post(String path,Map<String,Object> body,Duration timeout)throws Exception{
+        HttpRequest req=request(path).timeout(timeout).header("Content-Type","application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(Json.stringify(body),StandardCharsets.UTF_8)).build();
         HttpResponse<String> r=http.send(req,HttpResponse.BodyHandlers.ofString());
         if(r.statusCode()<200||r.statusCode()>=300)throw new IllegalStateException(path+" HTTP "+r.statusCode());

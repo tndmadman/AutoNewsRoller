@@ -38,6 +38,8 @@ public final class VisualPromptValidator {
         if(overlap.size()<2)issues.add("weak overlap with cited/story evidence");
 
         String lower=structured.toLowerCase(Locale.ROOT);
+        if(lower.contains("documentary photograph")||lower.contains("wire-service photograph")||lower.contains("eyewitness footage")||lower.contains("fake cctv"))
+            issues.add("synthetic documentary evidence representation prohibited");
         String citedLower=String.join(" ",citedText).toLowerCase(Locale.ROOT);
         for(String phrase:CLICHES)if(lower.contains(phrase)&&!evidence.toLowerCase(Locale.ROOT).contains(phrase))issues.add("AI cliché not supported: "+phrase);
         for(String phrase:DRAMA)if(wordish(lower,phrase)&&!wordish(citedLower,phrase))issues.add("unsupported dramatic content: "+phrase);

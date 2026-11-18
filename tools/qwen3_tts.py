@@ -11,6 +11,8 @@ def health(base,timeout=1.5):
 
 def start_server(root,base):
     if health(base): return
+    if os.getenv('AUTONEWS_CANARY_NO_HELPER_START') == '1':
+        raise RuntimeError('Canary mode requires an existing Qwen3 service; helper auto-start is disabled')
     script=root/'tools/qwen3_tts_server.py'; logdir=root/'output/runtime';logdir.mkdir(parents=True,exist_ok=True)
     out=open(logdir/'qwen3_tts_server.log','ab',buffering=0); err=open(logdir/'qwen3_tts_server.error.log','ab',buffering=0)
     flags=0

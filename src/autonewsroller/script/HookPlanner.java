@@ -140,9 +140,9 @@ public final class HookPlanner {
         }
         String grounding=support.isEmpty()?selection.text():String.join(" ",support);
         if(grounding.length()>520)grounding=grounding.substring(0,520).trim();
-        return ("Opening-hook editorial documentary photograph. Immediately show the concrete verified subject, action, place, or object supported by: "
+        return ("Opening-hook flat ink-and-gouache editorial illustration. Show only a safe, non-photographic contextual object, institution or symbol supported by: "
                 +grounding+
-                ". Tight portrait composition, obvious focal subject, active moment only when supported by the facts, natural realistic setting, no generic newsroom graphics, no text, no logos, no watermark.")
+                ". Clearly hand-drawn vertical portrait, strong focal subject, no invented action or incident footage, no graphic harm, no text, no logos, no watermark.")
                 .replaceAll("\\s+"," ").trim();
     }
 

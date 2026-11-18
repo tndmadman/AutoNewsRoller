@@ -16,6 +16,18 @@ public final class GroundedVisualPromptGenerator {
             Map<String,Object>m=new LinkedHashMap<>();m.put("scenes",scenes.stream().map(VisualPromptPlan::toMap).toList());
             m.put("repairAttempts",repairAttempts);m.put("fallbackCount",fallbackCount);m.put("rejectedCount",rejectedCount);m.put("model",model);return m;
         }
+        public static Result fromMap(Map<String,Object>m){
+            List<VisualPromptPlan>scenes=new ArrayList<>();
+            if(m.get("scenes") instanceof List<?>list)
+                for(Object raw:list)if(raw instanceof Map<?,?>)
+                    scenes.add(VisualPromptPlan.fromMap(Json.object(raw)));
+            if(scenes.isEmpty()||scenes.stream().anyMatch(p->p.prompt().isBlank()))
+                throw new IllegalArgumentException("Incomplete saved visual prompt plan");
+            return new Result(List.copyOf(scenes),integer(m.get("repairAttempts")),
+                    integer(m.get("fallbackCount")),integer(m.get("rejectedCount")),
+                    String.valueOf(m.getOrDefault("model","")));
+        }
+        private static int integer(Object x){return x instanceof Number n?n.intValue():0;}
         public double lowestScore(){return scenes.stream().mapToDouble(VisualPromptPlan::groundingScore).min().orElse(0);}
     }
 
@@ -94,9 +106,9 @@ public final class GroundedVisualPromptGenerator {
         final String factText=fact;
         String entity=cluster.entities.stream().filter(x->containsToken(factText,x)||containsToken(seg.narration(),x)).findFirst().orElse("");
         String subject=!entity.isBlank()&&Text.words(entity)>=2?entity:conservativeSubject(factText);
-        String prompt=("Realistic editorial wire-service photograph of "+subject+
+        String prompt=("Editorial illustration of "+subject+
                 " in an ordinary contemporary setting, grounded in this verified reporting: "+factText).replaceAll("\\s+"," ").trim();
-        VisualPromptPlan p=new VisualPromptPlan(seg.index(),seg.index()==0?"HOOK":"CONTEXT",ids,entity.isBlank()?List.of():List.of(entity),subject,"","ordinary contemporary setting","","","",List.of(),List.of(),"clear documentary composition",prompt,0,false,List.of(),repairs,true);
+        VisualPromptPlan p=new VisualPromptPlan(seg.index(),seg.index()==0?"HOOK":"CONTEXT",ids,entity.isBlank()?List.of():List.of(entity),subject,"","ordinary contemporary setting","","","",List.of(),List.of(),"clear editorial illustration",prompt,0,false,List.of(),repairs,true);
         VisualPromptValidator.Result vr=validator.validate(p,facts,cluster.entities,fp.headline(),excerpts);
         return p.withValidation(vr.score(),vr.valid(),vr.issues());
     }
@@ -113,12 +125,12 @@ public final class GroundedVisualPromptGenerator {
     }
 
     private static String systemPrompt(){return """
-You plan realistic editorial news photographs for a factual news video. You are NOT creating fictional illustrations.
+You plan clearly recognizable editorial illustrations for factual news. These synthetic visuals must never be presented as real event footage.
 The supplied verified facts are the complete factual boundary. Every concrete person, organization, location, building, vehicle, weapon, object, action, crowd, uniform, damage state, weather state, fire, explosion, protest, police presence, military presence, injury, casualty, or other event detail shown must be supported by supplied evidence.
 Do not use outside memory. Do not add cinematic spectacle unless the reported event itself is spectacular.
 If narration is abstract, choose the most concrete supported subject, object, location, institution, document, or process that accurately provides context.
 Do not create symbolic/metaphorical stock imagery, futuristic UI, glowing maps, holograms, cyberpunk scenes, mysterious silhouettes, floating data, chess metaphors, anonymous hooded hackers, or fake TV graphics unless literally supported.
-Images must read as plausible contemporary wire-service photography. Political imagery must be descriptively neutral, natural, and non-propagandistic.
+Images must read as artistic, unmistakably synthetic editorial illustrations, not documentary photographs. Never fabricate evidence imagery. Political imagery must be descriptively neutral, natural, and non-propagandistic.
 For war/crime stories, never infer battlefield, weapons, police raids, blood, destruction, or emergency scenes merely from the topic; those details require direct cited support.
 Plan ALL segments together. Use visual variety only from supported evidence; do not repeat the same building/portrait/subject unnecessarily.
 Each scene must cite 1-4 valid FACT IDs, identify a concrete subject, return a controlled strategy, and include mustNotShow constraints.

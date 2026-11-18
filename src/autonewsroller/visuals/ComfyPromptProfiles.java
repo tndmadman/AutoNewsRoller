@@ -1,6 +1,7 @@
 package autonewsroller.visuals;
 
 import autonewsroller.config.NewsConfig;
+import autonewsroller.safety.ContentSafetyPolicy;
 import autonewsroller.model.VisualPlan;
 import autonewsroller.util.Text;
 import java.util.*;
@@ -23,11 +24,15 @@ public final class ComfyPromptProfiles {
             if(attempt>0)suffix+=", simplified composition, stronger visual punchline, distinct large central subject";
         }else{
             suffix="HOOK".equalsIgnoreCase(item.type())
-                    ?", realistic wire-service documentary photograph, immediate thumbnail-safe news subject, upper-middle focal subject, natural colors and skin texture, neutral white balance, restrained saturation, clear lower quarter for the separately rendered news lower-third, vertical editorial portrait"
-                    :", realistic wire-service documentary photograph, clear source-grounded focal subject, natural colors and skin texture, neutral white balance, restrained saturation, editorial depth, clear lower quarter for the separately rendered news lower-third, vertical editorial portrait";
-            if(attempt>0)suffix+=", simpler documented focal action, clean factual composition, clear subject separation";
+                    ?", unmistakably two-dimensional ink-and-gouache editorial illustration, never documentary-style imagery, immediate thumbnail-safe news subject, upper-middle focal subject, flat gouache color blocks, visible ink contours, subtle paper grain, restrained palette, deliberately drawn faces, clear lower quarter for the separately rendered news lower-third, vertical editorial portrait"
+                    :", clearly hand-illustrated editorial news artwork, clear source-grounded focal subject, flat gouache color blocks, visible ink contours, subtle paper grain, restrained palette, deliberately drawn faces, clear lower quarter for the separately rendered news lower-third, vertical editorial portrait";
+            if(attempt>0){
+                String[] alternatives={", source-grounded illustrated contextual object instead of a dramatic action, single safe subject, clean factual composition",", source-grounded illustrated institutional exterior or verified location, simplified non-person composition",", source-grounded illustrated document or neutral process diagram only when supported by source facts, clear subject separation",", conservative source-grounded contextual still life, nonviolent nonsexual composition"};
+                suffix+=alternatives[Math.min(attempt-1,alternatives.length-1)];
+            }
         }
-        String prompt=Text.clean(base+" "+suffix);
+        String prompt=Text.clean(base+" "+suffix+", fully clothed people when shown, appropriate everyday clothing, nonsexual composition, not presented as a genuine event photograph");
+        ContentSafetyPolicy.validatePositive(prompt);
         if(!meme)assertNoExcludedConceptInPositive(item,prompt);
         return prompt;
     }
@@ -35,7 +40,7 @@ public final class ComfyPromptProfiles {
     public static String negative(NewsConfig cfg,VisualPlan.Item item,boolean meme){
         String defaultNegative=meme
                 ?"text, letters, captions, subtitles, watermark, logo, signature, blurry, low quality, malformed hands, extra fingers, muddy composition, graphic violence, realistic news screenshot, documentary evidence photograph"
-                :"text, watermark, logo, captions, low quality, distorted, deformed";
+                :"text, watermark, logo, captions, low quality, distorted, deformed, photorealistic, documentary photograph, fake CCTV";
         String configured=cfg.get(meme?"memeImageNegative":"imageNegative",defaultNegative);
         LinkedHashSet<String>terms=new LinkedHashSet<>();
         for(String part:configured.split(",")){
@@ -54,7 +59,7 @@ public final class ComfyPromptProfiles {
                 if(!term.isBlank())terms.add(term);
             }
         }
-        return String.join(", ",terms);
+        return ContentSafetyPolicy.negative(String.join(", ",terms));
     }
 
     private static void assertNoExcludedConceptInPositive(VisualPlan.Item item,String prompt){
