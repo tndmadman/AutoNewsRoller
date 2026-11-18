@@ -347,6 +347,8 @@ Return one JSON object matching the repair schema and nothing else.
             throw new IllegalArgumentException("Missing narration repair plan");
         try{
             NewsScript exact=applyReplacements(base,raw,fp,seconds,plan);
+            requireNoNewUnsupportedNumbers(base,exact,fp);
+            requireLockedHook(base,exact);
             requireLengthProgress(base,exact,seconds,preferredWords);
             return exact;
         }catch(IllegalArgumentException strict){
@@ -386,16 +388,24 @@ Return one JSON object matching the repair schema and nothing else.
         if(seen.size()!=targets.size())
             throw new IllegalArgumentException("Not all repair targets were answered");
         NewsScript revised=rebuild(fp,base.headline(),segments,seconds,base.hook());
-        Set<String>introduced=new LinkedHashSet<>(new ScriptValidator().unsupportedNumbers(revised,fp));
-        introduced.removeAll(new ScriptValidator().unsupportedNumbers(base,fp));
-        if(!introduced.isEmpty())
-            throw new IllegalArgumentException("Unsupported numbers introduced in repair: "+introduced);
-        if(!base.segments().get(0).narration().equals(revised.segments().get(0).narration()))
-            throw new IllegalArgumentException("Locked hook changed");
+        requireNoNewUnsupportedNumbers(base,revised,fp);
+        requireLockedHook(base,revised);
         requireLengthProgress(base,revised,seconds,preferredWords);
         System.out.println("Ollama intermediate length repair "+Text.words(base.narration())+
                 " -> "+Text.words(revised.narration())+" words; full validation remains mandatory");
         return revised;
+    }
+
+    private static void requireNoNewUnsupportedNumbers(NewsScript before,NewsScript after,FactPackage fp){
+        Set<String>introduced=new LinkedHashSet<>(new ScriptValidator().unsupportedNumbers(after,fp));
+        introduced.removeAll(new ScriptValidator().unsupportedNumbers(before,fp));
+        if(!introduced.isEmpty())
+            throw new IllegalArgumentException("Unsupported numbers introduced in repair: "+introduced);
+    }
+    private static void requireLockedHook(NewsScript before,NewsScript after){
+        if(before.segments().isEmpty()||after.segments().isEmpty()||
+                !before.segments().get(0).narration().equals(after.segments().get(0).narration()))
+            throw new IllegalArgumentException("Locked hook changed");
     }
 
     private static int bandGap(int words,int lo,int hi){
