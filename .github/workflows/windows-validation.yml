@@ -61,6 +61,10 @@ jobs:
           $errors=$null
           [System.Management.Automation.Language.Parser]::ParseFile('tools/verify_content_safety_windows.ps1',[ref]$tokens,[ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+          $tokens=$null
+          $errors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile('tools/unified_acceptance_windows.ps1',[ref]$tokens,[ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
       - name: Dedicated Windows safety environment, model health, and archive regression
         shell: pwsh
         run: |
