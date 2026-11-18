@@ -9,8 +9,11 @@ public final class SafetyScanProgressSelfTest {
         try(SafetyScanProgress.Scope scope=SafetyScanProgress.open("test-id")){
             SafetyScanProgress.update(SafetyScanProgress.current(),"CONTROLLER_OPENNSFW2",
                     8,20,"cpu",1234,1.5);
-            Map<String,Object>record=((java.util.List<Map<String,Object>>)
-                    SafetyScanProgress.snapshot().get("activeScans")).get(0);
+            Object raw=SafetyScanProgress.snapshot().get("activeScans");
+            if(!(raw instanceof java.util.List<?> rows) || rows.isEmpty()
+                    || !(rows.get(0) instanceof Map<?,?> values))
+                throw new AssertionError("missing active scanner progress");
+            Map<String,Object>record=autonewsroller.util.Json.object(values);
             if(!"CONTROLLER_OPENNSFW2".equals(record.get("stage"))||
                     !Long.valueOf(8).equals(record.get("framesProcessed"))||
                     !Long.valueOf(20).equals(record.get("framesExpected")))
