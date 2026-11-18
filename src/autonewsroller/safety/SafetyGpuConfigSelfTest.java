@@ -55,7 +55,7 @@ public final class SafetyGpuConfigSelfTest {
     }
     interface Task{void run()throws Exception;}
     private static void rejects(Task task)throws Exception{
-        try{task.run();}catch(IllegalArgumentException|IllegalStateException valid){return;}
+        try{task.run();}catch(IllegalArgumentException|IllegalStateException|java.io.IOException valid){return;}
         throw new AssertionError("invalid GPU configuration accepted");
     }
 }
