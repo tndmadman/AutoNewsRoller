@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Independent pornographic-content context review using OpenNSFW2.
 
-Requires a separately provisioned Keras/TensorFlow CPU environment and model
+Requires the separately provisioned Keras/TensorFlow CPU environment and model
 weights. A missing dependency or weight file is an error, never SAFE.
 Thresholds are conservative starting values, not calibrated guarantees.
 """
@@ -36,54 +36,37 @@ def classify_scores(values, start, evidence):
     return len(scores)
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--health", action="store_true")
-    mode.add_argument("--image")
-    mode.add_argument("--video")
-    args = parser.parse_args()
-
+def run_scan(kind, path, model, n2, progress=None):
     import cv2
     import numpy as np
     from PIL import Image
-    import opennsfw2 as n2
-
-    if importlib.metadata.version("opennsfw2") != MODEL_VERSION:
-        raise RuntimeError("unvalidated OpenNSFW2 model version")
-    start = time.monotonic()
-    # The weight downloader prints to stdout; only the structured JSON
-    # protocol is permitted on stdout.
-    with redirect_stdout(sys.stderr):
-        model = n2.make_open_nsfw_model()
+    started = time.monotonic()
+    preprocess_wall = infer_wall = decode_wall = 0.0
+    evidence = []
+    frames = expected = 0
 
     def prepare(frame):
+        nonlocal preprocess_wall
+        start = time.monotonic()
         if frame is None or len(frame.shape) != 3 or frame.shape[2] != 3:
             raise ValueError("invalid BGR frame")
         image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        return n2.preprocess_image(image, n2.Preprocessing.YAHOO)
+        value = n2.preprocess_image(image, n2.Preprocessing.YAHOO)
+        preprocess_wall += time.monotonic() - start
+        return value
 
     def infer(batch):
+        nonlocal infer_wall
+        start = time.monotonic()
         with redirect_stdout(sys.stderr):
-            return np.asarray(model(np.asarray(batch), training=False))
+            result = np.asarray(model(np.asarray(batch), training=False))
+        infer_wall += time.monotonic() - start
+        return result
 
-    if args.health:
-        result = infer([prepare(np.zeros((256, 256, 3), dtype=np.uint8))])
-        if result.shape != (1, 2) or not np.isfinite(result).all():
-            raise ValueError("context model failed health inference")
-        print(json.dumps({"status":"READY", "detector":"OpenNSFW2",
-                          "version":MODEL_VERSION, "policyVersion":"content-safety-2026-10-28-v3",
-                          "test":"model weights loaded and inference completed"}))
-        return
-
-    evidence = []
-    frames = 0
-    expected = 0
-    if args.image:
-        frame = cv2.imread(args.image, cv2.IMREAD_COLOR)
+    if kind == "image":
+        frame = cv2.imread(path, cv2.IMREAD_COLOR)
         if frame is None:
             raise ValueError("unreadable image")
-        # Inspect the complete still and enlarged upper/lower crops.
         h, w = frame.shape[:2]
         regions = [frame]
         if h > 256 and w > 256:
@@ -92,14 +75,16 @@ def main():
             classify_scores(infer([prepare(region)]), 0, evidence)
         frames = expected = 1
     else:
-        cap = cv2.VideoCapture(args.video)
+        cap = cv2.VideoCapture(path)
         if not cap.isOpened():
             raise ValueError("unreadable video")
         expected = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         queue = []
         try:
             while True:
+                t = time.monotonic()
                 ok, frame = cap.read()
+                decode_wall += time.monotonic()-t
                 if not ok:
                     break
                 queue.append(prepare(frame))
@@ -107,6 +92,8 @@ def main():
                 if len(queue) >= BATCH:
                     classify_scores(infer(queue), frames-len(queue), evidence)
                     queue.clear()
+                    if progress is not None:
+                        progress(frames, expected)
             if queue:
                 classify_scores(infer(queue), frames-len(queue), evidence)
                 queue.clear()
@@ -114,21 +101,61 @@ def main():
             cap.release()
         if expected < 1 or frames != expected:
             raise ValueError(f"incomplete context video decode: expected={expected}, actual={frames}")
-
+    if progress is not None:
+        progress(frames, expected)
     unsafe = any(x["decision"] == "UNSAFE" for x in evidence)
     review = bool(evidence)
-    print(json.dumps({
-        "status":"UNSAFE" if unsafe else ("REVIEW_REQUIRED" if review else "SAFE"),
-        "reason":"context model detected high sexual-content probability" if unsafe else
-                 ("sexual-content context requires review" if review else "no above-threshold sexual context"),
-        "detector":"OpenNSFW2", "version":MODEL_VERSION,
-        "reviewThreshold":REVIEW, "hardBlockThreshold":HARD_BLOCK,
-        "framesInspected":frames, "framesDecoded":frames, "framesExpected":expected,
-        "coverage":"every decoded frame; complete frame; upper/lower crops on still images",
-        "detections":evidence[:40], "detectionsTotal":len(evidence),
-        "elapsedSeconds":round(time.monotonic()-start, 3),
-    },separators=(",",":")))
+    return {
+        "status": "UNSAFE" if unsafe else ("REVIEW_REQUIRED" if review else "SAFE"),
+        "reason": "context model detected high sexual-content probability" if unsafe else
+                  ("sexual-content context requires review" if review else "no above-threshold sexual context"),
+        "detector": "OpenNSFW2", "version": MODEL_VERSION,
+        "reviewThreshold": REVIEW, "hardBlockThreshold": HARD_BLOCK,
+        "framesInspected": frames, "framesDecoded": frames, "framesExpected": expected,
+        "coverage": "every decoded frame; complete frame; upper/lower crops on still images",
+        "detections": evidence[:40], "detectionsTotal": len(evidence),
+        "decodeWallSeconds": round(decode_wall, 3),
+        "preprocessWallSeconds": round(preprocess_wall, 3),
+        "inferWallSeconds": round(infer_wall, 3),
+        "elapsedSeconds": round(time.monotonic()-started, 3),
+    }
 
+def main():
+    parser = argparse.ArgumentParser()
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--health", action="store_true")
+    mode.add_argument("--image")
+    mode.add_argument("--video")
+    mode.add_argument("--serve", action="store_true")
+    args = parser.parse_args()
+    import cv2
+    import numpy as np
+    import opennsfw2 as n2
+    if importlib.metadata.version("opennsfw2") != MODEL_VERSION:
+        raise RuntimeError("unvalidated OpenNSFW2 model version")
+    loading = time.monotonic()
+    with redirect_stdout(sys.stderr):
+        model = n2.make_open_nsfw_model()
+    startup_seconds = time.monotonic()-loading
+    if args.health:
+        from PIL import Image
+        probe = Image.fromarray(np.zeros((256, 256, 3), dtype=np.uint8))
+        with redirect_stdout(sys.stderr):
+            scores = np.asarray(model(np.asarray(
+                [n2.preprocess_image(probe, n2.Preprocessing.YAHOO)]), training=False))
+        if scores.shape != (1, 2) or not np.isfinite(scores).all():
+            raise ValueError("context model failed health inference")
+        print(json.dumps({"status":"READY", "detector":"OpenNSFW2", "version":MODEL_VERSION,
+                          "policyVersion":"content-safety-2026-10-28-v3",
+                          "test":"model weights loaded and inference completed"}))
+    elif args.serve:
+        from safety_scanner_ipc import serve
+        serve("OpenNSFW2", MODEL_VERSION, lambda kind, path, callback:
+              run_scan(kind, path, model, n2, callback), startup_seconds)
+    else:
+        kind = "image" if args.image else "video"
+        print(json.dumps(run_scan(kind, args.image or args.video, model, n2),
+                         separators=(",", ":")))
 
 if __name__ == "__main__":
     try:

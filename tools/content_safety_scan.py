@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CPU-only local NudeNet 3.4.2 bridge. Emits one JSON object; any error exits nonzero."""
+"""Pinned NudeNet 3.4.2 CPU scanner; CLI and optional resident NDJSON host."""
 import argparse
 import importlib.metadata
 import json
@@ -84,39 +84,19 @@ def disclosure_present(frame):
             return False
     return True
 
-def main():
-    parser = argparse.ArgumentParser()
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--image")
-    mode.add_argument("--video")
-    mode.add_argument("--health", action="store_true")
-    args = parser.parse_args()
+def run_scan(kind, path, detector, version, progress=None):
     import cv2
-    from nudenet import NudeDetector
-    start = time.monotonic()
-    detector = NudeDetector()
-    version = importlib.metadata.version("nudenet")
-    if version != "3.4.2":
-        raise RuntimeError("unvalidated NudeNet version: " + version)
-    if args.health:
-        import numpy as np
-        probe = np.zeros((192, 192, 3), dtype=np.uint8)
-        if not isinstance(detector.detect(probe), list):
-            raise ValueError("detector failed synthetic health test")
-        print(json.dumps({"status":"READY","detector":"NudeNet","version":version,
-                          "policyVersion":"content-safety-2026-10-28-v3",
-                          "test":"detector loaded and responded to synthetic safe image"}))
-        return
-    path = args.image or args.video
+    started = time.monotonic()
     unsafe = []
-    frames = 0
-    expected = 0
-    disclosure_frames = 0
-    if args.image:
-        image = cv2.imread(path, cv2.IMREAD_COLOR)
-        if image is None:
+    frames = expected = disclosure_frames = 0
+    model_wall = decode_wall = 0.0
+    if kind == "image":
+        frame = cv2.imread(path, cv2.IMREAD_COLOR)
+        if frame is None:
             raise ValueError("unreadable image")
-        unsafe = scan(image, detector)[:20]
+        t = time.monotonic()
+        unsafe = scan(frame, detector)[:20]
+        model_wall += time.monotonic() - t
         frames = expected = 1
     else:
         cap = cv2.VideoCapture(path)
@@ -125,42 +105,81 @@ def main():
         expected = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         try:
             while True:
+                t = time.monotonic()
                 ok, frame = cap.read()
+                decode_wall += time.monotonic() - t
                 if not ok:
                     break
                 if frame is None:
                     raise ValueError("decoded null frame")
                 if disclosure_present(frame):
                     disclosure_frames += 1
+                t = time.monotonic()
                 hits = scan(frame, detector)
+                model_wall += time.monotonic() - t
                 if hits and len(unsafe) < 30:
                     unsafe.append({"frame": frames, "detections": hits[:8]})
                 frames += 1
+                if progress is not None and frames % 30 == 0:
+                    progress(frames, expected)
         finally:
             cap.release()
         if expected < 1 or frames != expected:
             raise ValueError("incomplete video decode: decoded=" + str(frames) + " expected=" + str(expected))
-    missing_disclosure = bool(args.video) and disclosure_frames != frames
-    result = {
+    if progress is not None:
+        progress(frames, expected)
+    missing_disclosure = kind == "video" and disclosure_frames != frames
+    return {
         "status": "UNSAFE" if unsafe else ("REVIEW_REQUIRED" if missing_disclosure else "SAFE"),
-        "reason": "explicit-anatomy region detected" if unsafe else ("missing AI disclosure in one or more final frames" if missing_disclosure else "no exposed-anatomy regions above configured threshold"),
-        "detector": "NudeNet",
-        "version": version,
-        "threshold": THRESHOLD,
-        "framesInspected": frames,
-        "framesDecoded": frames,
-        "framesExpected": expected,
+        "reason": "explicit-anatomy region detected" if unsafe else
+                  ("missing AI disclosure in one or more final frames" if missing_disclosure else
+                   "no exposed-anatomy regions above configured threshold"),
+        "detector": "NudeNet", "version": version, "threshold": THRESHOLD,
+        "framesInspected": frames, "framesDecoded": frames, "framesExpected": expected,
         "disclosureVerified": not missing_disclosure,
         "disclosureFramesVerified": disclosure_frames,
         "coverage": "every decoded frame; full and three overlapping crops",
         "detections": unsafe,
-        "elapsedSeconds": round(time.monotonic()-start, 3),
+        "decodeWallSeconds": round(decode_wall, 3),
+        "modelAndPrepostWallSeconds": round(model_wall, 3),
+        "elapsedSeconds": round(time.monotonic()-started, 3),
     }
-    print(json.dumps(result, separators=(",", ":")))
+
+def main():
+    parser = argparse.ArgumentParser()
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--image")
+    mode.add_argument("--video")
+    mode.add_argument("--health", action="store_true")
+    mode.add_argument("--serve", action="store_true")
+    args = parser.parse_args()
+    from nudenet import NudeDetector
+    loading = time.monotonic()
+    detector = NudeDetector()
+    version = importlib.metadata.version("nudenet")
+    if version != "3.4.2":
+        raise RuntimeError("unvalidated NudeNet version: " + version)
+    startup_seconds = time.monotonic()-loading
+    if args.health:
+        import numpy as np
+        probe = np.zeros((192, 192, 3), dtype=np.uint8)
+        if not isinstance(detector.detect(probe), list):
+            raise ValueError("detector failed synthetic health test")
+        print(json.dumps({"status":"READY", "detector":"NudeNet", "version":version,
+                          "policyVersion":"content-safety-2026-10-28-v3",
+                          "test":"detector loaded and responded to synthetic safe image"}))
+    elif args.serve:
+        from safety_scanner_ipc import serve
+        serve("NudeNet", version, lambda kind, path, callback:
+              run_scan(kind, path, detector, version, callback), startup_seconds)
+    else:
+        kind = "image" if args.image else "video"
+        print(json.dumps(run_scan(kind, args.image or args.video, detector, version),
+                         separators=(",", ":")))
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print("CONTENT_SAFETY_SCANNER_UNAVAILABLE: "+str(error), file=sys.stderr)
+        print("CONTENT_SAFETY_SCANNER_UNAVAILABLE: " + str(error), file=sys.stderr)
         sys.exit(2)
