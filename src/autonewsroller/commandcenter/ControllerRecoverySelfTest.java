@@ -63,6 +63,8 @@ public final class ControllerRecoverySelfTest {
         String claim=String.valueOf(claimed.get("claimId"));
         String epoch=String.valueOf(claimed.get("productionEpoch"));
         check(!claim.isBlank()&&!epoch.isBlank(),"first claim and epoch assigned");
+        check(store.claim("worker-two",Map.of())==null,
+                "simultaneous second worker cannot claim an active leased job");
         Path mp4=dir.resolve("fixture.mp4");
         Files.writeString(mp4,"SYNTHETIC HASH-ONLY FIXTURE");
         String sha=ContentSafetyService.hash(mp4);
@@ -117,6 +119,12 @@ public final class ControllerRecoverySelfTest {
         check(newOwner!=null&&!nextClaim.equals(newOwner.get("claimId"))
                 &&nextEpoch.equals(newOwner.get("productionEpoch")),
                 "new worker receives fenced claim while retry retains production epoch");
+        blocked(()->recovered.completeAuthorized(id,Map.of("workerId","worker-two",
+                "claimId",nextClaim,"productionEpoch",nextEpoch)),
+                "expired previous owner cannot complete after lease supersession");
+        check("PRODUCING".equals(recovered.storyDetail(id).get("status"))
+                &&versions(recovered)==1,
+                "stale completion leaves new active owner and historical archive unchanged");
         return passed;
     }
 }
