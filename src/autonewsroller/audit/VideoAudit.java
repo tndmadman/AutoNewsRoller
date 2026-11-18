@@ -76,7 +76,9 @@ public final class VideoAudit {
         String volume=FfmpegRunner.run(List.of(ffmpeg,"-hide_banner","-nostdin","-i",
                 video.toString(),"-map","0:a:0","-vn","-af","volumedetect",
                 "-f","null","-"),90).toLowerCase(Locale.ROOT);
-        if(!volume.contains("mean_volume:")||volume.contains("mean_volume: -inf"))
+        java.util.regex.Matcher level=java.util.regex.Pattern.compile(
+                "mean_volume:\\s*(-?[0-9]+(?:\\.[0-9]+)?)").matcher(volume);
+        if(!level.find()||Double.parseDouble(level.group(1))<=-80.0)
             throw new IllegalStateException("Encoded MP4 audio is silent or could not be measured");
 
         Map<String,Object>sourceProbe=probe(audio);
