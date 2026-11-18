@@ -3066,6 +3066,18 @@ public final class SelfTest {
             resumed.accept("OUTSIDE","bad",Map.of("other",Files.createTempFile("anr-outside-", ".json")),Map.of());
         }catch(IllegalArgumentException expected){refusedOutside=true;}
         ok(refusedOutside,"checkpoint refuses paths outside the job workspace");
+        if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("win")){
+            // Linux fixture: an apparently local path may resolve outside via a symlinked parent.
+            Path redirect=workspace.resolve("redirect");
+            Path external=Files.createTempDirectory("anr-checkpoint-escape-");
+            Files.writeString(external.resolve("outside.json"),"{\"unsafe\":true}");
+            Files.createSymbolicLink(redirect,external);
+            boolean refusedLinkedParent=false;
+            try{
+                resumed.accept("LINK_ESCAPE","bad",Map.of("artifact",redirect.resolve("outside.json")),Map.of());
+            }catch(IllegalArgumentException expected){refusedLinkedParent=true;}
+            ok(refusedLinkedParent,"checkpoint rejects symlink-parent escape from authorized workspace");
+        }
         Files.writeString(workspace.resolve("production_checkpoint.json"),"{\"corrupted\":");
         ProductionCheckpoint corrupt=new ProductionCheckpoint(workspace,"contract-A");
         ok(corrupt.validated("SCRIPT","source-A",Map.of("script",script))==null,
