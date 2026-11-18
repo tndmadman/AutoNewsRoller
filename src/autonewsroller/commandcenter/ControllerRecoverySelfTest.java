@@ -125,6 +125,28 @@ public final class ControllerRecoverySelfTest {
         check("PRODUCING".equals(recovered.storyDetail(id).get("status"))
                 &&versions(recovered)==1,
                 "stale completion leaves new active owner and historical archive unchanged");
+        String activeClaim=String.valueOf(newOwner.get("claimId"));
+        recovered.action(id,"CANCEL");
+        check("CANCELLED".equals(recovered.storyDetail(id).get("status"))
+                &&versions(recovered)==1,
+                "operator cancellation revokes active claim and preserves archived media");
+        blocked(()->recovered.requireActiveClaim(id,"worker-three",activeClaim),
+                "cancelled worker can no longer upload or report progress");
+        blocked(()->recovered.completeAuthorized(id,Map.of("workerId","worker-three",
+                "claimId",activeClaim,"productionEpoch",nextEpoch)),
+                "late completion cannot resurrect a cancelled job");
+        CommandCenterStore cancelledRestart=store(state,dir);
+        check("CANCELLED".equals(cancelledRestart.storyDetail(id).get("status"))
+                &&versions(cancelledRestart)==1,
+                "cancelled job stays cancelled across restart and keeps historical version");
+        check(cancelledRestart.claim("worker-four",Map.of())==null,
+                "cancelled job cannot silently re-enter queue");
+        cancelledRestart.action(id,"MAKE");
+        Map<String,Object>afterManualQueue=cancelledRestart.claim("worker-four",Map.of());
+        check(afterManualQueue!=null
+                &&!nextEpoch.equals(afterManualQueue.get("productionEpoch"))
+                &&versions(cancelledRestart)==1,
+                "explicit new MAKE after cancellation receives a fresh production epoch");
         return passed;
     }
 }

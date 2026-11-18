@@ -273,9 +273,31 @@ public final class CommandCenterStore {
             remember(operationId,identity);persistRequired();Map<String,Object>pub=publicStory(m);
             emit("story",pub);return pub;
         }
-        if("PRODUCING".equals(status))
+        if("PRODUCING".equals(status)&&!("CANCEL".equals(a)||"CANCELLED".equals(a)))
             throw new IllegalStateException("Job is being produced. Wait for completion before changing its decision.");
         switch(a){
+            case "CANCEL","CANCELLED"->{
+                if(!("QUEUED".equals(status)||"PRODUCING".equals(status)))
+                    throw new IllegalStateException("Only queued or producing work can be cancelled.");
+                // Fencing must precede acknowledgement. The old worker no
+                // longer owns this job even if its last heartbeat was recent.
+                m.put("status","CANCELLED");m.put("stage","CANCELLED");
+                m.put("decision","CANCEL");m.put("progress",0);
+                m.put("detail","Job cancelled by operator; former worker claim revoked");
+                m.put("cancelledAt",Instant.now().toString());
+                m.put("manualWorth",false);m.put("worthy",false);
+                m.remove("assignedWorker");m.remove("claimId");clearLease(m);
+                // Deliberately queued work always starts a new epoch; do not
+                // recycle the cancelled checkpoint or delete historical video.
+                m.remove("productionEpoch");
+                m.remove("pendingMemeRequest");m.remove("pendingMemeKind");m.remove("pendingMemeAt");
+                if("STANDARD_PRODUCING".equals(m.get("pairedVideoState"))
+                        ||"STANDARD_QUEUED".equals(m.get("pairedVideoState")))
+                    m.put("pairedVideoState","STANDARD_CANCELLED");
+                if("FRAMING_PRODUCING".equals(m.get("pairedVideoState"))
+                        ||"FRAMING_QUEUED".equals(m.get("pairedVideoState")))
+                    m.put("pairedVideoState","FRAMING_CANCELLED");
+            }
             case "MAKE","QUEUE"->{
                 boolean verified=Boolean.TRUE.equals(m.get("verified"));
                 m.put("manualWorth",true);m.put("worthy",true);m.put("decision","MAKE");m.put("status","QUEUED");m.put("productionMode","STANDARD");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);resetFailureRetryState(m);markStandardPairQueued(m);

@@ -22,7 +22,7 @@
 
 ## Implemented repairs
 
-- **`CommandCenterStore.java`**: active lease/claim fencing; persisted upload
+- **`CommandCenterStore.java`**: durable operator CANCEL for queued/producing work; late worker completion cannot resurrect cancelled jobs, historical versions remain; active lease/claim fencing; persisted upload
   SHA, epoch, claim and canonical media path; committed output identity;
   idempotent version commits; posted-state preservation; restart-aware replay.
 - **`CommandCenterServer.java`**: preauthorized staging upload with a 2 GiB
@@ -58,7 +58,7 @@
 
 - `autonewsroller.commandcenter.ControllerHttpRecoverySelfTest`: real loopback HTTP duplicate upload, stale claim, invalid bytes, legacy header rejection and restart of an isolated controller. Synthetic media only.
 - `autonewsroller.commandcenter.ControllerRecoverySelfTest`:
-  claim and owner rejection, durable upload, lost upload and completion
+  claim and owner rejection, cancellation and late completion, durable upload, lost upload and completion
   acknowledgements, restart, manual posting, RE-MAKE, expired lease and
   superseding worker. Uses synthetic media and manifest only.
 - `autonewsroller.orchestration.ProductionServiceReadinessSelfTest`:

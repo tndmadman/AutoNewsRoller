@@ -163,3 +163,18 @@ remain subject to independent safety approval checks.
 The `ControllerRecoverySelfTest` uses synthetic manifest and MP4 bytes to
 verify durable controller accounting. It does **not** replace HTTP crash
 injection, live dual-detector scanning or Windows GPU acceptance.
+
+## Operator cancellation fences a worker claim
+
+The existing story-action endpoint now accepts `CANCEL` for a job in
+`QUEUED` or `PRODUCING`. It saves `CANCELLED` and clears the current claim,
+lease and production epoch before acknowledging the action. Any former worker
+that finishes late is rejected by the controller's upload, progress,
+failure and completion claim checks. The cancellation does **not** delete
+historical media or metadata and does not publish unfinished uploads.
+The job is not automatically reclaimed after restart.
+
+An operator can explicitly request a later `MAKE`, which receives a fresh
+epoch; cancelled-stage checkpoints cannot be reused as authoritative output.
+The state-machine fixture tests cancellation, late completion, durable
+restart, no automatic claim and explicit new work.
