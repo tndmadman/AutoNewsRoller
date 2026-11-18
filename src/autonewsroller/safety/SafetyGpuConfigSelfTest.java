@@ -22,6 +22,18 @@ public final class SafetyGpuConfigSelfTest {
             if(!"8".equals(env.get("AUTONEWS_SAFETY_CPU_THREADS"))
                     ||!"1".equals(env.get("TF_NUM_INTEROP_THREADS")))
                 throw new AssertionError("safety CPU budget not propagated");
+            Path runtime=root.resolve("output/runtime");
+            Files.createDirectories(runtime);
+            Path overlay=runtime.resolve("safety_gpu_settings.properties");
+            Files.writeString(overlay,"contentSafetyCpuThreads=6\n");
+            NewsConfig loaded=NewsConfig.load(root);
+            if(SafetyGpuConfig.cpuThreads(loaded)!=6)
+                throw new AssertionError("runtime safety override not loaded");
+            Files.writeString(overlay,"commandCenterAutoQueue=false\n");
+            rejects(()->NewsConfig.load(root));
+            Files.delete(overlay);
+            Files.delete(runtime);
+            Files.delete(root.resolve("output"));
             cfg.set("contentSafetyGpuMode","invalid");
             rejects(()->SafetyGpuConfig.from(root,cfg));
             cfg.set("contentSafetyGpuMode","require");

@@ -60,6 +60,29 @@ An incomplete/unknown scan never produces an approval.
    configure matched worker/controller settings and restart during authorized
    maintenance. Do not merge this PR on the strength of CI smoke alone.
 
+## One-click hardware activation
+After pulling this branch and stopping the controller and worker, run
+`activate_gpu_safety_windows.bat` on the actual RTX 3090 host. It creates the
+isolated GPU venv, exports the original OpenNSFW2 weights, requires rights
+confirmation for local user-generated fixtures, validates actual CUDA nodes and
+CPU/GPU decisions, benchmarks a short encoded video, then writes
+`output/runtime/safety_gpu_settings.properties` **only after all gates pass**.
+The project automatically loads this ignored override at restart. It does not
+change tracked `defaults.txt` or the pinned CPU venv.
+
+The one-click path locates original ComfyUI illustration files and one generated
+MP4 in `output/`. If fewer than 25 distinct generated illustrations exist, the
+operator can provide `-ImagesList` and `-VideosList` to the PowerShell script
+using owned/licensed fixtures. Use a heterogeneous, including borderline,
+licensed corpus before trusting parity as sufficient safety evidence. Synthetic
+or narrow all-negative fixtures are insufficient for production validation.
+A partial/failing test **never** enables GPU mode. The batch file remains open
+with PAUSE to show the error and summary. It refuses to run while the live Java
+controller or worker is active, preventing interference with current jobs.
+GPU selection is `prefer` only after PASS; hardware errors fall back to the same
+complete CPU checks with an eight-thread budget. Actual model verdicts never
+trigger automatic fallback.
+
 ## Configuration and rollback
 
 - contentSafetyGpuMode=off|prefer|require. Default off; prefer allows CPU

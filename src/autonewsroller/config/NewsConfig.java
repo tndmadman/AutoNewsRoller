@@ -10,6 +10,21 @@ public final class NewsConfig {
     private final Map<String,Double> ranking=new LinkedHashMap<>();
     public static NewsConfig load(Path root) throws IOException {
         NewsConfig c=new NewsConfig(); Path d=root.resolve("defaults.txt"); if(Files.isRegularFile(d))try(InputStream in=Files.newInputStream(d)){c.p.load(in);} 
+        // Machine-validated GPU activation lives under ignored runtime output,
+        // not in tracked defaults.txt. Reject unrelated settings in this overlay.
+        Path gpu=root.resolve("output/runtime/safety_gpu_settings.properties");
+        if(Files.isRegularFile(gpu)){
+            Properties overrides=new Properties();
+            try(InputStream in=Files.newInputStream(gpu)){overrides.load(in);}
+            Set<String> allowed=Set.of("contentSafetyGpuMode","contentSafetyGpuDevice",
+                "contentSafetyGpuReserveMiB","contentSafetyGpuWaitSeconds",
+                "contentSafetyGpuPython","contentSafetyGpuParityManifest",
+                "contentSafetyGpuContextOnnx","contentSafetyCpuThreads");
+            for(String key:overrides.stringPropertyNames()){
+                if(!allowed.contains(key))throw new IOException("unrecognized GPU runtime override: "+key);
+                c.p.setProperty(key,overrides.getProperty(key));
+            }
+        }
         Path r=root.resolve("config/ranking.json"); if(Files.isRegularFile(r)){for(var e:Json.object(Json.read(r)).entrySet()) if(e.getValue() instanceof Number n)c.ranking.put(e.getKey(),n.doubleValue());}
         return c;
     }

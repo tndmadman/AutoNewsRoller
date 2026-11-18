@@ -67,6 +67,10 @@ jobs:
           if ($errors.Count -gt 0) { throw ($errors | Out-String) }
           $tokens=$null
           $errors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile('tools/activate_safety_gpu_windows.ps1',[ref]$tokens,[ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+          $tokens=$null
+          $errors=$null
           [System.Management.Automation.Language.Parser]::ParseFile('tools/unified_acceptance_windows.ps1',[ref]$tokens,[ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { throw ($errors | Out-String) }
           $tokens=$null
@@ -107,6 +111,7 @@ jobs:
           java -cp build/classes autonewsroller.visuals.ImageRetryCoordinatorSelfTest
           java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
           java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
+          python tools/test_safety_cpu_thread_config.py
           python -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/safety_scanner_ipc.py tools/safety_cuda_backend.py tools/validate_safety_gpu_parity.py tools/test_safety_cuda_gate.py tools/export_opennsfw2_onnx.py tools/benchmark_safety_video.py tools/test_safety_scanner_protocol.py tools/test_persistent_safety_scan.py tools/test_content_safety_scan.py tools/audit_historical_outputs.py
           python tools/test_safety_scanner_protocol.py
           python tools/test_safety_cuda_gate.py
