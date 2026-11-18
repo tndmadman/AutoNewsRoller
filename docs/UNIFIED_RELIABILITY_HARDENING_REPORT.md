@@ -133,3 +133,17 @@
   budget covers two configured detector timeouts.
 - Live latency, controller interruption during scanning and end-to-end
   restart tests remain unverified until exact-head CI and hardware acceptance.
+
+### Historical worker-only approval remains non-publishable
+
+- Manual upload-status changes and HTTP MP4 serving now require the persisted
+  `CONTROLLER_INDEPENDENT_RESCAN` approval origin. A legacy worker-provided
+  approval manifest is not sufficient, even when its hash and detector fields
+  pass structural checks. Existing archive records and media bytes are retained.
+- The isolated HTTP fixture deliberately creates synthetic valid-looking
+  worker scan metadata and verifies it cannot unlock MP4 serving. The
+  state-machine fixture uses a synthetic controller-origin marker solely to
+  exercise accounting and does not prove that real detectors ran.
+- A separate reviewed re-verification procedure is required before historical
+  worker-only artifacts can become newly publishable. Do not silently grant
+  historic approvals during state migration.

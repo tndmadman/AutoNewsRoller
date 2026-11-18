@@ -527,7 +527,10 @@ public final class CommandCenterServer {
             try{
                 Path sidecar=file.resolveSibling(file.getFileName()+".json");
                 Map<String,Object>provenance=Json.object(Json.read(sidecar));
-                ContentSafetyService.verify(file,Json.object(provenance.get("contentSafety")),false);
+                Map<String,Object>manifest=Json.object(provenance.get("contentSafety"));
+                if(!"CONTROLLER_INDEPENDENT_RESCAN".equals(manifest.get("approvalOrigin")))
+                    throw new IllegalStateException("CONTENT_SAFETY: legacy worker evidence is not controller approval");
+                ContentSafetyService.verify(file,manifest,false);
             }catch(Exception denied){
                 json(x,409,Map.of("error","CONTENT_SAFETY: video unverified or stale; do not repost"));
                 return;

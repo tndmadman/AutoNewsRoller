@@ -95,7 +95,20 @@ public final class ControllerHttpRecoverySelfTest {
             forgedManifest.put("status","APPROVED_FOR_EXPORT");
             forgedManifest.put("policyVersion",ContentSafetyService.POLICY);
             forgedManifest.put("videoSha256",hash);
-            forgedManifest.put("finalVideoAudit",Map.of("status","SAFE"));
+            Map<String,Object>fakeFrames=new LinkedHashMap<>();
+            fakeFrames.put("status","SAFE");fakeFrames.put("policyVersion",ContentSafetyService.POLICY);
+            fakeFrames.put("sha256",hash);fakeFrames.put("framesDecoded",1);
+            fakeFrames.put("framesInspected",1);fakeFrames.put("framesExpected",1);
+            fakeFrames.put("disclosureVerified",true);fakeFrames.put("disclosureFramesVerified",1);
+            fakeFrames.put("detector","NudeNet");fakeFrames.put("version","3.4.2");
+            fakeFrames.put("threshold",0.25);
+            fakeFrames.put("coverage","every decoded frame; full and three overlapping crops");
+            fakeFrames.put("contextAudit",Map.of("status","SAFE","detector","OpenNSFW2",
+                    "version","0.19.0","reviewThreshold",0.20,
+                    "hardBlockThreshold",0.70,"framesDecoded",1,"framesInspected",1,
+                    "framesExpected",1,
+                    "coverage","every decoded frame; complete frame; upper/lower crops on still images"));
+            forgedManifest.put("finalVideoAudit",fakeFrames);
             Map<String,Object>forgedCompletion=Map.of("workerId","test-worker",
                     "claimId",claim,"productionEpoch",epoch,
                     "sidecar",Map.of("productionMode","STANDARD",
@@ -106,10 +119,15 @@ public final class ControllerHttpRecoverySelfTest {
                     Map.of("Content-Type","application/json"));
             check(forgery.statusCode()>=400,
                     "worker-forged SAFE manifest cannot complete without controller detectors");
+            // A worker-shaped manifest is structurally valid, but it is not
+            // evidence that a controller ever scanned the synthetic bytes.
+            ContentSafetyService.verify(source,forgedManifest,false);
+            Json.write(root.resolve("output/command_center/videos").resolve(filename+".json"),
+                    Map.of("contentSafety",forgedManifest));
             HttpResponse<String>unapprovedMedia=request(http,
                     URI.create(base+"/videos/"+filename),"GET",new byte[0],Map.of());
             check(unapprovedMedia.statusCode()!=200,
-                    "unapproved upload cannot be served as publishable media");
+                    "structurally valid worker-only sidecar cannot unlock media serving");
             Map<String,Object>state=Json.object(Json.read(root.resolve("data/command_center_state.json")));
             Map<String,Object>saved=Json.object(Json.object(state.get("stories")).get(id));
             check(hash.equals(saved.get("uploadedSha256"))&&claim.equals(saved.get("uploadedClaimId")),

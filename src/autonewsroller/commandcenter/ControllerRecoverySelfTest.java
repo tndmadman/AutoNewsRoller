@@ -39,6 +39,8 @@ public final class ControllerRecoverySelfTest {
         manifest.put("status","APPROVED_FOR_EXPORT");manifest.put("policyVersion",ContentSafetyService.POLICY);
         manifest.put("videoSha256",sha);manifest.put("finalVideoAudit",frames);
         manifest.put("inputs",List.of());
+        // Synthetic state-machine fixture only; no detector actually ran.
+        manifest.put("approvalOrigin","CONTROLLER_INDEPENDENT_RESCAN");
         return Map.of("workerId",worker,"claimId",claim,"productionEpoch",epoch,
                 "sidecar",Map.of("productionMode","STANDARD","contentSafety",manifest));
     }

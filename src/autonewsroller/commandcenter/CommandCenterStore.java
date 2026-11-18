@@ -1201,6 +1201,12 @@ public final class CommandCenterStore {
         if(uploaded){
             if(!"APPROVED_FOR_EXPORT".equals(v.getOrDefault("safetyStatus","NOT_SCANNED")))
                 throw new IllegalStateException("CONTENT_SAFETY: historical or dry-run videos cannot be marked publishable");
+            // Preserve historical versions, but do not treat legacy worker-only
+            // evidence as an independent controller publication approval.
+            if(!(v.get("safetyManifest") instanceof Map<?,?> approval)
+                    ||!"CONTROLLER_INDEPENDENT_RESCAN".equals(
+                            Json.object(approval).get("approvalOrigin")))
+                throw new IllegalStateException("CONTENT_SAFETY: controller approval required before publication");
             try{
                 ContentSafetyService.verify(Path.of(String.valueOf(v.get("path"))),
                         Json.object(v.get("safetyManifest")),false);
