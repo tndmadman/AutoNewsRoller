@@ -106,8 +106,12 @@ does not automatically unload a resident GPU model under ComfyUI VRAM
 pressure. Persistent GPU memory under SDXL/Ollama/TTS load is an
 additional hardware acceptance blocker until measured and resolved.
 
-For immediate rollback set contentSafetyGpuMode=off on worker and
-controller; keep all mandatory safety checks active. If the resident
+For immediate rollback run `disable_gpu_safety_windows.bat` after stopping
+both Java processes; it safely renames the ignored runtime override so tracked
+`defaults.txt` (GPU off) takes effect on restart. Alternatively edit
+`output/runtime/safety_gpu_settings.properties` to set `contentSafetyGpuMode=off`
+on both processes. Editing `defaults.txt` alone does not override an active
+runtime settings file.  keep all mandatory safety checks active. If the resident
 host misbehaves, also set contentSafetyScannerPersistent=false; this
 restores original direct Python CPU invocation. The original pinned
 .venv-safety is not modified. Never remove job data, uploaded video,

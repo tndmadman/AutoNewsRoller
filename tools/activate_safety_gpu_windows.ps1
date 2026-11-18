@@ -6,6 +6,14 @@ param(
     [switch]$ConfirmFixtureRights
 )
 $ErrorActionPreference = "Stop"
+# CPU reference/benchmark work must not saturate the 48-thread Threadripper.
+$env:AUTONEWS_SAFETY_CPU_THREADS = "8"
+$env:OMP_NUM_THREADS = "8"
+$env:OPENBLAS_NUM_THREADS = "8"
+$env:MKL_NUM_THREADS = "8"
+$env:NUMEXPR_NUM_THREADS = "8"
+$env:TF_NUM_INTRAOP_THREADS = "8"
+$env:TF_NUM_INTEROP_THREADS = "1"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $root
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
