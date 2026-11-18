@@ -29,7 +29,7 @@ An incomplete/unknown scan never produces an approval.
    Documentation: https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html
 3. Export the original OpenNSFW2 model with:
    .venv-safety-gpu/Scripts/python.exe tools/export_opennsfw2_onnx.py --output output/runtime/models/opennsfw2-0.19.0.onnx
-   Export may fail if Keras 3 and tf2onnx versions are incompatible. An
+   The isolated GPU requirements pin tf2onnx 1.17.0 and ONNX 1.19.0; conversion must still be verified against original weights. Export may fail if Keras 3 and tf2onnx versions are incompatible. An
    export.json provenance report is NOT a parity PASS report. Do not
    download substitute model weights.
 4. Create images.txt and videos.txt listing licensed, consented fixture

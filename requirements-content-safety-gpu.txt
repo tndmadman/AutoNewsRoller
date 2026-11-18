@@ -5,3 +5,6 @@ nudenet==3.4.2
 opennsfw2[keras3]==0.19.0
 tensorflow-cpu==2.20.0
 onnxruntime-gpu==1.20.1
+# Keras 3 -> ONNX exporter; 1.17 fixes protobuf compatibility vs 1.16.x.
+tf2onnx==1.17.0
+onnx==1.19.0
