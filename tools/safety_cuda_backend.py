@@ -88,7 +88,7 @@ def _manifest(path,detector,model_sha,device):
         raise RuntimeError("parity model/weights provenance incomplete")
     return m
 
-def nudenet_cuda(device,manifest,reserve_mb):
+def nudenet_cuda(device,manifest,reserve_mb,validation_only=False):
     import numpy as np
     import nudenet
     from nudenet import NudeDetector
@@ -96,7 +96,8 @@ def nudenet_cuda(device,manifest,reserve_mb):
     if not weights.is_file():
         raise RuntimeError("pinned packaged NudeNet 320n.onnx model not found")
     sha=hash_file(weights)
-    _manifest(manifest,"NudeNet",sha,device)
+    if not validation_only:
+        _manifest(manifest,"NudeNet",sha,device)
     vram_available(device,reserve_mb)
     detector=NudeDetector(model_path=str(weights),
                           providers=[("CUDAExecutionProvider",{"device_id":device})])
@@ -125,13 +126,14 @@ class ContextCudaModel:
             raise ValueError("OpenNSFW2 CUDA output invalid")
         return result
 
-def context_cuda(device,manifest,onnx_path,reserve_mb):
+def context_cuda(device,manifest,onnx_path,reserve_mb,validation_only=False):
     import numpy as np
     if not onnx_path:
         raise RuntimeError("converted OpenNSFW2 ONNX path is required")
     model_path=Path(onnx_path).resolve(strict=True)
     sha=hash_file(model_path)
-    _manifest(manifest,"OpenNSFW2",sha,device)
+    if not validation_only:
+        _manifest(manifest,"OpenNSFW2",sha,device)
     vram_available(device,reserve_mb)
     def warm(session):
         inp=session.get_inputs()
