@@ -27,6 +27,18 @@ function Lines([string]$path) {
     if ($content.Count -eq 0) { throw "Fixture list is empty: $path" }
     return $content
 }
+function ResolveFixtures([string]$listPath) {
+    $resolved = (Resolve-Path -LiteralPath $listPath).Path
+    $parent = Split-Path $resolved -Parent
+    $items = @(Lines $resolved)
+    return @($items | ForEach-Object {
+        $entry = $_
+        if (-not [System.IO.Path]::IsPathRooted($entry)) {
+            $entry = Join-Path $parent $entry
+        }
+        (Resolve-Path -LiteralPath $entry).Path
+    })
+}
 function WriteUtf8Lines([string]$path, [string[]]$lines) {
     [System.IO.File]::WriteAllLines($path, $lines, (New-Object System.Text.UTF8Encoding($false)))
 }
@@ -104,7 +116,7 @@ try {
     Step "Collect local licensed fixtures for hardware parity."
     $images = @()
     if ($ImagesList) {
-        $images = @(Lines (Resolve-Path -LiteralPath $ImagesList).Path)
+        $images = @(ResolveFixtures $ImagesList)
     } else {
         $images = @(Get-ChildItem -LiteralPath (Join-Path $root "output") -Recurse -File -Filter "*.png" |
             Where-Object { $_.Name -match "comfy_attempt_[0-9]+[.]png$" } |
@@ -121,7 +133,7 @@ try {
     foreach ($file in $images) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing image fixture $file" } }
     $video = ""
     if ($VideosList) {
-        $listedVideos = @(Lines (Resolve-Path -LiteralPath $VideosList).Path)
+        $listedVideos = @(ResolveFixtures $VideosList)
         $video = $listedVideos[0]
     } else {
         $candidate = Get-ChildItem -LiteralPath (Join-Path $root "output") -Recurse -File -Filter "*.mp4" |

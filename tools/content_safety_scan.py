@@ -193,7 +193,7 @@ def main():
     import cv2
     cv2.setNumThreads(1)
     loading = time.monotonic()
-    metadata={"backend":"cpu","provider":"CPU"}
+    metadata={"backend":"cpu","provider":"CPU","cpuThreads":cpu_threads()}
     if args.backend=="cuda":
         from safety_cuda_backend import nudenet_cuda
         detector,metadata=nudenet_cuda(args.cuda_device,args.parity_manifest,

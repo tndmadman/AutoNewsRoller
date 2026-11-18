@@ -135,12 +135,13 @@ def main():
     parser.add_argument("--vram-reserve-mb", type=int, default=4096)
     args = parser.parse_args()
     import cv2
+    cv2.setNumThreads(1)
     import numpy as np
     import opennsfw2 as n2
     if importlib.metadata.version("opennsfw2") != MODEL_VERSION:
         raise RuntimeError("unvalidated OpenNSFW2 model version")
     loading = time.monotonic()
-    metadata={"backend":"cpu","provider":"CPU"}
+    metadata={"backend":"cpu","provider":"CPU","cpuThreads":int(os.environ.get("AUTONEWS_SAFETY_CPU_THREADS","8"))}
     if args.backend=="cuda":
         from safety_cuda_backend import context_cuda
         model,metadata=context_cuda(args.cuda_device,args.parity_manifest,

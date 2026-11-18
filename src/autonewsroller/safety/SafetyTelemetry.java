@@ -20,7 +20,7 @@ public final class SafetyTelemetry {
             line.put("mediaKind",mediaKind);
             line.put("detector",detector);
             line.put("sha256",sha);
-            for(String key:List.of("status","backend","provider","scannerPid",
+            for(String key:List.of("status","backend","provider","cpuThreads","gpuWaitMillis","fallbackReason","scannerPid",
                     "modelLoadSeconds","framesDecoded","framesInspected","framesExpected",
                     "elapsedSeconds","decodeWallSeconds","modelAndPrepostWallSeconds",
                     "preprocessWallSeconds","inferWallSeconds")){
