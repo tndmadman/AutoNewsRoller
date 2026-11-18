@@ -28,11 +28,14 @@ def emit(message):
         raise ValueError("scanner response exceeds protocol limit")
     print(encoded, flush=True)
 
-def serve(detector, version, runner, startup_seconds):
+def serve(detector, version, runner, startup_seconds, metadata=None):
+    metadata = dict(metadata or {"backend": "cpu", "provider": "CPU"})
+    if metadata.get("backend") not in ("cpu", "cuda"):
+        raise ValueError("unrecognized scanner backend")
     emit({"event": "ready", "status": "READY", "detector": detector,
           "version": version, "policyVersion": "content-safety-2026-10-28-v3",
-          "backend": "cpu", "provider": "CPU", "modelLoadSeconds": round(startup_seconds, 3),
-          "pid": os.getpid()})
+          "modelLoadSeconds": round(startup_seconds, 3),
+          "pid": os.getpid(), **metadata})
     for line in sys.stdin.buffer:
         request_id = ""
         try:
@@ -62,7 +65,7 @@ def serve(detector, version, runner, startup_seconds):
             started = time.monotonic()
             def progress(done, expected):
                 emit({"event": "progress", "id": request_id, "detector": detector,
-                      "backend": "cpu", "framesProcessed": int(done),
+                      "backend": metadata["backend"], "framesProcessed": int(done),
                       "framesExpected": int(expected),
                       "elapsedSeconds": round(time.monotonic()-started, 3)})
             result = runner(operation, path, progress)
@@ -70,8 +73,7 @@ def serve(detector, version, runner, startup_seconds):
                 raise ValueError("input changed during scan")
             if result.get("status") not in ("SAFE", "UNSAFE", "REVIEW_REQUIRED"):
                 raise ValueError("invalid scanner result status")
-            result["backend"] = "cpu"
-            result["provider"] = "CPU"
+            result.update(metadata)
             result["scannerPid"] = os.getpid()
             result["modelLoadSeconds"] = round(startup_seconds, 3)
             emit({"event": "result", "id": request_id, "result": result})

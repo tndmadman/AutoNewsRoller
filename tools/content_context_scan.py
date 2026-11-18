@@ -127,6 +127,11 @@ def main():
     mode.add_argument("--image")
     mode.add_argument("--video")
     mode.add_argument("--serve", action="store_true")
+    parser.add_argument("--backend", choices=("cpu","cuda"), default="cpu")
+    parser.add_argument("--cuda-device", type=int, default=0)
+    parser.add_argument("--parity-manifest")
+    parser.add_argument("--onnx-model")
+    parser.add_argument("--vram-reserve-mb", type=int, default=4096)
     args = parser.parse_args()
     import cv2
     import numpy as np
@@ -134,8 +139,14 @@ def main():
     if importlib.metadata.version("opennsfw2") != MODEL_VERSION:
         raise RuntimeError("unvalidated OpenNSFW2 model version")
     loading = time.monotonic()
-    with redirect_stdout(sys.stderr):
-        model = n2.make_open_nsfw_model()
+    metadata={"backend":"cpu","provider":"CPU"}
+    if args.backend=="cuda":
+        from safety_cuda_backend import context_cuda
+        model,metadata=context_cuda(args.cuda_device,args.parity_manifest,
+                                    args.onnx_model,args.vram_reserve_mb)
+    else:
+        with redirect_stdout(sys.stderr):
+            model = n2.make_open_nsfw_model()
     startup_seconds = time.monotonic()-loading
     if args.health:
         from PIL import Image
@@ -151,11 +162,12 @@ def main():
     elif args.serve:
         from safety_scanner_ipc import serve
         serve("OpenNSFW2", MODEL_VERSION, lambda kind, path, callback:
-              run_scan(kind, path, model, n2, callback), startup_seconds)
+              run_scan(kind, path, model, n2, callback), startup_seconds, metadata)
     else:
         kind = "image" if args.image else "video"
-        print(json.dumps(run_scan(kind, args.image or args.video, model, n2),
-                         separators=(",", ":")))
+        result=run_scan(kind,args.image or args.video,model,n2)
+        result.update(metadata)
+        print(json.dumps(result,separators=(",", ":")))
 
 if __name__ == "__main__":
     try:

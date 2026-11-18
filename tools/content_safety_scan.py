@@ -152,10 +152,20 @@ def main():
     mode.add_argument("--video")
     mode.add_argument("--health", action="store_true")
     mode.add_argument("--serve", action="store_true")
+    parser.add_argument("--backend", choices=("cpu","cuda"), default="cpu")
+    parser.add_argument("--cuda-device", type=int, default=0)
+    parser.add_argument("--parity-manifest")
+    parser.add_argument("--vram-reserve-mb", type=int, default=4096)
     args = parser.parse_args()
     from nudenet import NudeDetector
     loading = time.monotonic()
-    detector = NudeDetector()
+    metadata={"backend":"cpu","provider":"CPU"}
+    if args.backend=="cuda":
+        from safety_cuda_backend import nudenet_cuda
+        detector,metadata=nudenet_cuda(args.cuda_device,args.parity_manifest,
+                                       args.vram_reserve_mb)
+    else:
+        detector = NudeDetector()
     version = importlib.metadata.version("nudenet")
     if version != "3.4.2":
         raise RuntimeError("unvalidated NudeNet version: " + version)
@@ -171,11 +181,12 @@ def main():
     elif args.serve:
         from safety_scanner_ipc import serve
         serve("NudeNet", version, lambda kind, path, callback:
-              run_scan(kind, path, detector, version, callback), startup_seconds)
+              run_scan(kind, path, detector, version, callback), startup_seconds, metadata)
     else:
         kind = "image" if args.image else "video"
-        print(json.dumps(run_scan(kind, args.image or args.video, detector, version),
-                         separators=(",", ":")))
+        result=run_scan(kind, args.image or args.video, detector, version)
+        result.update(metadata)
+        print(json.dumps(result,separators=(",", ":")))
 
 if __name__ == "__main__":
     try:
