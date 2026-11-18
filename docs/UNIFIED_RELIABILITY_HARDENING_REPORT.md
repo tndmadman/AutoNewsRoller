@@ -157,3 +157,13 @@
   preserve the original media file. This is a content-length/hash truncation
   regression, not a simulated severed TCP connection or OS process crash.
 - These fixture assertions require exact-head CI to establish execution.
+
+### Exact-head CI regression: legacy SelfTest fixture
+
+- A prior Linux run, `44234443211`, compiled Java and ran the controller
+  recovery and HTTP fixtures but failed the existing media-reporting SelfTest
+  because its synthetic manifest lacked the new controller approval origin.
+- The synthetic `completeWithSafety` helper now supplies the marker explicitly,
+  so the test can continue checking manual posting and version preservation.
+  This does not weaken the production HTTP approval gate or mean that the
+  fixture passed a real scanner. Validation on the new commit is required.

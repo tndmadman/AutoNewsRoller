@@ -37,6 +37,9 @@ public final class SelfTest {
         Map<String,Object>manifest=new LinkedHashMap<>();
         manifest.put("status","APPROVED_FOR_EXPORT");
         manifest.put("policyVersion",ContentSafetyService.POLICY);
+        // This is intentionally a synthetic controller-owned state fixture.
+        // It does not establish real detector execution or hardware approval.
+        manifest.put("approvalOrigin","CONTROLLER_INDEPENDENT_RESCAN");
         manifest.put("videoSha256",ContentSafetyService.hash(mp4));
         manifest.put("inputs",List.of());
         Map<String,Object> audit=new LinkedHashMap<>();
