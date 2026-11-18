@@ -178,6 +178,13 @@ contentSafetyScannerPersistent=true
 contentSafetyScannerStartupSeconds=180
 # GPU remains disabled pending hardware, model-parity and CUDA execution gates.
 contentSafetyGpuMode=off
+# CUDA must remain disabled until a real parity+hardware manifest is produced.
+contentSafetyGpuDevice=0
+contentSafetyGpuReserveMiB=4096
+contentSafetyGpuWaitSeconds=120
+contentSafetyGpuPython=auto
+contentSafetyGpuParityManifest=
+contentSafetyGpuContextOnnx=
 # Requires dedicated .venv-safety Python 3.12 with NudeNet 3.4.2 + OpenNSFW2 0.19.0.
 # Windows: run setup_content_safety_windows.bat to create and verify it.
 # Explicit contentSafetyPython=PATH_TO_PYTHON_EXE overrides auto-selection.

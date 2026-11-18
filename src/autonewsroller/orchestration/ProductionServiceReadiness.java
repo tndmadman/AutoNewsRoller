@@ -4,6 +4,7 @@ import autonewsroller.config.NewsConfig;
 import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.safety.SafetyPython;
 import autonewsroller.safety.PersistentSafetyScanner;
+import autonewsroller.safety.SafetyGpuConfig;
 import autonewsroller.util.Json;
 import java.io.IOException;
 import java.net.URI;
@@ -151,7 +152,9 @@ public final class ProductionServiceReadiness {
         Path tool=root.resolve(script);
         if(!Files.isRegularFile(tool))
             throw new IllegalStateException("SAFETY_SCANNER_UNAVAILABLE: missing "+detector+" scanner");
-        String key=root.toAbsolutePath()+"|"+python+"|"+script+"|"+ContentSafetyService.POLICY;
+        SafetyGpuConfig gpu=SafetyGpuConfig.from(root,cfg);
+        String key=root.toAbsolutePath()+"|"+python+"|"+script+"|"+ContentSafetyService.POLICY+
+                "|"+gpu.mode()+"|"+gpu.parityManifest()+"|"+gpu.contextOnnx();
         long now=System.currentTimeMillis();
         HealthCache last=CACHE.get(key);
         if(last!=null&&last.expiresAt>now){

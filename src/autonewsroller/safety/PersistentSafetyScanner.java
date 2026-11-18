@@ -27,32 +27,74 @@ public final class PersistentSafetyScanner {
     private PersistentSafetyScanner(){}
     static Map<String,Object> scan(Path root,NewsConfig cfg,String script,String kind,
             Path input,String sha,int timeoutSeconds)throws Exception{
-        Client client=client(root,cfg,script);
-        return client.scan(kind,input,sha,timeoutSeconds,
-                SafetyScanProgress.current());
+        SafetyGpuConfig selection=SafetyGpuConfig.from(root,cfg);
+        if(!selection.enabled())
+            return client(root,cfg,script,selection,false).scan(kind,input,sha,timeoutSeconds,
+                    SafetyScanProgress.current());
+        try{
+            selection.requireArtifacts();
+            long waiting=System.nanoTime();
+            try(autonewsroller.gpu.GpuLane lane=autonewsroller.gpu.GpuLane.exclusiveBounded(
+                    root.resolve("output/runtime/gpu_ai_lane.lock"),
+                    java.time.Duration.ofSeconds(selection.waitSeconds()))){
+                long waitedMs=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-waiting);
+                Map<String,Object>result=client(root,cfg,script,selection,true)
+                        .scan(kind,input,sha,timeoutSeconds,SafetyScanProgress.current());
+                result.put("gpuWaitMillis",waitedMs);
+                return result;
+            }
+        }catch(Exception gpuFailure){
+            if(selection.required())throw new IOException("CUDA REQUIRED: "+
+                    gpuFailure.getClass().getSimpleName()+": "+gpuFailure.getMessage(),gpuFailure);
+            // Prefer may fall back ONLY after a transport/provider failure, never
+            // an UNSAFE or REVIEW_REQUIRED verdict (those return normally).
+            Map<String,Object>fallback=client(root,cfg,script,selection,false)
+                    .scan(kind,input,sha,timeoutSeconds,SafetyScanProgress.current());
+            fallback.put("backend","cpu-fallback");
+            fallback.put("fallbackReason",gpuFailure.getClass().getSimpleName()+": "+
+                    String.valueOf(gpuFailure.getMessage()).substring(0,
+                    Math.min(180,String.valueOf(gpuFailure.getMessage()).length())));
+            return fallback;
+        }
     }
     public static Map<String,Object> health(Path root,NewsConfig cfg,String script)throws Exception{
-        return client(root,cfg,script).health();
+        SafetyGpuConfig selection=SafetyGpuConfig.from(root,cfg);
+        if(selection.enabled()){
+            try{
+                selection.requireArtifacts();
+                return client(root,cfg,script,selection,true).health();
+            }catch(Exception gpuFailure){
+                if(selection.required())throw gpuFailure;
+            }
+        }
+        return client(root,cfg,script,selection,false).health();
     }
-    private static Client client(Path root,NewsConfig cfg,String script)throws Exception{
-        String python=SafetyPython.resolve(root,cfg);
+    private static Client client(Path root,NewsConfig cfg,String script,
+            SafetyGpuConfig selection,boolean cuda)throws Exception{
+        String python=cuda?SafetyPython.resolveGpu(root,cfg):SafetyPython.resolve(root,cfg);
         Path file=root.resolve(script).toAbsolutePath().normalize();
         if(!Files.isRegularFile(file))throw new IOException("mandatory scanner missing: "+script);
-        String key=root.toAbsolutePath().normalize()+"|"+python+"|"+file;
+        String key=root.toAbsolutePath().normalize()+"|"+python+"|"+file+
+                "|"+cuda+"|"+selection.device()+"|"+selection.parityManifest()+
+                "|"+selection.contextOnnx();
         Client c=CLIENTS.computeIfAbsent(key,ignored->new Client(root,python,file,
-                cfg.getInt("contentSafetyScannerStartupSeconds",180)));
+                cfg.getInt("contentSafetyScannerStartupSeconds",180),selection,cuda));
         return c;
     }
     private static final class Client {
         private final Path root,script;
         private final String python;
         private final int startupSeconds;
+        private final SafetyGpuConfig selection;
+        private final boolean cuda;
         private Process process;
         private BufferedReader stdout;
         private BufferedWriter stdin;
         private Map<String,Object>ready;
-        Client(Path root,String python,Path script,int startupSeconds){
+        Client(Path root,String python,Path script,int startupSeconds,
+                SafetyGpuConfig selection,boolean cuda){
             this.root=root.toAbsolutePath();this.python=python;this.script=script;
+            this.selection=selection;this.cuda=cuda;
             if(startupSeconds<5||startupSeconds>900)
                 throw new IllegalArgumentException("contentSafetyScannerStartupSeconds outside 5..900");
             this.startupSeconds=startupSeconds;
@@ -69,7 +111,7 @@ public final class PersistentSafetyScanner {
             String id="req"+REQUESTS.incrementAndGet();
             String detector=String.valueOf(ready.get("detector"));
             String phase="NudeNet".equals(detector)?"CONTROLLER_NUDENET":"CONTROLLER_OPENNSFW2";
-            if(!jobId.isBlank())SafetyScanProgress.update(jobId,phase,0,0,"cpu",
+            if(!jobId.isBlank())SafetyScanProgress.update(jobId,phase,0,0,cuda?"cuda":"cpu",
                     process.pid(),0);
             try{
                 Map<String,Object>req=Map.of("id",id,"operation",kind,
@@ -88,7 +130,7 @@ public final class PersistentSafetyScanner {
                         if(done<0||total<0||done>total&&total>0)
                             throw new IOException("invalid scanner progress");
                         if(!jobId.isBlank())SafetyScanProgress.update(jobId,phase,done,total,
-                                "cpu",process.pid(),doubleNumber(msg.get("elapsedSeconds")));
+                                cuda?"cuda":"cpu",process.pid(),doubleNumber(msg.get("elapsedSeconds")));
                     }else if("result".equals(event)){
                         Map<String,Object>result=Json.object(msg.get("result"));
                         if(!Set.of("SAFE","UNSAFE","REVIEW_REQUIRED").contains(result.get("status")))
@@ -96,11 +138,12 @@ public final class PersistentSafetyScanner {
                                     String.valueOf(result.getOrDefault("reason","malformed result")));
                         if(!detector.equals(result.get("detector"))||
                                 !ready.get("version").equals(result.get("version"))||
-                                !"cpu".equals(result.get("backend")))
+                                !(cuda?"cuda":"cpu").equals(result.get("backend"))||
+                                (cuda&&number(result.get("cudaNodes"))<1))
                             throw new IOException("resident scanner identity/backend mismatch");
                         if(!jobId.isBlank())SafetyScanProgress.update(jobId,phase,
                                 number(result.get("framesInspected")),
-                                number(result.get("framesExpected")),"cpu",
+                                number(result.get("framesExpected")),cuda?"cuda":"cpu",
                                 process.pid(),doubleNumber(result.get("elapsedSeconds")));
                         return result;
                     }else throw new IOException("unexpected scanner event");
@@ -114,7 +157,16 @@ public final class PersistentSafetyScanner {
         private void ensureRunning()throws Exception{
             if(process!=null&&process.isAlive())return;
             close();
-            ProcessBuilder pb=new ProcessBuilder(python,script.toString(),"--serve");
+            ArrayList<String>command=new ArrayList<>(List.of(python,script.toString(),"--serve"));
+            if(cuda){
+                command.addAll(List.of("--backend","cuda",
+                        "--cuda-device",Integer.toString(selection.device()),
+                        "--parity-manifest",selection.parityManifest().toString(),
+                        "--vram-reserve-mb",Integer.toString(selection.reserveMiB())));
+                if(script.getFileName().toString().equals("content_context_scan.py"))
+                    command.addAll(List.of("--onnx-model",selection.contextOnnx().toString()));
+            }
+            ProcessBuilder pb=new ProcessBuilder(command);
             pb.directory(root.toFile());
             pb.environment().put("TF_CPP_MIN_LOG_LEVEL","2");
             pb.environment().put("PYTHONUNBUFFERED","1");
@@ -127,8 +179,9 @@ public final class PersistentSafetyScanner {
                 if(!"ready".equals(ready.get("event"))||
                         !"READY".equals(ready.get("status"))||
                         !ContentSafetyService.POLICY.equals(ready.get("policyVersion"))||
-                        !"cpu".equals(ready.get("backend"))||
-                        !"CPU".equals(ready.get("provider"))||
+                        !(cuda?"cuda":"cpu").equals(ready.get("backend"))||
+                        !(cuda?"CUDAExecutionProvider":"CPU").equals(ready.get("provider"))||
+                        (cuda&&number(ready.get("cudaNodes"))<1)||
                         !Set.of("NudeNet","OpenNSFW2").contains(ready.get("detector"))||
                         !("NudeNet".equals(ready.get("detector"))?"3.4.2":"0.19.0")
                             .equals(ready.get("version")))

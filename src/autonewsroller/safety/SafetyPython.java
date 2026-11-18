@@ -13,6 +13,26 @@ import java.util.Locale;
 public final class SafetyPython {
     private SafetyPython() {}
 
+    /** A separate GPU virtual environment; the pinned CPU one is never replaced. */
+    public static String resolveGpu(Path root, NewsConfig cfg)throws IOException{
+        String configured=cfg.get("contentSafetyGpuPython","auto");
+        Path interpreter;
+        if(configured.isBlank()||configured.equalsIgnoreCase("auto")){
+            boolean windows=System.getProperty("os.name","")
+                    .toLowerCase(Locale.ROOT).contains("win");
+            interpreter=root.toAbsolutePath().resolve(windows
+                    ?Path.of(".venv-safety-gpu","Scripts","python.exe")
+                    :Path.of(".venv-safety-gpu","bin","python"));
+        }else{
+            interpreter=Path.of(configured);
+            if(!interpreter.isAbsolute())interpreter=root.resolve(interpreter);
+        }
+        interpreter=interpreter.toAbsolutePath().normalize();
+        if(!Files.isRegularFile(interpreter))
+            throw new IOException("dedicated CUDA scanner environment missing: "+interpreter);
+        return interpreter.toString();
+    }
+
     public static String resolve(Path root, NewsConfig cfg) throws IOException {
         String configured = cfg.get("contentSafetyPython", "auto");
         Path project = root.toAbsolutePath().normalize();

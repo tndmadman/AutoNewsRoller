@@ -40,6 +40,7 @@ public final class ContentSafetyService {
                     cfg.getInt("contentSafetyImageTimeoutSeconds",120);
             // Independent, mandatory models. Neither can be skipped by a
             // worker configuration flag. Any model failure fails the whole job.
+            SafetyGpuConfig.from(root,cfg);
             SafetyScanProgress.stage("CONTROLLER_NUDENET");
             Map<String,Object>anatomy=runDetector("tools/content_safety_scan.py",kind,input,limit);
             SafetyScanProgress.stage("CONTROLLER_OPENNSFW2");
@@ -85,7 +86,8 @@ public final class ContentSafetyService {
     }
 
     private Map<String,Object> runDetector(String scriptName,String kind,Path input,int limit)throws Exception{
-        String python=SafetyPython.resolve(root,cfg);
+        SafetyGpuConfig gpu=SafetyGpuConfig.from(root,cfg);
+        String python=gpu.required()?SafetyPython.resolveGpu(root,cfg):SafetyPython.resolve(root,cfg);
         Path script=root.resolve(scriptName).toAbsolutePath();
         if(!Files.isRegularFile(script))throw new IOException("missing mandatory scanner: "+scriptName);
         if(cfg.getBool("contentSafetyScannerPersistent",true)){
@@ -94,6 +96,7 @@ public final class ContentSafetyService {
             SafetyTelemetry.record(root,scriptName,kind,hash(input),result);
             return result;
         }
+        if(gpu.enabled())throw new IOException("CUDA requires the persistent scanner protocol");
         Path log=Files.createTempFile("anr-content-scan-", ".stderr.log");
         try{
             ProcessBuilder pb=new ProcessBuilder(python,script.toString(),"--"+kind,input.toAbsolutePath().toString());
