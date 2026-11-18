@@ -551,7 +551,7 @@ public final class NewsPipeline {
                 }
                 requiredGeneratedScenes.addAll(eligible);
 
-                int maxRetries=Math.max(0,Math.min(4,cfg.getInt("visualImageReviewRetries",2)));
+                int maxRetries=ImageRetryCoordinator.retryCount(cfg.getInt("visualImageReviewRetries",2));
                 int requestedWidth=cfg.getInt("imageWidth",ComfyImageGenerator.DEFAULT_WIDTH),requestedHeight=cfg.getInt("imageHeight",ComfyImageGenerator.DEFAULT_HEIGHT);
                 int requestedSteps=cfg.getInt("imageSteps",ComfyImageGenerator.DEFAULT_STEPS);
                 double requestedCfg=cfg.getDouble("imageCfg",ComfyImageGenerator.DEFAULT_CFG);
@@ -623,9 +623,11 @@ public final class NewsPipeline {
                             }
                         }
                     }
-                    for(int attempt=0;attempt<=maxRetries;attempt++){
-                        String prompt=ComfyPromptProfiles.positive(chosen,memeImage,attempt);
-                        long seed=Integer.toUnsignedLong(Objects.hash(c.id,replace,usedCheckpoint,attempt));
+                    for(ImageRetryCoordinator.Attempt next:ImageRetryCoordinator.plan(
+                            chosen,memeImage,maxRetries,c.id,replace,usedCheckpoint)){
+                        int attempt=next.number()-1;
+                        String prompt=next.prompt();
+                        long seed=next.seed();
                         Path generated=visuals.resolve(String.format("%02d_comfy_attempt_%02d.png",replace,attempt+1));
                         String generating="COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" attempt="+(attempt+1)+" checkpoint="+usedCheckpoint;
                         events.emit(worker,slot,PipelineStage.VISUALS,generating);
@@ -643,8 +645,13 @@ public final class NewsPipeline {
                                 cfg.getBool("visualPostGenerationChecks",true)?acceptedHashes:List.of());
                         Map<String,Object>review=new LinkedHashMap<>(inspection.toMap());
                         review.put("sceneIndex",replace);review.put("attempt",attempt+1);review.put("seed",seed);
+                        review.put("checkpoint",usedCheckpoint);review.put("prompt",prompt);
+                        review.put("negativePrompt",negativePrompt);
+                        review.put("accepted",false);
                         review.put("factIds",chosen.data().getOrDefault("factIds",List.of()));
                         if(!inspection.accepted()){
+                            review.put("status","REJECTED_QUALITY");
+                            review.put("rejectionReason",inspection.reason());
                             imageReviews.add(review);
                             events.emit(worker,slot,PipelineStage.VISUALS,"IMAGE REJECTED scene="+replace+" reason="+inspection.reason());
                             Files.deleteIfExists(generated);
@@ -653,6 +660,8 @@ public final class NewsPipeline {
                         Map<String,Object>nudity=safety.inspectImage(generated);
                         review.put("contentSafety",nudity);
                         if(!"SAFE".equals(nudity.get("status"))){
+                            review.put("status","REJECTED_IMAGE_SAFETY");
+                            review.put("rejectionReason",String.valueOf(nudity.get("status")));
                             imageReviews.add(review);
                             unsafeImageRejections++;
                             events.emit(worker,slot,PipelineStage.VISUALS,"IMAGE CONTENT SAFETY REJECTED scene="+replace+" status="+nudity.get("status"));
@@ -666,14 +675,14 @@ public final class NewsPipeline {
                                 ?l.stream().map(String::valueOf).toList():List.of();
                         OllamaVisionReviewer.Result semantic=visionReviewer.review(generated,chosen.prompt(),expected,forbidden);
                         review.put("vision",semantic.toMap());
-                        review.put("accepted",semantic.accepted());
-                        imageReviews.add(review);
                         if(!semantic.accepted()){
+                            review.put("status","REJECTED_SEMANTIC");
+                            review.put("rejectionReason",semantic.reason());
+                            imageReviews.add(review);
                             events.emit(worker,slot,PipelineStage.VISUALS,"IMAGE VISION WARNING scene="+replace+" reason="+semantic.reason());
                             Files.deleteIfExists(generated);
                             continue;
                         }
-                        acceptedHashes.add(inspection.perceptualHash());
                         Path overlay=visuals.resolve(String.format("%02d_overlay_%02d.png",replace,attempt+1));
                         cards.renderOverlay(chosen,overlay,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
                         Path composed=visuals.resolve(String.format("%02d_post_%02d.png",replace,attempt+1));
@@ -685,12 +694,22 @@ public final class NewsPipeline {
                         review.put("composedSafety",composedSafety);
                         review.put("backgroundSafety",backgroundSafety);
                         if(!"SAFE".equals(composedSafety.get("status"))||!"SAFE".equals(backgroundSafety.get("status"))){
+                            review.put("status","REJECTED_COMPOSITION_SAFETY");
+                            review.put("rejectionReason","composed="+composedSafety.get("status")+
+                                    "; background="+backgroundSafety.get("status"));
+                            imageReviews.add(review);
                             unsafeImageRejections++;
                             Files.deleteIfExists(generated);Files.deleteIfExists(composed);Files.deleteIfExists(background);
                             Files.deleteIfExists(overlay);
                             events.emit(worker,slot,PipelineStage.VISUALS,"POST-COMPOSITION SAFETY REJECTED scene="+replace);
+                            if("SCANNER_UNAVAILABLE".equals(composedSafety.get("status"))
+                                    ||"SCANNER_UNAVAILABLE".equals(backgroundSafety.get("status")))
+                                throw new IllegalStateException("SCANNER_UNAVAILABLE: cannot approve composed image");
                             continue;
                         }
+                        review.put("accepted",true);review.put("status","ACCEPTED");
+                        imageReviews.add(review);
+                        acceptedHashes.add(inspection.perceptualHash());
                         imgs.set(replace,composed);
                         renderBackgrounds.set(replace,background);
                         renderOverlays.set(replace,overlay);
@@ -776,7 +795,7 @@ public final class NewsPipeline {
                 cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
         Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v5-editorial");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30),classic);List<Double>sceneWeights=!classic&&cfg.getBool("visualNarrationSyncEnabled",true)?storyboard.durations():plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,renderAudio,render,encoder,cfg.get("captions","sentence"),script.narration(),cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null,disclosure);
         events.emit(worker,slot,PipelineStage.RENDER,"ENCODER ACTUAL="+rr.encoder());
-        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,renderAudio,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();Map<String,Object>visualQuality=VisualQualityReport.create(cfg.get("ffmpegCommand","ffmpeg"),render,slotDir,finalSeconds,storyboard,cfg.getBool("visualGenerateContactSheet",true),!"off".equalsIgnoreCase(cfg.get("captions","sentence")),classic);
+        Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,renderAudio,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();Map<String,Object>visualQuality=VisualQualityReport.create(cfg.get("ffmpegCommand","ffmpeg"),render,slotDir,finalSeconds,storyboard,cfg.getBool("visualGenerateContactSheet",true),!"off".equalsIgnoreCase(cfg.get("captions","sentence")),classic);
         visualQuality.put("imageInspections",imageReviews);
         visualQuality.put("acceptedComfyImages",comfyGenerated);
         visualQuality.put("unsafeImageRejections",unsafeImageRejections);
