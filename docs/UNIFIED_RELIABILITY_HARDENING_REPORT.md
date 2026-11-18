@@ -167,3 +167,14 @@
   so the test can continue checking manual posting and version preservation.
   This does not weaken the production HTTP approval gate or mean that the
   fixture passed a real scanner. Validation on the new commit is required.
+
+### Publication queue excludes legacy worker-only approval
+
+- The Command Center `TO_POST` filter, `toPost` counter, and safety-approved
+  counts now require a controller-generated approval origin in the persisted
+  archive manifest. A legacy worker-only approval is classified as unverified;
+  the video remains archived and earlier manual publication history remains.
+- Extended `SelfTest.testCommandCenterMediaReporting` with a separate,
+  isolated legacy-state fixture. It checks publication queue and counts, and
+  confirms that attempted manual posting remains blocked without independent
+  controller evidence. This test does not execute the actual detectors.

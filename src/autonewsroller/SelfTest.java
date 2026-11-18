@@ -1397,6 +1397,34 @@ public final class SelfTest {
         ok(((Number)completedCounts.get("toPost")).intValue()==1&&((Number)completedCounts.get("uploaded")).intValue()==0,
                 "newly completed local video enters the manual TO POST queue");
 
+        // Legacy worker-only approvals must remain in the historical archive,
+        // but may not appear as pending publishable media in counts or filters.
+        Path legacyState=dir.resolve("legacy-worker-only-state.json");
+        Map<String,Object>legacyRoot=Json.object(Json.read(mediaState));
+        Map<String,Object>legacyVideos=Json.object(legacyRoot.get("videos"));
+        for(var entry:legacyVideos.entrySet()){
+            Map<String,Object>legacyVersion=Json.object(entry.getValue());
+            Map<String,Object>legacyManifest=Json.object(legacyVersion.get("safetyManifest"));
+            legacyManifest.remove("approvalOrigin");
+            legacyVersion.put("safetyManifest",legacyManifest);
+            legacyVideos.put(entry.getKey(),legacyVersion);
+        }
+        legacyRoot.put("videos",legacyVideos);
+        Json.write(legacyState,legacyRoot);
+        CommandCenterStore legacy=new CommandCenterStore(legacyState,
+                BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null);
+        Map<String,Object>legacyCounts=Json.object(legacy.snapshot().get("counts"));
+        ok(((Number)legacyCounts.get("toPost")).intValue()==0
+                &&((Number)legacyCounts.get("safetyApproved")).intValue()==0
+                &&((Number)legacyCounts.get("safetyUnverified")).intValue()==1
+                &&((Number)legacy.boardStories(1,25,"TO_POST","",0).get("total")).intValue()==0,
+                "legacy worker-only approvals are preserved but excluded from publication queue");
+        boolean legacyPostingRejected=false;
+        try{legacy.setUploadStatus(cluster.id,true,"fixture-platform","legacy");}
+        catch(IllegalStateException expected){legacyPostingRejected=true;}
+        ok(legacyPostingRejected,
+                "legacy worker-only approved video cannot be newly marked posted");
+
         store.setUploadStatus(cluster.id,true,"TikTok","main account");
         Map<String,Object>uploadedSnapshot=store.snapshot();
         Map<String,Object>uploadedCounts=Json.object(uploadedSnapshot.get("counts"));

@@ -1372,9 +1372,9 @@ public final class CommandCenterStore {
         counts.put("verified",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("verified"))).count());
         counts.put("worthy",stories.values().stream().filter(CommandCenterStore::isActionableWorthy).count());
         counts.put("queued",countStatus("QUEUED"));counts.put("producing",countStatus("PRODUCING"));counts.put("complete",countStatus("COMPLETE")+countStatus("COMPLETE_HISTORY"));counts.put("hold",countStatus("HOLD"));counts.put("skipped",countStatus("SKIPPED"));counts.put("failed",countStatus("FAILED"));
-        counts.put("toPost",videos.values().stream().filter(v->"APPROVED_FOR_EXPORT".equals(v.get("safetyStatus"))&&!Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
-        counts.put("safetyApproved",videos.values().stream().filter(v->"APPROVED_FOR_EXPORT".equals(v.get("safetyStatus"))).count());
-        counts.put("safetyUnverified",videos.values().stream().filter(v->!"APPROVED_FOR_EXPORT".equals(v.getOrDefault("safetyStatus","NOT_SCANNED"))).count());
+        counts.put("toPost",videos.values().stream().filter(v->controllerApproved(v)&&!Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
+        counts.put("safetyApproved",videos.values().stream().filter(CommandCenterStore::controllerApproved).count());
+        counts.put("safetyUnverified",videos.values().stream().filter(v->!controllerApproved(v)).count());
         counts.put("safetyFailures",stories.values().stream().filter(v->String.valueOf(v.getOrDefault("error","")).contains("CONTENT_SAFETY")).count());
         counts.put("uploaded",videos.values().stream().filter(v->Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
         counts.put("scrapped",videos.values().stream().filter(v->Boolean.TRUE.equals(v.get("scrapped"))).count());
@@ -1734,9 +1734,16 @@ public final class CommandCenterStore {
     private static void resetFailureRetryState(Map<String,Object>m){
         m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("lastFailedStage");m.remove("failureType");m.remove("failureRecoverable");m.remove("recommendedAction");m.remove("leaseRecoveries");m.remove("productionEpoch");
     }
-    private static boolean isToPost(Map<String,Object>m){
+    private static boolean controllerApproved(Map<String,Object>v){
+        return "APPROVED_FOR_EXPORT".equals(v.get("safetyStatus"))
+                &&v.get("safetyManifest") instanceof Map<?,?> manifest
+                &&"CONTROLLER_INDEPENDENT_RESCAN".equals(
+                        Json.object(manifest).get("approvalOrigin"));
+    }
+    private boolean isToPost(Map<String,Object>m){
+        Map<String,Object>v=currentVideo(m);
         return "COMPLETE".equals(String.valueOf(m.get("status")))
-                &&"APPROVED_FOR_EXPORT".equals(m.get("safetyStatus"))
+                &&v!=null&&controllerApproved(v)
                 &&Boolean.TRUE.equals(m.getOrDefault("entryHasVideo",true))
                 &&!Boolean.TRUE.equals(m.get("uploaded"))
                 &&!Boolean.TRUE.equals(m.get("scrapped"));
