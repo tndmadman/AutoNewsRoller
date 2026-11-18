@@ -1,7 +1,7 @@
 name: Cross-platform validation
 on:
   push:
-    branches: [main, feature/news-video-pipeline, feature/political-framing-exposure-video, feature/rss-meme-ragebait-pipeline, fix/narrative-reviews-on-demand-20261110, integration/autonewsroller-5branch-illustrated-safe-retry-20261107 ]
+    branches: [main, feature/news-video-pipeline, feature/political-framing-exposure-video, feature/rss-meme-ragebait-pipeline, fix/narrative-reviews-on-demand-20261110, integration/autonewsroller-5branch-illustrated-safe-retry-20261107, integration/autonewsroller-unified-20261117 ]
   pull_request:
     branches: [main, integration/autonewsroller-5branch-illustrated-safe-retry-20261107]
 
@@ -75,6 +75,7 @@ jobs:
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
           java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
+          java -cp build/classes autonewsroller.visuals.ImageRetryCoordinatorSelfTest
           java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
           java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
           python -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/test_content_safety_scan.py tools/audit_historical_outputs.py
@@ -119,6 +120,7 @@ jobs:
           java -cp build/classes autonewsroller.video.VisualSmoke
           java -cp build/classes autonewsroller.video.PoliticalFramingSmoke
           java -cp build/classes autonewsroller.video.MemeSmoke
+          java -cp build/classes autonewsroller.audit.VideoAuditSelfTest
           java -cp build/classes autonewsroller.safety.ContentSafetyOverlaySmoke
 
   linux-headless:
@@ -157,6 +159,7 @@ jobs:
           java -cp build/classes autonewsroller.Main --self-test
           java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
           java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
+          java -cp build/classes autonewsroller.visuals.ImageRetryCoordinatorSelfTest
           python3 tools/test_historical_audit.py
           python3 tools/test_production_failures.py
           python3 -m py_compile tools/content_safety_scan.py tools/audit_historical_outputs.py
@@ -171,6 +174,7 @@ jobs:
           V5_LONG_SMOKE=true java -cp build/classes autonewsroller.video.VisualSmoke
           java -cp build/classes autonewsroller.video.PoliticalFramingSmoke
           java -cp build/classes autonewsroller.video.MemeSmoke
+          java -cp build/classes autonewsroller.audit.VideoAuditSelfTest
           java -cp build/classes autonewsroller.safety.ContentSafetyOverlaySmoke
       - uses: actions/upload-artifact@v4
         if: always()
