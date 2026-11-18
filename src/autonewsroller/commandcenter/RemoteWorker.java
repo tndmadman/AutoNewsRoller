@@ -198,16 +198,16 @@ public final class RemoteWorker {
             stage="UPLOAD";detail="Local output ready; awaiting controller acknowledgement";
             event("progress",Map.of("stage",stage,"detail",detail));
             if(!dryRun&&output.toString().toLowerCase(Locale.ROOT).endsWith(".mp4")){
-                Map<String,Object> upload=uploadVideo(jobId,claimId,output);
+                Map<String,Object> upload=uploadVideo(jobId,claimId,epoch,output);
                 event("progress",Map.of("stage","UPLOAD","detail","Video uploaded; final completion pending"));
                 Map<String,Object> complete=new LinkedHashMap<>();
-                complete.put("workerId",workerId);complete.put("claimId",claimId);complete.put("localPath",output.toString());complete.put("uploaded",upload);
+                complete.put("workerId",workerId);complete.put("claimId",claimId);complete.put("productionEpoch",epoch);complete.put("localPath",output.toString());complete.put("uploaded",upload);
                 complete.put("completedAt",Instant.now().toString());
                 Path sidecar=output.resolveSibling(output.getFileName()+".json");
                 if(Files.isRegularFile(sidecar))try{complete.put("sidecar",Json.read(sidecar));}catch(Exception ignored){}
                 post("/api/jobs/"+enc(jobId)+"/complete",complete);
             }else{
-                post("/api/jobs/"+enc(jobId)+"/complete",Map.of("workerId",workerId,"claimId",claimId,"dryRun",true,"localPath",output.toString(),"completedAt",Instant.now().toString()));
+                post("/api/jobs/"+enc(jobId)+"/complete",Map.of("workerId",workerId,"claimId",claimId,"productionEpoch",epoch,"dryRun",true,"localPath",output.toString(),"completedAt",Instant.now().toString()));
             }
             event("job-finish",Map.of("jobId",jobId,"result","COMPLETE","stage","COMPLETE","outputPath",output.toString()));
             System.out.println("Worker completed: "+currentTopic);
@@ -287,10 +287,12 @@ public final class RemoteWorker {
                         "candidate",prepared.toMap(),"analysisInputFingerprint",claimedHash));
         event("job-finish",Map.of("jobId",String.valueOf(job.get("jobId")),"result","COMPLETE","stage","POLITICAL_ANALYSIS"));
     }
-    private Map<String,Object> uploadVideo(String jobId,String claimId,Path file)throws Exception{
+    private Map<String,Object> uploadVideo(String jobId,String claimId,String epoch,Path file)throws Exception{
+        String sha=autonewsroller.safety.ContentSafetyService.hash(file);
         HttpRequest.Builder b=request("/api/jobs/"+enc(jobId)+"/video").timeout(Duration.ofMinutes(30))
                 .header("Content-Type","video/mp4").header("X-Filename",file.getFileName().toString())
-                .header("X-Worker-Id",workerId).header("X-Claim-Id",claimId);
+                .header("X-Worker-Id",workerId).header("X-Claim-Id",claimId)
+                .header("X-Production-Epoch",epoch).header("X-Media-Sha256",sha);
         HttpResponse<String> r=http.send(b.PUT(HttpRequest.BodyPublishers.ofFile(file)).build(),HttpResponse.BodyHandlers.ofString());
         if(r.statusCode()!=200)throw new IllegalStateException("video upload HTTP "+r.statusCode());
         lastContact=Instant.now();return Json.object(Json.parse(r.body()));

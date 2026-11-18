@@ -513,7 +513,7 @@ public final class CommandCenterStore {
         if(!currentJob.isBlank()){
             Map<String,Object>story=stories.get(currentJob);
             if(story!=null&&"PRODUCING".equals(String.valueOf(story.get("status")))&&workerId.equals(String.valueOf(story.get("assignedWorker")))
-                    &&claimMatches(story,String.valueOf(payload.getOrDefault("claimId","")))){
+                    &&activeLease(story,workerId,String.valueOf(payload.getOrDefault("claimId","")))){
                 renewLease(story);
             }else if(story!=null&&"ANALYZING".equals(String.valueOf(story.get("memeAnalysisStatus")))
                     &&workerId.equals(String.valueOf(story.get("memeAssignedWorker")))
@@ -845,6 +845,125 @@ public final class CommandCenterStore {
         if(recovered>0)persistQuiet();
     }
 
+
+    /**
+     * Strict network fencing. Legacy local overloads remain for existing in-process
+     * fixtures, but every HTTP callback must use this exact worker and claim.
+     */
+    public synchronized void requireActiveClaim(String jobId,String workerId,String claimId){
+        Map<String,Object>m=requireStory(jobId);
+        if(!activeLease(m,workerId,claimId))
+            throw new IllegalStateException("WORKER_LEASE_EXPIRED: inactive, expired or superseded claim");
+    }
+    private static boolean activeLease(Map<String,Object>m,String workerId,String claimId){
+        if(workerId==null||workerId.isBlank()||claimId==null||claimId.isBlank()
+                ||!"PRODUCING".equals(m.get("status"))
+                ||!workerId.equals(m.get("assignedWorker"))||!claimId.equals(m.get("claimId")))
+            return false;
+        try{return Instant.parse(String.valueOf(m.get("leaseUntil"))).isAfter(Instant.now());}
+        catch(Exception invalid){return false;}
+    }
+    private static boolean completedIdentity(Map<String,Object>m,String workerId,String claimId,
+            String epoch,String sha){
+        return workerId!=null&&!workerId.isBlank()&&claimId!=null&&!claimId.isBlank()
+                &&epoch!=null&&!epoch.isBlank()&&sha!=null&&!sha.isBlank()
+                &&workerId.equals(m.get("lastCompletedWorkerId"))
+                &&claimId.equals(m.get("lastCompletedClaimId"))
+                &&epoch.equals(m.get("lastCompletedEpoch"))
+                &&sha.equals(m.get("lastCompletedSha256"));
+    }
+    private static boolean validHash(String sha){return sha!=null&&sha.matches("[0-9a-f]{64}");}
+    public synchronized Map<String,Object> authorizeVideoTransfer(String jobId,String workerId,
+            String claimId,String epoch,String sha){
+        if(!validHash(sha))throw new IllegalArgumentException("Invalid approved media SHA-256");
+        Map<String,Object>m=requireStory(jobId);
+        if(completedIdentity(m,workerId,claimId,epoch,sha)){
+            String versionId=String.valueOf(m.getOrDefault("lastCompletedVersionId",""));
+            Map<String,Object>v=videos.get(versionId);
+            if(v==null)throw new IllegalStateException("Completed upload archive is missing");
+            if(stateDirty)persistRequired();
+            try{
+                Path existing=Path.of(String.valueOf(v.get("path")));
+                if(!Files.isRegularFile(existing)||!sha.equals(ContentSafetyService.hash(existing)))
+                    throw new IllegalStateException("Previously approved media is missing or has changed");
+            }catch(Exception invalid){throw new IllegalStateException("Approved upload cannot be replayed",invalid);}
+            return Map.of("completed",true,"filename",String.valueOf(v.getOrDefault("filename","")),
+                    "bytes",integer(v.get("bytes")));
+        }
+        requireActiveClaim(jobId,workerId,claimId);
+        if(!epoch.equals(String.valueOf(m.getOrDefault("productionEpoch",""))))
+            throw new IllegalStateException("WORKER_LEASE_EXPIRED: production epoch mismatch");
+        if(claimId.equals(m.get("uploadedClaimId"))
+                &&epoch.equals(m.get("uploadedEpoch"))
+                &&m.get("uploadedSha256")!=null&&!sha.equals(m.get("uploadedSha256")))
+            throw new IllegalStateException("An active claim cannot change its uploaded media identity");
+        return Map.of("completed",false);
+    }
+    /** Persist the approved-media identity before acknowledging a transfer. */
+    public synchronized Map<String,Object> recordVideoTransfer(String jobId,Path path,
+            String workerId,String claimId,String epoch,String sha,long bytes){
+        Map<String,Object>authorization=authorizeVideoTransfer(jobId,workerId,claimId,epoch,sha);
+        if(Boolean.TRUE.equals(authorization.get("completed")))return authorization;
+        Map<String,Object>m=requireStory(jobId);
+        if(m.get("uploadedSha256")!=null&&claimId.equals(m.get("uploadedClaimId"))
+                &&epoch.equals(m.get("uploadedEpoch"))&&sha.equals(m.get("uploadedSha256"))){
+            Path previous=Path.of(String.valueOf(m.get("serverVideo")));
+            if(!previous.equals(path)||!Files.isRegularFile(previous))
+                throw new IllegalStateException("Upload identity points to a missing or different file");
+            return Map.of("completed",false,"filename",String.valueOf(m.get("videoFilename")),
+                    "bytes",integer(m.get("videoBytes")));
+        }
+        m.put("uploadedSha256",sha);m.put("uploadedEpoch",epoch);m.put("uploadedClaimId",claimId);
+        videoUploaded(jobId,path,path.getFileName().toString(),bytes,workerId,claimId);
+        persistRequired();
+        return Map.of("completed",false,"filename",path.getFileName().toString(),"bytes",bytes);
+    }
+    public synchronized boolean completeAuthorized(String jobId,Map<String,Object>metadata){
+        Map<String,Object>m=requireStory(jobId);
+        String workerId=String.valueOf(metadata.getOrDefault("workerId",""));
+        String claimId=String.valueOf(metadata.getOrDefault("claimId",""));
+        String epoch=String.valueOf(metadata.getOrDefault("productionEpoch",""));
+        boolean dry=Boolean.TRUE.equals(metadata.get("dryRun"));
+        String sha="";
+        if(!dry&&metadata.get("sidecar") instanceof Map<?,?>sidecar){
+            Object audit=Json.object(sidecar).get("contentSafety");
+            if(audit instanceof Map<?,?>manifest)
+                sha=String.valueOf(Json.object(manifest).getOrDefault("videoSha256",""));
+        }
+        if(completedIdentity(m,workerId,claimId,epoch,sha)){
+            if(stateDirty)persistRequired();
+            return false;
+        }
+        requireActiveClaim(jobId,workerId,claimId);
+        if(!epoch.equals(String.valueOf(m.getOrDefault("productionEpoch",""))))
+            throw new IllegalStateException("WORKER_LEASE_EXPIRED: production epoch mismatch");
+        if(!dry&&(!validHash(sha)||!sha.equals(m.get("uploadedSha256"))
+                ||!epoch.equals(m.get("uploadedEpoch"))||!claimId.equals(m.get("uploadedClaimId"))))
+            throw new IllegalStateException("CONTENT_SAFETY: completion does not match the durable approved upload");
+        complete(jobId,metadata);
+        return true;
+    }
+    /** Get only the provenance stored by a previously committed completion. */
+    public synchronized Map<String,Object> committedOutput(String jobId,Map<String,Object>metadata){
+        Map<String,Object>m=requireStory(jobId);
+        String sha="";
+        if(metadata.get("sidecar") instanceof Map<?,?>sidecar
+                &&Json.object(sidecar).get("contentSafety") instanceof Map<?,?>audit)
+            sha=String.valueOf(Json.object(audit).getOrDefault("videoSha256",""));
+        if(!completedIdentity(m,String.valueOf(metadata.getOrDefault("workerId","")),
+                String.valueOf(metadata.getOrDefault("claimId","")),
+                String.valueOf(metadata.getOrDefault("productionEpoch","")),sha))
+            throw new IllegalStateException("Completed output identity mismatch");
+        Map<String,Object>v=videos.get(String.valueOf(m.get("lastCompletedVersionId")));
+        if(v==null||!(v.get("metadata") instanceof Map<?,?>saved))
+            throw new IllegalStateException("Completed video archive is missing");
+        Object sidecar=Json.object(saved).get("sidecar");
+        if(!(sidecar instanceof Map<?,?>))
+            throw new IllegalStateException("Completed video provenance is missing");
+        return Map.of("filename",String.valueOf(v.get("filename")),
+                "path",String.valueOf(v.get("path")),"sidecar",Json.object(sidecar));
+    }
+
     public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes){videoUploaded(jobId,path,filename,bytes,"","");}
     public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes,String workerId){videoUploaded(jobId,path,filename,bytes,workerId,"");}
     public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes,String workerId,String claimId){
@@ -856,6 +975,14 @@ public final class CommandCenterStore {
 
     public synchronized void complete(String jobId,Map<String,Object>metadata){
         Map<String,Object>m=requireStory(jobId);
+        // An acknowledged completion is immutable, including after a controller restart.
+        if(metadata.get("sidecar") instanceof Map<?,?> sc
+                &&Json.object(sc).get("contentSafety") instanceof Map<?,?> audit
+                &&completedIdentity(m,String.valueOf(metadata.getOrDefault("workerId","")),
+                    String.valueOf(metadata.getOrDefault("claimId","")),
+                    String.valueOf(metadata.getOrDefault("productionEpoch","")),
+                    String.valueOf(Json.object(audit).getOrDefault("videoSha256",""))))
+            return;
         if(!workerOwnsActiveJob(m,String.valueOf(metadata.getOrDefault("workerId","")),
                 String.valueOf(metadata.getOrDefault("claimId",""))))
             throw new IllegalStateException("Completion rejected: inactive or superseded worker claim.");
@@ -914,7 +1041,17 @@ public final class CommandCenterStore {
         v.put("safetyStatus",dryRun?"NOT_PUBLISHABLE_DRY_RUN":"APPROVED_FOR_EXPORT");
         v.put("safetyPolicyVersion",ContentSafetyService.POLICY);
         v.put("safetyManifest",manifest);
+        v.put("bytes",m.getOrDefault("videoBytes",0));
         copyPublicationState(m,v);videos.put(versionId,v);
+        // Keep the last committed output separate from the current temporary claim.
+        // This survives both restart and optional STANDARD/FRAMING handoff.
+        if(!String.valueOf(metadata.getOrDefault("claimId","")).isBlank()){
+            m.put("lastCompletedWorkerId",String.valueOf(metadata.getOrDefault("workerId","")));
+            m.put("lastCompletedClaimId",String.valueOf(metadata.get("claimId")));
+            m.put("lastCompletedEpoch",String.valueOf(m.getOrDefault("productionEpoch","")));
+            m.put("lastCompletedSha256",String.valueOf(manifest.getOrDefault("videoSha256","")));
+            m.put("lastCompletedVersionId",versionId);
+        }
         // Create the second job only AFTER the normal video has been fully recorded.
         // The standard version keeps its own id, path, metadata and uploaded flag.
         if(completedMode==ProductionMode.STANDARD&&pairFramingAfterStandard){
@@ -927,7 +1064,8 @@ public final class CommandCenterStore {
             m.put("detail","Both videos complete: original report and political framing review");
         }
         activatePendingMeme(m);
-        persistQuiet();emit("story",publicStory(m));emit("video",publicCopy(v));
+        // A completion must never be acknowledged before its archive is durable.
+        persistRequired();emit("story",publicStory(m));emit("video",publicCopy(v));
     }
 
     /**

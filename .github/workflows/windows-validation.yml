@@ -76,6 +76,7 @@ jobs:
         shell: cmd
         run: |
           batch_create_news_videos_windows.bat --self-test
+          java -cp build/classes autonewsroller.commandcenter.ControllerRecoverySelfTest
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
           java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
@@ -167,6 +168,7 @@ jobs:
           python3 tools/test_historical_audit.py
           python3 tools/test_production_failures.py
           python3 -m py_compile tools/content_safety_scan.py tools/audit_historical_outputs.py
+          java -cp build/classes autonewsroller.commandcenter.ControllerRecoverySelfTest
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264
       - name: V5 FFmpeg render and actual MP4 contact sheet

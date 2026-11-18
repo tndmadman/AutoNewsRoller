@@ -433,7 +433,7 @@ function renderStories(){
   renderPagination();
 }
 function failurePanelHtml(s,status){
-  if(status!=="FAILED"&&!(status==="QUEUED"&&num(s.failureCount)>0))return "";
+  if(status!=="FAILED")return "";
   const retryPending=status==="QUEUED";
   const attempts=Array.isArray(s.productionAttempts)?s.productionAttempts:[];
   const recent=attempts.slice(-5).reverse().map(a=>{

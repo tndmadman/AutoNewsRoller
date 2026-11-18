@@ -344,6 +344,8 @@ public final class CommandCenterServer {
                 case "progress"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
                     Map<String,Object>b=bodyObject(x);
+                    store.requireActiveClaim(id,String.valueOf(b.getOrDefault("workerId","")),
+                            String.valueOf(b.getOrDefault("claimId","")));
                     autonewsroller.orchestration.PipelineStage stage;
                     try{stage=autonewsroller.orchestration.PipelineStage.valueOf(String.valueOf(b.getOrDefault("stage","VERIFY")));}catch(Exception e){stage=autonewsroller.orchestration.PipelineStage.VERIFY;}
                     store.progress(id,new autonewsroller.orchestration.WorkerState(1,1,stage,String.valueOf(b.getOrDefault("detail","")),Instant.now()),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")));
@@ -351,30 +353,68 @@ public final class CommandCenterServer {
                 }
                 case "video"->{
                     if(!"PUT".equalsIgnoreCase(x.getRequestMethod())&&!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    String filename=sanitizeFilename(x.getRequestHeaders().getFirst("X-Filename"));
-                    if(filename.isBlank())filename=id+".mp4";
+                    String workerId=String.valueOf(x.getRequestHeaders().getFirst("X-Worker-Id"));
+                    String claimId=String.valueOf(x.getRequestHeaders().getFirst("X-Claim-Id"));
+                    String epoch=String.valueOf(x.getRequestHeaders().getFirst("X-Production-Epoch"));
+                    String sha=String.valueOf(x.getRequestHeaders().getFirst("X-Media-Sha256")).toLowerCase(Locale.ROOT);
+                    store.authorizeVideoTransfer(id,workerId,claimId,epoch,sha);
                     Path dir=root.resolve("output/command_center/videos");Files.createDirectories(dir);
-                    Path out=unique(dir,id+"_"+filename);
-                    try(InputStream in=x.getRequestBody();OutputStream os=Files.newOutputStream(out,StandardOpenOption.CREATE_NEW)){in.transferTo(os);}
-                    long bytes=Files.size(out);
-                    try{store.videoUploaded(id,out,out.getFileName().toString(),bytes,
-                            String.valueOf(x.getRequestHeaders().getFirst("X-Worker-Id")==null?"":x.getRequestHeaders().getFirst("X-Worker-Id")),
-                            String.valueOf(x.getRequestHeaders().getFirst("X-Claim-Id")==null?"":x.getRequestHeaders().getFirst("X-Claim-Id")));}
-                    catch(RuntimeException e){Files.deleteIfExists(out);throw e;}
-                    json(x,200,Map.of("ok",true,"filename",out.getFileName().toString(),"bytes",bytes));
+                    // Stable media name: repeat requests never allocate another version/file.
+                    String name="job-"+autonewsroller.util.Hashing.sha256(id).substring(0,20)+"_"+
+                            epoch.replaceAll("[^A-Za-z0-9_-]","")+"_"+
+                            sha+".mp4";
+                    Path out=dir.resolve(name);
+                    Path staging=Files.createTempFile(dir,".incoming-",".part");
+                    try{
+                        long bytes=0;
+                        try(InputStream in=x.getRequestBody();OutputStream os=Files.newOutputStream(staging)){
+                            byte[] buffer=new byte[65536];int count;
+                            while((count=in.read(buffer))!=-1){
+                                bytes+=count;
+                                if(bytes>2147483648L)throw new IllegalArgumentException("Video exceeds 2 GiB upload limit");
+                                os.write(buffer,0,count);
+                            }
+                        }
+                        if(bytes<=0||!sha.equals(ContentSafetyService.hash(staging)))
+                            throw new IllegalStateException("Uploaded bytes do not match approved media SHA-256");
+                        Map<String,Object>authorized=store.authorizeVideoTransfer(id,workerId,claimId,epoch,sha);
+                        if(Boolean.TRUE.equals(authorized.get("completed"))){
+                            Map<String,Object>result=new LinkedHashMap<>(authorized);
+                            result.put("ok",true);json(x,200,result);break;
+                        }
+                        if(Files.exists(out)){
+                            if(!Files.isRegularFile(out)||Files.isSymbolicLink(out)
+                                    ||!sha.equals(ContentSafetyService.hash(out)))
+                                throw new IllegalStateException("Existing upload identity has different bytes");
+                        }else{
+                            try{Files.move(staging,out);}
+                            catch(FileAlreadyExistsException collision){
+                                if(!Files.isRegularFile(out)||!sha.equals(ContentSafetyService.hash(out)))
+                                    throw new IllegalStateException("Concurrent upload bytes differ",collision);
+                            }
+                        }
+                        Map<String,Object>result=new LinkedHashMap<>(
+                                store.recordVideoTransfer(id,out,workerId,claimId,epoch,sha,bytes));
+                        result.put("ok",true);json(x,200,result);
+                    }finally{Files.deleteIfExists(staging);}
                 }
                 case "complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    Map<String,Object>b=bodyObject(x);store.complete(id,b);
-                    Object sidecar=b.get("sidecar");if(sidecar!=null){
-                        Map<String,Object>d=store.storyDetail(id);String file=String.valueOf(d.getOrDefault("videoFilename",id+".mp4"));
-                        Json.write(root.resolve("output/command_center/videos").resolve(file+".json"),sidecar);
+                    Map<String,Object>b=bodyObject(x);
+                    boolean committed=store.completeAuthorized(id,b);
+                    if(!Boolean.TRUE.equals(b.get("dryRun"))){
+                        // Use the controller's committed provenance, never replay-supplied data.
+                        Map<String,Object>output=store.committedOutput(id,b);
+                        Json.write(Path.of(String.valueOf(output.get("path"))+".json"),output.get("sidecar"));
                     }
-                    json(x,200,Map.of("ok",true));
+                    json(x,200,Map.of("ok",true,"alreadyCompleted",!committed));
                 }
                 case "fail"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    Map<String,Object>b=bodyObject(x);store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")),String.valueOf(b.getOrDefault("failureCode","")));json(x,200,Map.of("ok",true));
+                    Map<String,Object>b=bodyObject(x);
+                    store.requireActiveClaim(id,String.valueOf(b.getOrDefault("workerId","")),
+                            String.valueOf(b.getOrDefault("claimId","")));
+                    store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")),String.valueOf(b.getOrDefault("failureCode","")));json(x,200,Map.of("ok",true));
                 }
                 case "meme-complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}

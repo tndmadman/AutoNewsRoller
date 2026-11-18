@@ -74,6 +74,7 @@ public final class SelfTest {
         testFeedTransportResilience(root);
         testClusterAndVerify(a);
         testCommandCenterQueue(a);
+        passed+=autonewsroller.commandcenter.ControllerRecoverySelfTest.run();
         testStoryBoardPagination();
         testStoryBoardApi(root);
         testCommandCenterAssistant();
@@ -2791,7 +2792,8 @@ public final class SelfTest {
         ok(pipelineSource.contains("audit.put(\"hook\",script.hook())")&&
                         pipelineSource.contains("openingVisualType")&&
                         pipelineSource.contains("BroadcastTheme.PACKAGE_ID")&&
-                        pipelineSource.contains("ComfyPromptProfiles.positive(chosen,memeImage,attempt)")&&
+                        pipelineSource.contains("ImageRetryCoordinator.plan(")&&
+                        pipelineSource.contains("String prompt=next.prompt()")&&
                         pipelineSource.contains("ComfyPromptProfiles.negative(cfg,chosen,memeImage)")&&
                         profilesSource.contains("assertNoExcludedConceptInPositive(item,prompt)")&&
                         profilesSource.contains("unmistakably two-dimensional ink-and-gouache editorial illustration")&&
