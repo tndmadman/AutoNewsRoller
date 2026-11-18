@@ -97,3 +97,25 @@
   production deployment, branch deletion or main merge is performed.
 
 **Release status: NOT READY.**
+
+## Controller-owned approval gate — follow-up change
+
+- HTTP `/api/jobs/{id}/complete` first resolves the exact controller-stored
+  upload identity under the current worker claim and production epoch.
+- Before a new non-dry-run completion, the controller executes both mandatory
+  detector processes over the uploaded MP4, verifies the complete decoded-frame
+  and AIGC evidence, and audits encoded video, audio, frame rate, resolution,
+  synchronization and audible audio with FFprobe/FFmpeg.
+- The controller replaces worker approval metadata with its own
+  `CONTROLLER_INDEPENDENT_RESCAN` result, binds it to the received SHA-256 and
+  persists the result with the completed version. Repeated identical completion
+  acknowledgements reuse the already committed identity without rescanning.
+- A missing scanner, detector failure, bad media, invalid policy or changed
+  bytes blocks completion. The upload may remain staged, but is not publishable.
+- `ControllerHttpRecoverySelfTest` now sends a forged SAFE completion and
+  checks that a scanner-less isolated controller rejects it and does not serve
+  the unapproved MP4. This fixture is not a genuine detector scan.
+- **Validation:** This implementation must pass exact-head Windows/Linux CI.
+  Neither live detector execution nor real hardware safety approval is claimed
+  by this code-only change. Historical manifests, controller restart during
+  rescanning, and media-service calibration remain separate release gates.

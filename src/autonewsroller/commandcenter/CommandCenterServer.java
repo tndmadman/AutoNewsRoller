@@ -3,6 +3,7 @@ package autonewsroller.commandcenter;
 import autonewsroller.config.NewsConfig;
 import autonewsroller.config.SourceConfig;
 import autonewsroller.orchestration.NewsPipeline;
+import autonewsroller.audit.VideoAudit;
 import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.safety.SafetyPython;
 import autonewsroller.util.Json;
@@ -403,7 +404,18 @@ public final class CommandCenterServer {
                 }
                 case "complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    Map<String,Object>b=bodyObject(x);
+                    Map<String,Object>b=new LinkedHashMap<>(bodyObject(x));
+                    if(!Boolean.TRUE.equals(b.get("dryRun"))){
+                        Path uploaded=store.pendingMediaForControllerApproval(id,b);
+                        if(uploaded!=null){
+                            Map<String,Object>sidecar=new LinkedHashMap<>(Json.object(b.get("sidecar")));
+                            Map<String,Object>workerManifest=Json.object(sidecar.get("contentSafety"));
+                            String expectedSha=String.valueOf(workerManifest.get("videoSha256"));
+                            Map<String,Object>controllerManifest=approveOnController(uploaded,expectedSha);
+                            sidecar.put("contentSafety",controllerManifest);
+                            b.put("sidecar",sidecar);
+                        }
+                    }
                     boolean committed=store.completeAuthorized(id,b);
                     if(!Boolean.TRUE.equals(b.get("dryRun"))){
                         // Use the controller's committed provenance, never replay-supplied data.
@@ -462,6 +474,37 @@ public final class CommandCenterServer {
         }catch(IllegalArgumentException e){json(x,404,Map.of("error",safe(e.getMessage())));}
         catch(IllegalStateException e){json(x,409,Map.of("error",safe(e.getMessage())));}
         catch(Exception e){json(x,500,Map.of("error",safe(e.getMessage())));}
+    }
+
+    /**
+     * Mandatory, independent controller trust boundary. An upload and a worker
+     * manifest remain non-publishable until both actual local detectors and
+     * the encoded-stream audit succeed against the exact received bytes.
+     */
+    private Map<String,Object> approveOnController(Path media,String expectedSha)throws Exception{
+        if(!expectedSha.equals(ContentSafetyService.hash(media)))
+            throw new IllegalStateException("CONTENT_SAFETY: controller received different bytes");
+        Map<String,Object>scan=new ContentSafetyService(root,cfg).inspectVideo(media);
+        if(!"SAFE".equals(scan.get("status")))
+            throw new IllegalStateException("CONTENT_SAFETY: controller scan blocked approval: "+
+                    safe(String.valueOf(scan.getOrDefault("reason",scan.get("status")))));
+        Map<String,Object>encoded=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),
+                cfg.get("ffmpegCommand","ffmpeg")).auditUploaded(media,
+                cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),
+                cfg.getInt("videoFps",30));
+        if(!expectedSha.equals(ContentSafetyService.hash(media)))
+            throw new IllegalStateException("CONTENT_SAFETY: media changed during controller approval");
+        Map<String,Object>approved=new LinkedHashMap<>();
+        approved.put("status","APPROVED_FOR_EXPORT");
+        approved.put("policyVersion",ContentSafetyService.POLICY);
+        approved.put("videoSha256",expectedSha);
+        approved.put("finalVideoAudit",scan);
+        approved.put("inputs",List.of());
+        approved.put("createdAt",Instant.now().toString());
+        approved.put("approvalOrigin","CONTROLLER_INDEPENDENT_RESCAN");
+        approved.put("controllerEncodedAudit",encoded);
+        ContentSafetyService.verify(media,approved,false);
+        return approved;
     }
 
     private void videos(HttpExchange x)throws IOException{

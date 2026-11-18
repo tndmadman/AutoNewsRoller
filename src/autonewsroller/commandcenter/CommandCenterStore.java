@@ -922,6 +922,37 @@ public final class CommandCenterStore {
         persistRequired();
         return Map.of("completed",false,"filename",path.getFileName().toString(),"bytes",bytes);
     }
+    /**
+     * Read-only preflight for controller-owned approval. Returns null only for an
+     * already committed, identical completion acknowledgement. A scanner must
+     * never be run against worker-supplied paths.
+     */
+    public synchronized Path pendingMediaForControllerApproval(String jobId,Map<String,Object>metadata){
+        Map<String,Object>m=requireStory(jobId);
+        if(!(metadata.get("sidecar") instanceof Map<?,?>sidecar)
+                ||!(Json.object(sidecar).get("contentSafety") instanceof Map<?,?>raw))
+            throw new IllegalStateException("CONTENT_SAFETY: missing worker media identity");
+        String sha=String.valueOf(Json.object(raw).getOrDefault("videoSha256",""));
+        String worker=String.valueOf(metadata.getOrDefault("workerId",""));
+        String claim=String.valueOf(metadata.getOrDefault("claimId",""));
+        String epoch=String.valueOf(metadata.getOrDefault("productionEpoch",""));
+        if(!validHash(sha))
+            throw new IllegalStateException("CONTENT_SAFETY: invalid media identity");
+        if(completedIdentity(m,worker,claim,epoch,sha))return null;
+        requireActiveClaim(jobId,worker,claim);
+        if(!epoch.equals(String.valueOf(m.getOrDefault("productionEpoch","")))
+                ||!sha.equals(m.get("uploadedSha256"))
+                ||!claim.equals(m.get("uploadedClaimId"))
+                ||!epoch.equals(m.get("uploadedEpoch")))
+            throw new IllegalStateException("CONTENT_SAFETY: upload and active claim differ");
+        Object saved=m.get("serverVideo");
+        if(saved==null)throw new IllegalStateException("CONTENT_SAFETY: uploaded media missing");
+        Path file=Path.of(String.valueOf(saved));
+        if(Files.isSymbolicLink(file)||!Files.isRegularFile(file))
+            throw new IllegalStateException("CONTENT_SAFETY: uploaded media missing or linked");
+        return file;
+    }
+
     public synchronized boolean completeAuthorized(String jobId,Map<String,Object>metadata){
         Map<String,Object>m=requireStory(jobId);
         String workerId=String.valueOf(metadata.getOrDefault("workerId",""));

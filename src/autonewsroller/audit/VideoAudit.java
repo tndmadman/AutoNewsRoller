@@ -20,13 +20,24 @@ public final class VideoAudit {
     }
 
     public Map<String,Object>audit(Path video,Path audio,int width,int height,int expectedFps)throws Exception{
+        if(audio==null||!Files.isRegularFile(audio)||Files.size(audio)<128)
+            throw new IllegalStateException("Source audio missing or empty");
+        return auditEncoded(video,audio,width,height,expectedFps);
+    }
+
+    /**
+     * Controller-side encoded-media check. The controller has only the uploaded
+     * MP4, not the worker's original narration WAV. Do not invent source timing.
+     */
+    public Map<String,Object>auditUploaded(Path video,int width,int height,int expectedFps)throws Exception{
+        return auditEncoded(video,null,width,height,expectedFps);
+    }
+
+    private Map<String,Object>auditEncoded(Path video,Path audio,int width,int height,int expectedFps)throws Exception{
         if(width<1||height<1||expectedFps<1)
             throw new IllegalArgumentException("Invalid media audit expectations");
         if(!Files.isRegularFile(video)||Files.size(video)<1024)
             throw new IllegalStateException("Video missing or empty");
-        if(!Files.isRegularFile(audio)||Files.size(audio)<128)
-            throw new IllegalStateException("Source audio missing or empty");
-
         Map<String,Object>probe=probe(video);
         double duration=number(Json.object(probe.get("format")).get("duration"));
         if(!Double.isFinite(duration)||duration<=0)
@@ -81,10 +92,13 @@ public final class VideoAudit {
         if(!level.find()||Double.parseDouble(level.group(1))<=-80.0)
             throw new IllegalStateException("Encoded MP4 audio is silent or could not be measured");
 
-        Map<String,Object>sourceProbe=probe(audio);
-        double sourceSeconds=number(Json.object(sourceProbe.get("format")).get("duration"));
-        if(!Double.isFinite(sourceSeconds)||sourceSeconds<=0)
-            throw new IllegalStateException("Cannot measure source narration audio");
+        double sourceSeconds=Double.NaN;
+        if(audio!=null){
+            Map<String,Object>sourceProbe=probe(audio);
+            sourceSeconds=number(Json.object(sourceProbe.get("format")).get("duration"));
+            if(!Double.isFinite(sourceSeconds)||sourceSeconds<=0)
+                throw new IllegalStateException("Cannot measure source narration audio");
+        }
         Map<String,Object>result=new LinkedHashMap<>();
         result.put("status","approved");
         result.put("videoDuration",duration);
@@ -93,7 +107,8 @@ public final class VideoAudit {
         result.put("audioCodec",audioStream.get("codec_name"));
         result.put("videoStreamDuration",videoSeconds);
         result.put("audioStreamDuration",audioSeconds);
-        result.put("sourceAudioDuration",sourceSeconds);
+        if(audio!=null)result.put("sourceAudioDuration",sourceSeconds);
+        result.put("sourceNarrationChecked",audio!=null);
         result.put("avDurationDifferenceSeconds",difference);
         result.put("avSyncToleranceSeconds",AV_SYNC_TOLERANCE_SECONDS);
         result.put("averageFps",averageFps);

@@ -88,10 +88,31 @@ public final class ControllerHttpRecoverySelfTest {
             HttpResponse<String>oldProtocol=request(http,video,"PUT",bytes,legacy);
             check(oldProtocol.statusCode()>=400&&mediaCount(root)==1,
                     "mixed-version workers without identity headers are rejected");
+            Map<String,Object>forgedManifest=new LinkedHashMap<>();
+            forgedManifest.put("status","APPROVED_FOR_EXPORT");
+            forgedManifest.put("policyVersion",ContentSafetyService.POLICY);
+            forgedManifest.put("videoSha256",hash);
+            forgedManifest.put("finalVideoAudit",Map.of("status","SAFE"));
+            Map<String,Object>forgedCompletion=Map.of("workerId","test-worker",
+                    "claimId",claim,"productionEpoch",epoch,
+                    "sidecar",Map.of("productionMode","STANDARD",
+                            "contentSafety",forgedManifest));
+            HttpResponse<String>forgery=request(http,
+                    URI.create(base+"/api/jobs/"+id+"/complete"),"POST",
+                    Json.stringify(forgedCompletion).getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    Map.of("Content-Type","application/json"));
+            check(forgery.statusCode()>=400,
+                    "worker-forged SAFE manifest cannot complete without controller detectors");
+            HttpResponse<String>unapprovedMedia=request(http,
+                    URI.create(base+"/videos/"+filename),"GET",new byte[0],Map.of());
+            check(unapprovedMedia.statusCode()!=200,
+                    "unapproved upload cannot be served as publishable media");
             Map<String,Object>state=Json.object(Json.read(root.resolve("data/command_center_state.json")));
             Map<String,Object>saved=Json.object(Json.object(state.get("stories")).get(id));
             check(hash.equals(saved.get("uploadedSha256"))&&claim.equals(saved.get("uploadedClaimId")),
-                    "controller state on disk records approved-media identity before acknowledgement");
+                    "controller state on disk records upload identity before acknowledgement");
+            check(!"COMPLETE".equals(saved.get("status")),
+                    "failed independent approval did not commit a completed archive version");
         }finally{server.stop();}
         CommandCenterServer restarted=new CommandCenterServer(root,cfg,
                 "127.0.0.1",0,600,false,0.68,5,"",false);
