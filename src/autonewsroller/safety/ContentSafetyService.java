@@ -101,6 +101,7 @@ public final class ContentSafetyService {
         try{
             ProcessBuilder pb=new ProcessBuilder(python,script.toString(),"--"+kind,input.toAbsolutePath().toString());
             pb.directory(root.toAbsolutePath().toFile());
+            SafetyGpuConfig.applyCpuThreadBudget(pb.environment(),cfg);
             pb.environment().put("PYTHONUNBUFFERED","1");
             pb.environment().put("TF_CPP_MIN_LOG_LEVEL","2");
             pb.redirectError(log.toFile());

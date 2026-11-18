@@ -74,11 +74,12 @@ public final class PersistentSafetyScanner {
         String python=cuda?SafetyPython.resolveGpu(root,cfg):SafetyPython.resolve(root,cfg);
         Path file=root.resolve(script).toAbsolutePath().normalize();
         if(!Files.isRegularFile(file))throw new IOException("mandatory scanner missing: "+script);
+        int cpuThreads=SafetyGpuConfig.cpuThreads(cfg);
         String key=root.toAbsolutePath().normalize()+"|"+python+"|"+file+
                 "|"+cuda+"|"+selection.device()+"|"+selection.parityManifest()+
-                "|"+selection.contextOnnx();
+                "|"+selection.contextOnnx()+"|cpuThreads="+cpuThreads;
         Client c=CLIENTS.computeIfAbsent(key,ignored->new Client(root,python,file,
-                cfg.getInt("contentSafetyScannerStartupSeconds",180),selection,cuda));
+                cfg.getInt("contentSafetyScannerStartupSeconds",180),selection,cuda,cpuThreads));
         return c;
     }
     private static final class Client {
@@ -87,15 +88,16 @@ public final class PersistentSafetyScanner {
         private final int startupSeconds;
         private final SafetyGpuConfig selection;
         private final boolean cuda;
+        private final int cpuThreads;
         private Process process;
         private BufferedReader stdout;
         private BufferedWriter stdin;
         private Map<String,Object>ready;
         private Path stderrLog;
         Client(Path root,String python,Path script,int startupSeconds,
-                SafetyGpuConfig selection,boolean cuda){
+                SafetyGpuConfig selection,boolean cuda,int cpuThreads){
             this.root=root.toAbsolutePath();this.python=python;this.script=script;
-            this.selection=selection;this.cuda=cuda;
+            this.selection=selection;this.cuda=cuda;this.cpuThreads=cpuThreads;
             if(startupSeconds<5||startupSeconds>900)
                 throw new IllegalArgumentException("contentSafetyScannerStartupSeconds outside 5..900");
             this.startupSeconds=startupSeconds;
@@ -170,6 +172,11 @@ public final class PersistentSafetyScanner {
             ProcessBuilder pb=new ProcessBuilder(command);
             pb.directory(root.toFile());
             pb.environment().put("TF_CPP_MIN_LOG_LEVEL","2");
+            String threads=Integer.toString(cpuThreads);
+            for(String key:List.of("AUTONEWS_SAFETY_CPU_THREADS","OMP_NUM_THREADS",
+                    "OPENBLAS_NUM_THREADS","MKL_NUM_THREADS","NUMEXPR_NUM_THREADS",
+                    "TF_NUM_INTRAOP_THREADS"))pb.environment().put(key,threads);
+            pb.environment().put("TF_NUM_INTEROP_THREADS","1");
             pb.environment().put("PYTHONUNBUFFERED","1");
             Path dir=root.resolve("output/runtime");
             Files.createDirectories(dir);

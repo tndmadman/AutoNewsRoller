@@ -3,6 +3,8 @@
 import argparse
 import importlib.metadata
 import json
+import os
+from pathlib import Path
 import sys
 import time
 
@@ -12,6 +14,37 @@ BLOCK_CLASSES = {
 }
 # NudeNet 3.4.2 internally hardcodes NMS score threshold 0.25; this is NOT production calibrated.
 THRESHOLD = 0.25
+
+def cpu_threads():
+    raw = os.environ.get("AUTONEWS_SAFETY_CPU_THREADS", "8")
+    try:
+        threads = int(raw)
+    except ValueError as error:
+        raise ValueError("invalid safety CPU thread budget") from error
+    if not 1 <= threads <= 32:
+        raise ValueError("safety CPU thread budget outside 1..32")
+    return threads
+
+def cpu_detector():
+    import nudenet
+    import onnxruntime as ort
+    from nudenet import NudeDetector
+    detector = NudeDetector()
+    # NudeNet's built-in session uses ONNX Runtime's unrestricted CPU pool.
+    # Rebind the SAME pinned model, execution provider and postprocessing,
+    # with a bounded inference pool. Never skip frames or image regions.
+    path = Path(nudenet.__file__).resolve().parent / "320n.onnx"
+    if not path.is_file():
+        raise RuntimeError("pinned NudeNet 320n.onnx model missing")
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = cpu_threads()
+    opts.inter_op_num_threads = 1
+    opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    detector.onnx_session = ort.InferenceSession(
+        str(path), sess_options=opts, providers=["CPUExecutionProvider"])
+    if detector.onnx_session.get_providers() != ["CPUExecutionProvider"]:
+        raise RuntimeError("bounded NudeNet CPU session unavailable")
+    return detector
 
 def scan(image, detector):
     import cv2
@@ -157,7 +190,8 @@ def main():
     parser.add_argument("--parity-manifest")
     parser.add_argument("--vram-reserve-mb", type=int, default=4096)
     args = parser.parse_args()
-    from nudenet import NudeDetector
+    import cv2
+    cv2.setNumThreads(1)
     loading = time.monotonic()
     metadata={"backend":"cpu","provider":"CPU"}
     if args.backend=="cuda":
@@ -165,7 +199,7 @@ def main():
         detector,metadata=nudenet_cuda(args.cuda_device,args.parity_manifest,
                                        args.vram_reserve_mb)
     else:
-        detector = NudeDetector()
+        detector = cpu_detector()
     version = importlib.metadata.version("nudenet")
     if version != "3.4.2":
         raise RuntimeError("unvalidated NudeNet version: " + version)

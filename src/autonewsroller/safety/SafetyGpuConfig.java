@@ -33,6 +33,19 @@ public record SafetyGpuConfig(String mode,int device,int reserveMiB,int waitSeco
         if(parsed<min||parsed>max)throw new IllegalArgumentException(key+" outside "+min+".."+max);
         return parsed;
     }
+    /** Bound CPU inference work without changing frame or model coverage. */
+    public static int cpuThreads(NewsConfig cfg){
+        return intSetting(cfg,"contentSafetyCpuThreads",8,1,32);
+    }
+    public static void applyCpuThreadBudget(Map<String,String> env,NewsConfig cfg){
+        String threads=Integer.toString(cpuThreads(cfg));
+        for(String key:List.of("AUTONEWS_SAFETY_CPU_THREADS","OMP_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS","MKL_NUM_THREADS","NUMEXPR_NUM_THREADS",
+                "TF_NUM_INTRAOP_THREADS")){
+            env.put(key,threads);
+        }
+        env.put("TF_NUM_INTEROP_THREADS","1");
+    }
     public boolean enabled(){return !"off".equals(mode);}
     public boolean required(){return "require".equals(mode);}
     public void requireArtifacts(){

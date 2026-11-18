@@ -176,6 +176,9 @@ contentSafetyVideoTimeoutSeconds=3600
 contentSafetyScannerPersistent=true
 # Bound each model startup separately from full-video scan timeout.
 contentSafetyScannerStartupSeconds=180
+# Max CPU threads per safety model. The controller and worker have separate models.
+# Limits ONNX Runtime/OpenMP/TensorFlow saturation; no frame or crop is skipped.
+contentSafetyCpuThreads=8
 # GPU remains disabled pending hardware, model-parity and CUDA execution gates.
 contentSafetyGpuMode=off
 # CUDA must remain disabled until a real parity+hardware manifest is produced.
