@@ -69,6 +69,16 @@ jobs:
           $errors=$null
           [System.Management.Automation.Language.Parser]::ParseFile('tools/run_unified_canaries_windows.ps1',[ref]$tokens,[ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+      - name: Isolated Windows canary dry-path execution (no GPU claim)
+        shell: pwsh
+        run: |
+          $sandbox = Join-Path $env:RUNNER_TEMP 'anr-unified-canary-dry-smoke'
+          & powershell -NoProfile -ExecutionPolicy Bypass -File tools/run_unified_canaries_windows.ps1 -RunRoot $sandbox
+          if ($LASTEXITCODE -ne 0) { throw "Canary isolation harness failed" }
+          $record = Get-Content -LiteralPath (Join-Path $sandbox 'unified_windows_canary_report.json') -Raw | ConvertFrom-Json
+          if ($record.livePipelineStatus -ne 'NOT_RUN') { throw "Dry smoke must not claim live GPU validation" }
+          if ($record.socialPublishingStatus -ne 'DISABLED') { throw "Canary harness must not enable publishing" }
+          if ($record.humanInspectionStatus -ne 'NOT_REVIEWED') { throw "Dry smoke must not claim human review" }
       - name: Dedicated Windows safety environment, model health, and archive regression
         shell: pwsh
         run: |

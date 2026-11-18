@@ -70,7 +70,8 @@
   fixture, legacy record compatibility.
 - `tools/test_canary_helper_guard.py`: no helper spawned during canary.
 - Java and Python tests are wired into existing cross-platform CI; the
-  Windows canary script is checked for PowerShell syntax.
+  Windows canary script is checked for PowerShell syntax and exercised in dry
+  mode on Windows CI. This does not prove a GPU-generated video.
 
 ## Validation constraints and outstanding work
 
