@@ -63,6 +63,10 @@ jobs:
           if ($errors.Count -gt 0) { throw ($errors | Out-String) }
           $tokens=$null
           $errors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile('tools/setup_content_safety_gpu_windows.ps1',[ref]$tokens,[ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+          $tokens=$null
+          $errors=$null
           [System.Management.Automation.Language.Parser]::ParseFile('tools/unified_acceptance_windows.ps1',[ref]$tokens,[ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { throw ($errors | Out-String) }
           $tokens=$null
@@ -101,9 +105,12 @@ jobs:
           java -cp build/classes autonewsroller.visuals.ImageRetryCoordinatorSelfTest
           java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
           java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
-          python -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/safety_scanner_ipc.py tools/test_safety_scanner_protocol.py tools/test_content_safety_scan.py tools/audit_historical_outputs.py
+          python -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/safety_scanner_ipc.py tools/safety_cuda_backend.py tools/validate_safety_gpu_parity.py tools/test_safety_cuda_gate.py tools/export_opennsfw2_onnx.py tools/benchmark_safety_video.py tools/test_safety_scanner_protocol.py tools/test_persistent_safety_scan.py tools/test_content_safety_scan.py tools/audit_historical_outputs.py
           python tools/test_safety_scanner_protocol.py
+          python tools/test_safety_cuda_gate.py
           java -cp build/classes autonewsroller.safety.SafetyScanProgressSelfTest
+          java -cp build/classes autonewsroller.safety.SafetyGpuConfigSelfTest
+          .venv-safety/Scripts/python.exe tools/test_persistent_safety_scan.py
       - name: Windows worker web launcher smoke
         shell: pwsh
         run: |
@@ -188,9 +195,12 @@ jobs:
           python3 tools/test_historical_audit.py
           python3 tools/test_production_failures.py
           python3 tools/test_canary_helper_guard.py
-          python3 -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/safety_scanner_ipc.py tools/audit_historical_outputs.py
+          python3 -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/safety_scanner_ipc.py tools/safety_cuda_backend.py tools/validate_safety_gpu_parity.py tools/test_safety_cuda_gate.py tools/export_opennsfw2_onnx.py tools/benchmark_safety_video.py tools/test_persistent_safety_scan.py tools/audit_historical_outputs.py
           python3 tools/test_safety_scanner_protocol.py
+          python3 tools/test_safety_cuda_gate.py
           java -cp build/classes autonewsroller.safety.SafetyScanProgressSelfTest
+          java -cp build/classes autonewsroller.safety.SafetyGpuConfigSelfTest
+          .venv-safety/bin/python tools/test_persistent_safety_scan.py
           java -cp build/classes autonewsroller.orchestration.ProductionStageTelemetrySelfTest
           java -cp build/classes autonewsroller.orchestration.ProductionServiceReadinessSelfTest
           java -cp build/classes autonewsroller.commandcenter.ControllerRecoverySelfTest

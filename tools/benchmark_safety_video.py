@@ -40,8 +40,12 @@ def main():
     if video.stat().st_size<10000:raise ValueError("video too small for meaningful benchmark")
     if args.backend=="cuda" and (not args.parity_manifest or not args.context_onnx):
         raise ValueError("CUDA bench needs passing parity manifest and converted ONNX model")
+    digest=hashlib.sha256()
+    with video.open("rb") as stream:
+        for chunk in iter(lambda:stream.read(131072),b""):
+            digest.update(chunk)
     record={"schemaVersion":1,"status":"MEASURED","videoSha256":
-             hashlib.sha256(video.read_bytes()).hexdigest(),
+             digest.hexdigest(),
             "videoBytes":video.stat().st_size,"backendRequested":args.backend,
             "runs":args.runs,"modelResults":{},"machine":os.name}
     for detector,script in (("NudeNet","content_safety_scan.py"),
