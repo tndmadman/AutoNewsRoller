@@ -32,6 +32,11 @@ public final class ProductionCheckpoint {
         this.manifest=this.workspace.resolve("production_checkpoint.json");
         this.contract=Objects.requireNonNull(contract);
         Files.createDirectories(this.workspace);
+        // Lexical confinement alone is unsafe when a workspace ancestor is a symlink.
+        if(!this.workspace.toRealPath().startsWith(this.artifactRoot.toRealPath()))
+            throw new IllegalArgumentException("Checkpoint workspace resolves outside authorized artifact root");
+        if(Files.isSymbolicLink(manifest))
+            throw new IllegalArgumentException("Checkpoint manifest must not be a symbolic link");
         if(Files.isRegularFile(manifest)){
             try{
                 Map<String,Object>state=Json.object(Json.read(manifest));
@@ -104,7 +109,16 @@ public final class ProductionCheckpoint {
 
     private Path inside(Path file){
         Path path=file.toAbsolutePath().normalize();
-        if(!path.startsWith(artifactRoot))throw new IllegalArgumentException("Artifact outside authorized batch root");
+        if(!path.startsWith(artifactRoot))
+            throw new IllegalArgumentException("Artifact outside authorized batch root");
+        try{
+            // Resolve file and parent symlinks. A lexical workspace-relative path
+            // can still point outside the batch through a linked directory.
+            if(Files.exists(path)&&!path.toRealPath().startsWith(artifactRoot.toRealPath()))
+                throw new IllegalArgumentException("Artifact resolves outside authorized batch root");
+        }catch(java.io.IOException invalid){
+            throw new IllegalArgumentException("Cannot verify checkpoint artifact path",invalid);
+        }
         return path;
     }
     private void persist()throws Exception{
