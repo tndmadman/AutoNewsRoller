@@ -1399,7 +1399,7 @@ public final class SelfTest {
 
         // Legacy worker-only approvals must remain in the historical archive,
         // but may not appear as pending publishable media in counts or filters.
-        Path legacyState=dir.resolve("legacy-worker-only-state.json");
+        Path workerOnlyState=dir.resolve("legacy-worker-only-state.json");
         Map<String,Object>legacyRoot=Json.object(Json.read(mediaState));
         Map<String,Object>legacyVideos=Json.object(legacyRoot.get("videos"));
         for(var entry:legacyVideos.entrySet()){
@@ -1410,8 +1410,8 @@ public final class SelfTest {
             legacyVideos.put(entry.getKey(),legacyVersion);
         }
         legacyRoot.put("videos",legacyVideos);
-        Json.write(legacyState,legacyRoot);
-        CommandCenterStore legacy=new CommandCenterStore(legacyState,
+        Json.write(workerOnlyState,legacyRoot);
+        CommandCenterStore legacy=new CommandCenterStore(workerOnlyState,
                 BiasRegistry.load(dir.resolve("bias.json")),true,0.68,12,null);
         Map<String,Object>legacyCounts=Json.object(legacy.snapshot().get("counts"));
         ok(((Number)legacyCounts.get("toPost")).intValue()==0
