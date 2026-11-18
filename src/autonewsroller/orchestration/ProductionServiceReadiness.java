@@ -111,19 +111,35 @@ public final class ProductionServiceReadiness {
         try{return run(program,4,argument)!=null;}
         catch(Exception unavailable){return false;}
     }
-    private static String run(String executable,int seconds,String...arguments)throws Exception{
+    // Keep the machine-readable scanner JSON on stdout separate from
+    // TensorFlow/Keras startup warnings and other diagnostics on stderr.
+    // A nonzero exit or malformed stdout still fails closed in health().
+    static String run(String executable,int seconds,String...arguments)throws Exception{
         ArrayList<String>cmd=new ArrayList<>();
         cmd.add(executable);cmd.addAll(List.of(arguments));
-        Path log=Files.createTempFile("anr-readiness-",".log");
+        Path stdout=Files.createTempFile("anr-readiness-",".stdout.log");
+        Path stderr=Files.createTempFile("anr-readiness-",".stderr.log");
         try{
-            Process process=new ProcessBuilder(cmd).redirectErrorStream(true).redirectOutput(log.toFile()).start();
+            Process process=new ProcessBuilder(cmd)
+                    .redirectOutput(stdout.toFile())
+                    .redirectError(stderr.toFile()).start();
             if(!process.waitFor(seconds,TimeUnit.SECONDS)){
                 process.destroyForcibly();
+                process.waitFor(5,TimeUnit.SECONDS);
                 throw new IOException("readiness command timed out");
             }
-            if(process.exitValue()!=0)throw new IOException("readiness command returned "+process.exitValue());
-            return Files.readString(log,StandardCharsets.UTF_8);
-        }finally{Files.deleteIfExists(log);}
+            if(process.exitValue()!=0){
+                String diagnostic=Files.readString(stderr,StandardCharsets.UTF_8).trim();
+                if(diagnostic.length()>500)
+                    diagnostic=diagnostic.substring(diagnostic.length()-500);
+                throw new IOException("readiness command returned "+process.exitValue()
+                        +(diagnostic.isEmpty()?"":": "+diagnostic));
+            }
+            return Files.readString(stdout,StandardCharsets.UTF_8);
+        }finally{
+            Files.deleteIfExists(stdout);
+            Files.deleteIfExists(stderr);
+        }
     }
     private static synchronized void health(Path root,NewsConfig cfg,
             String script,String detector,String version)throws Exception{
