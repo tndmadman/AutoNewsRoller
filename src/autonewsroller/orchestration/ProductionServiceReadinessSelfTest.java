@@ -25,7 +25,7 @@ public final class ProductionServiceReadinessSelfTest {
     public static void main(String[]args)throws Exception{
         if(args.length>0&&"--scanner-noisy-stderr".equals(args[0])){
             System.err.println("2026-11-17 tensorflow: oneDNN CPU startup diagnostics");
-            System.out.println("{\\"status\\":\\"READY\\",\\"detector\\":\\"OpenNSFW2\\",\\"version\\":\\"0.19.0\\"}");
+            System.out.println("{\"status\":\"READY\",\"detector\":\"OpenNSFW2\",\"version\":\"0.19.0\"}");
             return;
         }
         if(args.length>0&&"--scanner-error".equals(args[0])){
