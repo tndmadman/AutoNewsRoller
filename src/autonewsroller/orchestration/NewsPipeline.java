@@ -605,6 +605,9 @@ public final class NewsPipeline {
                                         source.put("overlayPath",priorOverlay.toString());
                                         source.put("inspection",priorQuality.toMap());
                                         source.put("visionReview",priorVision.toMap());
+                                        source.put("contentSafety",originalScan);
+                                        source.put("composedSafety",composedScan);
+                                        source.put("backgroundSafety",backgroundScan);
                                         imgs.set(replace,priorComposed);
                                         renderBackgrounds.set(replace,priorBackground);
                                         renderOverlays.set(replace,priorOverlay);
@@ -612,7 +615,8 @@ public final class NewsPipeline {
                                         imageSources.set(replace,source);
                                         acceptedHashes.add(priorQuality.perceptualHash());
                                         comfyGenerated++;
-                                        imageReviews.add(Map.of("sceneIndex",replace,"resumed",true,"accepted",true,
+                                        recordImageAttempt(visuals,imageReviews,Map.of(
+                                                "sceneIndex",replace,"resumed",true,"accepted",true,"status","REUSED_SAFE",
                                                 "contentSafety",originalScan,"composedSafety",composedScan,
                                                 "backgroundSafety",backgroundScan));
                                         events.emit(worker,slot,PipelineStage.VISUALS,
@@ -652,7 +656,7 @@ public final class NewsPipeline {
                         if(!inspection.accepted()){
                             review.put("status","REJECTED_QUALITY");
                             review.put("rejectionReason",inspection.reason());
-                            imageReviews.add(review);
+                            recordImageAttempt(visuals,imageReviews,review);
                             events.emit(worker,slot,PipelineStage.VISUALS,"IMAGE REJECTED scene="+replace+" reason="+inspection.reason());
                             Files.deleteIfExists(generated);
                             continue;
@@ -662,7 +666,7 @@ public final class NewsPipeline {
                         if(!"SAFE".equals(nudity.get("status"))){
                             review.put("status","REJECTED_IMAGE_SAFETY");
                             review.put("rejectionReason",String.valueOf(nudity.get("status")));
-                            imageReviews.add(review);
+                            recordImageAttempt(visuals,imageReviews,review);
                             unsafeImageRejections++;
                             events.emit(worker,slot,PipelineStage.VISUALS,"IMAGE CONTENT SAFETY REJECTED scene="+replace+" status="+nudity.get("status"));
                             Files.deleteIfExists(generated);
@@ -678,7 +682,7 @@ public final class NewsPipeline {
                         if(!semantic.accepted()){
                             review.put("status","REJECTED_SEMANTIC");
                             review.put("rejectionReason",semantic.reason());
-                            imageReviews.add(review);
+                            recordImageAttempt(visuals,imageReviews,review);
                             events.emit(worker,slot,PipelineStage.VISUALS,"IMAGE VISION WARNING scene="+replace+" reason="+semantic.reason());
                             Files.deleteIfExists(generated);
                             continue;
@@ -697,7 +701,7 @@ public final class NewsPipeline {
                             review.put("status","REJECTED_COMPOSITION_SAFETY");
                             review.put("rejectionReason","composed="+composedSafety.get("status")+
                                     "; background="+backgroundSafety.get("status"));
-                            imageReviews.add(review);
+                            recordImageAttempt(visuals,imageReviews,review);
                             unsafeImageRejections++;
                             Files.deleteIfExists(generated);Files.deleteIfExists(composed);Files.deleteIfExists(background);
                             Files.deleteIfExists(overlay);
@@ -708,7 +712,7 @@ public final class NewsPipeline {
                             continue;
                         }
                         review.put("accepted",true);review.put("status","ACCEPTED");
-                        imageReviews.add(review);
+                        recordImageAttempt(visuals,imageReviews,review);
                         acceptedHashes.add(inspection.perceptualHash());
                         imgs.set(replace,composed);
                         renderBackgrounds.set(replace,background);
@@ -724,6 +728,10 @@ public final class NewsPipeline {
                         imageSource.put("sampler",ComfyImageGenerator.SAMPLER);imageSource.put("scheduler",ComfyImageGenerator.SCHEDULER);
                         imageSource.put("resolution",requestedWidth+"x"+requestedHeight);
                         imageSource.put("inspection",inspection.toMap());imageSource.put("visionReview",semantic.toMap());imageSource.put("retryCount",attempt);
+                        imageSource.put("attempt",attempt+1);
+                        imageSource.put("contentSafety",nudity);
+                        imageSource.put("composedSafety",composedSafety);
+                        imageSource.put("backgroundSafety",backgroundSafety);
                         imageSource.put("aiIllustrationDisclosure",true);
                         imageSource.put("visualType",chosen.type());imageSource.put("segmentIndex",chosen.data().getOrDefault("segmentIndex",chosen.index()));
                         imageSource.put("visualStrategy",chosen.data().getOrDefault("visualStrategy",chosen.type()));
@@ -868,6 +876,14 @@ public final class NewsPipeline {
                 Map.of("video",finalVideo,"sidecar",sidecar),
                 Map.of("filename",finalVideo.getFileName().toString()));
         events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
+    }
+
+    private static void recordImageAttempt(Path visualDir,List<Map<String,Object>> attempts,
+                                           Map<String,Object> attempt)throws Exception{
+        attempts.add(new LinkedHashMap<>(attempt));
+        // Persist rejected attempts as well. If the final required scene fails,
+        // the operator still receives a record without an approved MP4.
+        Json.write(visualDir.resolve("image_attempts.json"),attempts);
     }
 
     private GroundedVisualPromptGenerator.Result generateVisualPrompts(NewsScript script,FactPackage fp,StoryCluster cluster,boolean dryRun,int worker,int slot){
