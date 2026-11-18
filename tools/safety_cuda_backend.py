@@ -42,10 +42,14 @@ def _verified_cuda_session(path,device,probe):
     if "CUDAExecutionProvider" not in ort.get_available_providers():
         raise RuntimeError("CUDA EP not installed")
     options=ort.SessionOptions()
+    if ort.__version__!="1.20.1":
+        raise RuntimeError("unvalidated ONNX Runtime GPU release: "+ort.__version__)
     options.enable_profiling=True
+    # No hidden CPU provider handoff: unsupported CUDA operators block rollout.
+    options.add_session_config_entry("session.disable_cpu_ep_fallback","1")
     options.graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     session=ort.InferenceSession(str(path),sess_options=options,
-        providers=[("CUDAExecutionProvider",{"device_id":device}),"CPUExecutionProvider"])
+        providers=[("CUDAExecutionProvider",{"device_id":device})])
     session.disable_fallback()
     if "CUDAExecutionProvider" not in session.get_providers():
         raise RuntimeError("CUDA EP not active in model session")
@@ -62,6 +66,8 @@ def _verified_cuda_session(path,device,probe):
     cuda_nodes=sum(p=="CUDAExecutionProvider" for p in node_providers)
     if cuda_nodes<1:
         raise RuntimeError("no CUDAExecutionProvider inference nodes in actual ONNX trace")
+    if any(p!="CUDAExecutionProvider" for p in node_providers):
+        raise RuntimeError("ONNX graph executed nodes on CPU despite CUDA requirement")
     return session,cuda_nodes
 
 def _manifest(path,detector,model_sha,device):
