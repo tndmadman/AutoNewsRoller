@@ -65,6 +65,10 @@ jobs:
           $errors=$null
           [System.Management.Automation.Language.Parser]::ParseFile('tools/unified_acceptance_windows.ps1',[ref]$tokens,[ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+          $tokens=$null
+          $errors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile('tools/run_unified_canaries_windows.ps1',[ref]$tokens,[ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
       - name: Dedicated Windows safety environment, model health, and archive regression
         shell: pwsh
         run: |
@@ -72,10 +76,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Dedicated safety environment setup failed' }
           python tools/test_historical_audit.py
           python tools/test_production_failures.py
+          python tools/test_canary_helper_guard.py
       - name: Self test
         shell: cmd
         run: |
           batch_create_news_videos_windows.bat --self-test
+          java -cp build/classes autonewsroller.orchestration.ProductionStageTelemetrySelfTest
+          java -cp build/classes autonewsroller.orchestration.ProductionServiceReadinessSelfTest
           java -cp build/classes autonewsroller.commandcenter.ControllerRecoverySelfTest
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
@@ -167,7 +174,10 @@ jobs:
           java -cp build/classes autonewsroller.visuals.ImageRetryCoordinatorSelfTest
           python3 tools/test_historical_audit.py
           python3 tools/test_production_failures.py
+          python3 tools/test_canary_helper_guard.py
           python3 -m py_compile tools/content_safety_scan.py tools/audit_historical_outputs.py
+          java -cp build/classes autonewsroller.orchestration.ProductionStageTelemetrySelfTest
+          java -cp build/classes autonewsroller.orchestration.ProductionServiceReadinessSelfTest
           java -cp build/classes autonewsroller.commandcenter.ControllerRecoverySelfTest
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.Main --dry-run --fixture --batch-target 1 --workers 2 --max-age-hours 24 --minimum-independent-sources 2 --duration 60 --encoder x264

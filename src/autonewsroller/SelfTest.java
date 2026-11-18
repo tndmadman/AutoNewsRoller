@@ -75,6 +75,8 @@ public final class SelfTest {
         testClusterAndVerify(a);
         testCommandCenterQueue(a);
         passed+=autonewsroller.commandcenter.ControllerRecoverySelfTest.run();
+        passed+=autonewsroller.orchestration.ProductionServiceReadinessSelfTest.run();
+        passed+=autonewsroller.orchestration.ProductionStageTelemetrySelfTest.run();
         testStoryBoardPagination();
         testStoryBoardApi(root);
         testCommandCenterAssistant();

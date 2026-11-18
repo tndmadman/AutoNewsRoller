@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
+from statistics import mean, median
+import math
 
 
 def read_json(path: Path) -> dict:
@@ -32,7 +34,8 @@ def records(path: Path):
 
 def summarize(state: dict, events: list[dict] | None = None,
               logs: list[str] | None = None,
-              checkpoints: list[dict] | None = None) -> dict:
+              checkpoints: list[dict] | None = None,
+              telemetry: list[dict] | None = None) -> dict:
     stories = state.get("stories") or {}
     if isinstance(stories, list):
         stories = {str(index): story for index, story in enumerate(stories)}
@@ -93,6 +96,45 @@ def summarize(state: dict, events: list[dict] | None = None,
                       "RESUMED VALIDATED", "COMFYUI REUSED"):
             if token in normalized:
                 log_counter[token] += 1
+    # Only metrics from explicitly passed JSONL logs are eligible.
+    durations = defaultdict(list)
+    job_totals = defaultdict(float)
+    image_attempts = Counter()
+    timed_failures = Counter()
+    reused = 0
+    retried_claims = set()
+    metric_rows = 0
+    for row in telemetry or []:
+        if not isinstance(row, dict) or row.get("schema") != "anr-production-stage-v1":
+            continue
+        metric_rows += 1
+        kind = row.get("event")
+        key = (str(row.get("jobId") or ""), str(row.get("productionEpoch") or ""),
+               str(row.get("claimId") or ""))
+        if isinstance(row.get("attemptNumber"), (int, float)) and row["attemptNumber"] > 1:
+            retried_claims.add(key)
+        if kind == "SCENE_ATTEMPT":
+            image_attempts["accepted" if row.get("success") is True else "rejected"] += 1
+        elif kind == "STAGE_FINISHED":
+            elapsed = row.get("elapsedMillis")
+            if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and elapsed >= 0:
+                durations[str(row.get("stage") or "UNKNOWN")].append(float(elapsed))
+                job_totals[key] += float(elapsed)
+            if row.get("checkpointReused") is True:
+                reused += 1
+            if row.get("success") is False:
+                timed_failures[str(row.get("failureCode") or "UNKNOWN")] += 1
+
+    def stats(values):
+        if not values:
+            return {"count": 0, "mean": None, "median": None, "p95": None, "total": None}
+        ordered = sorted(values)
+        return {"count": len(values), "mean": round(mean(values), 2),
+                "median": round(median(values), 2),
+                "p95": round(ordered[math.ceil(.95 * len(values)) - 1], 2),
+                "total": round(sum(values), 2)}
+
+    accepted, rejected = image_attempts["accepted"], image_attempts["rejected"]
     checkpoint_summary = {
         "manifestsRead": len(checkpoints or []),
         "recordedStageEntries": sum(
@@ -123,6 +165,18 @@ def summarize(state: dict, events: list[dict] | None = None,
         "eventCounts": dict(event_counter.most_common()),
         "logMarkers": dict(log_counter.most_common()),
         "checkpoints": checkpoint_summary,
+        "telemetry": {
+            "schema": "anr-production-stage-v1",
+            "recordsRead": metric_rows,
+            "stageTimingsMillis": {name: stats(values) for name, values in sorted(durations.items())},
+            "recordedJobStageTotalsMillis": stats(list(job_totals.values())),
+            "comfyImageAttempts": {"accepted": accepted, "rejected": rejected,
+                "rejectionRate": round(rejected / (accepted + rejected), 4)
+                    if accepted + rejected else None},
+            "checkpointReuseStageCount": reused,
+            "timedFailureCodes": dict(timed_failures.most_common()),
+            "retryClaimIdentities": len(retried_claims),
+        },
         "limitations": [
             "Controller records may exclude archived or rotated production attempts.",
             "Log markers are occurrences, not a count of distinct failed jobs.",
@@ -138,17 +192,19 @@ def main() -> int:
     parser.add_argument("--events", type=Path, action="append", default=[], help="Events JSONL")
     parser.add_argument("--log", type=Path, action="append", default=[], help="Worker log")
     parser.add_argument("--checkpoint", type=Path, action="append", default=[], help="Checkpoint JSON")
+    parser.add_argument("--telemetry", type=Path, action="append", default=[], help="Metrics JSONL")
     parser.add_argument("--json", type=Path, help="Write aggregated report as JSON")
     parser.add_argument("--csv", type=Path, help="Write failure rows as CSV")
     args = parser.parse_args()
-    if not (args.state or args.events or args.log or args.checkpoint):
+    if not (args.state or args.events or args.log or args.checkpoint or args.telemetry):
         parser.error("provide at least one input; the tool never accesses live jobs automatically")
     state = read_json(args.state) if args.state else {}
     events = [row for path in args.events for row in records(path)]
     logs = [line for path in args.log
             for line in path.read_text(encoding="utf-8", errors="replace").splitlines()]
     checkpoints = [read_json(path) for path in args.checkpoint]
-    report = summarize(state, events, logs, checkpoints)
+    metrics = [row for path in args.telemetry for row in records(path)]
+    report = summarize(state, events, logs, checkpoints, metrics)
     print("AutoNewsRoller production failure report")
     print(f"Stories: {report['stories']}   Complete: {report['completed']}   Failed: {report['failed']}")
     print(f"Terminal success rate: {report['terminalSuccessRate'] if report['terminalSuccessRate'] is not None else 'unknown'}")
@@ -156,6 +212,8 @@ def main() -> int:
     print(f"Failed stages: {report['failureStages']}")
     print(f"Repeated-failure stories: {len(report['repeatedFailures'])}")
     print(f"Checkpoint stage entries: {report['checkpoints']['recordedStageEntries']}")
+    print(f"Recorded metrics rows: {report['telemetry']['recordsRead']}")
+    print(f"Stage timings (ms): {report['telemetry']['stageTimingsMillis']}")
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

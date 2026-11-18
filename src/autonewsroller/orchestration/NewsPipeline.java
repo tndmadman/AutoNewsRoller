@@ -206,6 +206,10 @@ public final class NewsPipeline {
                         serviceFailure.getMessage(),serviceFailure);
             }
         }
+        if(!dryRun){
+            events.emit(worker,slot,PipelineStage.VERIFY,"PREFLIGHT: verifying Ollama, narration, encoder and both mandatory safety models");
+            ProductionServiceReadiness.check(root,cfg,encoder);
+        }
         StoryCluster c=mode==ProductionMode.FRAMING_EXPOSURE?cand.cluster():enrichForProduction(cand.cluster());
         VerificationResult refreshed=new SourceVerifier().verify(c,cfg.minimumIndependentSources());
         FactPackage fp=refreshed.factPackage();

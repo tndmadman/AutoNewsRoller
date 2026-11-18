@@ -99,3 +99,18 @@ The October 28 TikTok ban and any link between nudity removal and mass AIGC enfo
 7. Run full Java, browser, Python model-health, video smoke and Windows/Linux CI against the last commit before any merge.
 
 No single detector, classifier threshold or safety workflow can make generated nudity literally impossible. The policy is intended to prevent identified prohibited content from being published and to block export when required checks cannot be completed.
+
+## Mandatory safety readiness before rendering
+
+Live production preflight now checks an Ollama model inventory (no generation),
+Python narration helper availability, FFmpeg and FFprobe encoder support, and
+both pinned detector `--health` commands before source enrichment and
+generation. Successful detector health entries are cached for at most five
+minutes; failed attempts for at most fifteen seconds. An expired cached
+health result must be rechecked. Missing mandatory detector health blocks
+production with `SAFETY_SCANNER_UNAVAILABLE`. A health response is **not**
+approval to skip generated-image, composed-image or final all-frame inspection.
+
+A synthetic health test and a source-level manifest contract test are not
+proof that real model weights were accepted on the Windows GPU. Calibrate and
+human-review all three production modes before release.

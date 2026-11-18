@@ -64,3 +64,28 @@ On any regression, stop new claims and drain/stop updated processes, restore the
 The linked GitHub connector cannot access the user's Windows workstation, actual model runtime, private production state, archived social videos or licensed detector calibration corpus. Such tests must be completed in the isolated workstation environment; no pass should be claimed without real evidence. The end-to-end crash/lease/upload fault injections and resource-efficiency measurements also require real test execution.
 
 **Current release decision:** NOT READY. `main` must remain unchanged.
+
+## Isolated canary execution (new opt-in harness)
+
+The read-only `tools/unified_acceptance_windows.ps1` remains unchanged. From the
+unified branch, run the separate harness:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/run_unified_canaries_windows.ps1 -RunLive -ExpectedSha "<EXACT_HEAD_SHA>"
+```
+
+Without `-RunLive`, the harness creates an isolated detached Git worktree and
+records `NOT_RUN`; it does not claim a hardware pass. With `-RunLive`, it
+requires an NVIDIA device, builds a detached checkout, runs the three production
+pipelines on **synthetic RSS fixture stories**, audits generated approved MP4s and
+captures representative frames. It preserves output and diagnostics. It does not
+exercise distributed controller/worker lease recovery, real newsroom editorial
+accuracy, or any social publisher. It does not start or terminate unrelated
+long-lived model processes. The existing ComfyUI service and (if used) Qwen
+service must be running externally.
+
+Read `unified_windows_canary_report.json`, `unified_canary_execution.json` and
+`unified_acceptance_report.json`. The first two are automated results; a
+separate human must inspect the representative frames and video narrative.
+**Do not mark hardware acceptance complete from a mocked fixture or a
+PowerShell syntax pass.**

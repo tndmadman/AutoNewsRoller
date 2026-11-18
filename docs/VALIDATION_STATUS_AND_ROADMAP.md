@@ -529,3 +529,19 @@ captions, and actual first/last scene frames. Windows CI runs the short
 synthetic FFmpeg smoke with captions enabled and disabled to catch Windows
 filter escaping. Synthetic footage is not evidence of RTX 3090 or ComfyUI
 production quality, but it validates the real media path.
+
+## Unified reliability hardening follow-up — November 17, 2026
+
+The existing integration branch and draft PR #61 now include strict network
+claim fencing, content-hash/epoch upload identities, duplicate-completion
+suppression, controller recovery tests, and corrections to source-contract
+and queued-retry browser tests. A subsequent hardening set adds Ollama
+model-inventory readiness, pinned detector health, stage metrics JSONL,
+read-only timing percentiles and an opt-in isolated Windows canary runner.
+
+**Remaining validation:** All automated jobs must pass on the final head;
+the isolated Windows GPU has not been accessible to the GitHub connector;
+human visual inspection, production workload timing and detector calibration
+cannot be inferred from synthetic fixtures. Do not merge or deploy until
+these gates are satisfied. See
+`docs/UNIFIED_RELIABILITY_HARDENING_REPORT.md`.

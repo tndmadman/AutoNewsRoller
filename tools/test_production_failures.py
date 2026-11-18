@@ -61,6 +61,30 @@ class ProductionFailureReportTests(unittest.TestCase):
         self.assertEqual(2, report["checkpoints"]["recordedStageEntries"])
         self.assertIsNone(report["terminalSuccessRate"])
 
+    def test_recorded_stage_metrics_without_synthetic_time_estimates(self):
+        entries = [
+            {"schema":"anr-production-stage-v1", "event":"STAGE_FINISHED",
+             "stage":"VISUALS", "elapsedMillis":duration,
+             "attemptNumber":idx, "jobId":str(idx), "claimId":str(idx),
+             "productionEpoch":"first", "success":True, "checkpointReused":idx==2}
+            for idx, duration in [(1,100),(2,200),(3,300)]
+        ]
+        entries += [
+            {"schema":"anr-production-stage-v1", "event":"SCENE_ATTEMPT",
+             "success":outcome, "attemptNumber":2, "jobId":"2",
+             "claimId":"2", "productionEpoch":"first"}
+            for outcome in [True,False,False]]
+        entries.append({"event":"STAGE_FINISHED", "elapsedMillis":999999})
+        report = reporter.summarize({"stories":{}}, telemetry=entries)["telemetry"]
+        self.assertEqual(6, report["recordsRead"])
+        self.assertEqual(200, report["stageTimingsMillis"]["VISUALS"]["median"])
+        self.assertEqual(300, report["stageTimingsMillis"]["VISUALS"]["p95"])
+        self.assertEqual(1, report["checkpointReuseStageCount"])
+        self.assertEqual(2, report["comfyImageAttempts"]["rejected"])
+        self.assertEqual(1, report["comfyImageAttempts"]["accepted"])
+        self.assertEqual(2, report["retryClaimIdentities"])
+        self.assertEqual({}, reporter.summarize({"stories":{}})["telemetry"]["stageTimingsMillis"])
+
     def test_invalid_json_is_skipped_without_modifying_source(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "events.jsonl"

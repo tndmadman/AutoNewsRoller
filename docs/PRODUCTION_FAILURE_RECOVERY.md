@@ -137,3 +137,29 @@ archives and separate failed test workspaces for diagnosis.
   worker production; preserve manual-first Narrative Reviews.
 - Complete the independent PR #58 safety-release blockers before considering
   a merge to main.
+
+## Fenced uploads and acknowledgements
+
+Controller network callbacks require a nonblank active worker ID and exact
+claim ID, an unexpired server lease, and the current production epoch.
+The media upload now additionally requires `X-Media-Sha256` and
+`X-Production-Epoch` headers. The server validates the staged bytes and
+records the approved-media identity with durable controller state before
+acknowledgement. A matching retry reuses one stable MP4 path. A mismatching
+hash or superseded claim fails; it cannot create another version.
+
+Completion is bound to the uploaded claim, epoch and safety-manifest MP4 hash.
+A duplicate completion reuses the committed version and posting metadata,
+including after a controller restart. An explicit RE-MAKE changes epoch and
+preserves archived versions. Paired STANDARD-to-FRAMING jobs retain their
+separate workflow state.
+
+**Mixed-version protocol:** Older workers that omit either new upload header
+are rejected. Upgrade or roll back the controller and workers together at one
+validated commit; do not run a mixed-version production rollout. Do not clear
+the old worker lease manually to force an upload. Worker-generated manifests
+remain subject to independent safety approval checks.
+
+The `ControllerRecoverySelfTest` uses synthetic manifest and MP4 bytes to
+verify durable controller accounting. It does **not** replace HTTP crash
+injection, live dual-detector scanning or Windows GPU acceptance.

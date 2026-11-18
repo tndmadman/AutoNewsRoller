@@ -70,6 +70,10 @@ public final class FailurePolicy {
         if(m.contains("visual_image_required")||m.contains("visual assets missing")
                 ||m.contains("visual_asset_gate")||m.contains("no replaceable story visuals"))
             return decision(Code.VISUAL_ASSETS_MISSING);
+        if(m.contains("configuration_invalid")||m.contains("ollama_model_missing"))
+            return decision(Code.CONFIGURATION_INVALID);
+        if(m.contains("safety_scanner_unavailable"))
+            return decision(Code.SAFETY_SCANNER_UNAVAILABLE);
         if(m.contains("configured checkpoint is unavailable")||m.contains("no imagecheckpoint configured")
                 ||m.contains("invalid configuration")||m.contains("comfyui image generation disabled")
                 ||m.contains("worker does not support")||m.contains("pipeline disabled"))
