@@ -368,6 +368,8 @@ Return one JSON object matching the repair schema and nothing else.
         }
         List<NewsScript.Segment>segments=new ArrayList<>(base.segments());
         Set<Integer>seen=new HashSet<>();
+        int retained=0;
+        String firstInvalid="";
         for(Object value:replacements){
             if(!(value instanceof Map<?,?>))
                 throw new IllegalArgumentException("Malformed repair segment");
@@ -378,21 +380,29 @@ Return one JSON object matching the repair schema and nothing else.
             if(t==null||!seen.add(index)||narration.isBlank())
                 throw new IllegalArgumentException("Missing, duplicate or empty repair");
             int words=Text.words(narration);
-            if(words<Math.max(6,t.minWords()-8)||words>t.maxWords()+8)
-                throw new IllegalArgumentException("Repair segment "+index+" returned "+
-                        words+" words; required "+t.minWords()+"-"+t.maxWords());
+            if(words<Math.max(6,t.minWords()-8)||words>t.maxWords()+8){
+                if(firstInvalid.isBlank())
+                    firstInvalid="Repair segment "+index+" returned "+words+
+                            " words; required "+t.minWords()+"-"+t.maxWords();
+                continue; // Other valid replacements may still improve the draft.
+            }
             NewsScript.Segment old=segments.get(index);
             segments.set(index,new NewsScript.Segment(old.index(),narration,
                     old.purpose(),old.visualType(),"",old.durationTarget()));
+            retained++;
         }
         if(seen.size()!=targets.size())
             throw new IllegalArgumentException("Not all repair targets were answered");
+        if(retained==0)
+            throw new IllegalArgumentException(firstInvalid.isBlank()
+                    ?"No usable repair progress":firstInvalid);
         NewsScript revised=rebuild(fp,base.headline(),segments,seconds,base.hook());
         requireNoNewUnsupportedNumbers(base,revised,fp);
         requireLockedHook(base,revised);
         requireLengthProgress(base,revised,seconds,preferredWords);
         System.out.println("Ollama intermediate length repair "+Text.words(base.narration())+
-                " -> "+Text.words(revised.narration())+" words; full validation remains mandatory");
+                " -> "+Text.words(revised.narration())+" words; retained "+retained+
+                "/"+targets.size()+" replacements; full validation remains mandatory");
         return revised;
     }
 

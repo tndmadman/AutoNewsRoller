@@ -43,6 +43,19 @@ public final class NewsScriptRepairProgressSelfTest {
                 base,repair(near+" Officials spent 999999 dollars."),fp,70,List.of(target),175));
         rejects(()->NewsScriptGenerator.applyLengthRepairWithProgress(
                 base,repair(beat),fp,70,List.of(target),175));
+        // One completely wrong replacement cannot erase a useful, source-safe
+        // replacement in the same batch. A future attempt repairs the rest.
+        var target3=new NewsScriptGenerator.RepairTarget(3,26,30,28,beat);
+        String mixed=Json.stringify(Map.of("replacements",List.of(
+                Map.of("segmentIndex",2,"narration",near),
+                Map.of("segmentIndex",3,"narration","bad"))));
+        NewsScript salvaged=NewsScriptGenerator.applyLengthRepairWithProgress(
+                base,mixed,fp,70,List.of(target,target3),175);
+        if(!near.equals(salvaged.segments().get(2).narration())||
+                !beat.equals(salvaged.segments().get(3).narration()))
+            throw new AssertionError("A bad reply caused valid repair work to be discarded");
+        if(new ScriptValidator().validate(salvaged,fp,70).isEmpty())
+            throw new AssertionError("Partial repairs incorrectly authorized production");
         System.out.println("NewsScriptRepairProgressSelfTest PASS");
     }
     private static String repair(String words){
