@@ -91,6 +91,7 @@ public final class PersistentSafetyScanner {
         private BufferedReader stdout;
         private BufferedWriter stdin;
         private Map<String,Object>ready;
+        private Path stderrLog;
         Client(Path root,String python,Path script,int startupSeconds,
                 SafetyGpuConfig selection,boolean cuda){
             this.root=root.toAbsolutePath();this.python=python;this.script=script;
@@ -170,8 +171,15 @@ public final class PersistentSafetyScanner {
             pb.directory(root.toFile());
             pb.environment().put("TF_CPP_MIN_LOG_LEVEL","2");
             pb.environment().put("PYTHONUNBUFFERED","1");
-            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
-            process=pb.start();
+            Path dir=root.resolve("output/runtime");
+            Files.createDirectories(dir);
+            stderrLog=Files.createTempFile(dir,"safety-scanner-",".stderr.log");
+            pb.redirectError(stderrLog.toFile());
+            try{process=pb.start();}
+            catch(Exception startup){
+                close();
+                throw startup;
+            }
             stdout=new BufferedReader(new InputStreamReader(process.getInputStream(),StandardCharsets.UTF_8));
             stdin=new BufferedWriter(new OutputStreamWriter(process.getOutputStream(),StandardCharsets.UTF_8));
             try{
@@ -186,7 +194,15 @@ public final class PersistentSafetyScanner {
                         !("NudeNet".equals(ready.get("detector"))?"3.4.2":"0.19.0")
                             .equals(ready.get("version")))
                     throw new IOException("resident scanner startup identity invalid");
-            }catch(Exception unavailable){close();throw unavailable;}
+            }catch(Exception unavailable){
+                String diagnostic=recentDiagnostics();
+                close();
+                throw new IOException("scanner model startup failed: "+
+                        unavailable.getClass().getSimpleName()+": "+
+                        unavailable.getMessage()+
+                        (diagnostic.isBlank()?"":" / scanner stderr: "+diagnostic),
+                        unavailable);
+            }
         }
         private Map<String,Object> readTimed(long nanos)throws Exception{
             Future<String>f=READERS.submit(()->readBounded(stdout));
@@ -209,6 +225,13 @@ public final class PersistentSafetyScanner {
         private static String throwIncomplete()throws IOException{
             throw new IOException("truncated scanner response");
         }
+        private String recentDiagnostics(){
+            if(stderrLog==null)return "";
+            try{
+                String content=Files.readString(stderrLog,StandardCharsets.UTF_8).trim();
+                return content.substring(Math.max(0,content.length()-450)).replaceAll("\\s+"," ");
+            }catch(IOException ignored){return "";}
+        }
         synchronized void close(){
             if(process!=null){
                 process.destroy();
@@ -219,6 +242,10 @@ public final class PersistentSafetyScanner {
             try{if(stdout!=null)stdout.close();}catch(IOException ignored){}
             try{if(stdin!=null)stdin.close();}catch(IOException ignored){}
             stdout=null;stdin=null;
+            if(stderrLog!=null){
+                try{Files.deleteIfExists(stderrLog);}catch(IOException ignored){}
+                stderrLog=null;
+            }
         }
     }
     private static long number(Object n){return n instanceof Number v?v.longValue():-1;}
