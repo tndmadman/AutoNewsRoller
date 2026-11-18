@@ -7,6 +7,7 @@ import autonewsroller.audit.VideoAudit;
 import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.safety.SafetyPython;
 import autonewsroller.safety.SafetyScanProgress;
+import autonewsroller.safety.PersistentSafetyScanner;
 import autonewsroller.util.Json;
 import com.sun.net.httpserver.*;
 
@@ -148,6 +149,14 @@ public final class CommandCenterServer {
     }
 
     private Map<String,Object> probeSafetyModel(String script,String detector,String version)throws Exception{
+        if(cfg.getBool("contentSafetyScannerPersistent",true)){
+            Map<String,Object>live=PersistentSafetyScanner.health(root,cfg,script);
+            if(!"READY".equals(live.get("status"))||!detector.equals(live.get("detector"))
+                    ||!version.equals(live.get("version"))
+                    ||!ContentSafetyService.POLICY.equals(live.get("policyVersion")))
+                throw new IOException(detector+" resident model health mismatch");
+            return live;
+        }
         String python=SafetyPython.resolve(root,cfg);
         Path scanner=root.resolve(script).toAbsolutePath();
         if(!Files.isRegularFile(scanner))throw new IOException("Missing "+detector+" scanner");
