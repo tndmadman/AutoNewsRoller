@@ -24,10 +24,12 @@ try {
     $cpu = Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
     $machine.processor = [string]$cpu.Name
 } catch { $machine.processor = "UNAVAILABLE" }
+$gitBranch = & git -C $source branch --show-current
+if ([string]::IsNullOrWhiteSpace($gitBranch)) { $gitBranch = "DETACHED_HEAD" }
 $report = [ordered]@{
     startedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     gitSha = $sha
-    sourceBranch = ([string](& git -C $source branch --show-current)).Trim()
+    sourceBranch = $gitBranch
     runRoot = $RunRoot
     syntheticSourceFixtures = $true
     mode = $(if ($RunLive) { "LIVE_HARDWARE_REQUESTED" } else { "DRY_CHECK_ONLY" })
