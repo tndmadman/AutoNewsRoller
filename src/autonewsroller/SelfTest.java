@@ -3131,9 +3131,10 @@ public final class SelfTest {
                 "An incident is under investigation.",List.of(),List.of(),List.of(),1,1,.8,false);
         FactPackage ordinary=new FactPackage("story-2","City opens a new public library",
                 "New local library services are available.",List.of(),List.of(),List.of(),1,1,.8,false);
-        ok(!ProductionPreflight.checkPolicy(sensitive,ProductionMode.STANDARD).eligible()
+        ok(ProductionPreflight.checkPolicy(sensitive,ProductionMode.STANDARD).eligible()
+                &&ProductionPreflight.requiresEvidenceGraphics(sensitive,ProductionMode.STANDARD)
                 &&ProductionPreflight.checkPolicy(sensitive,ProductionMode.FRAMING_EXPOSURE).eligible(),
-                "preflight blocks sensitive standard images while preserving evidence-graphics review mode");
+                "sensitive stories select evidence-only graphics instead of failing or generating event imagery");
         ok(ProductionPreflight.checkPolicy(ordinary,ProductionMode.STANDARD).eligible(),
                 "ordinary news is not rejected by policy preflight");
         ok(!FailurePolicy.classify("VISUALS","VISUAL_IMAGE_REQUIRED: 5/6 illustrations").automaticRetry(),

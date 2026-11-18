@@ -47,9 +47,9 @@ public final class VisualAssetGate {
                 requireImage(overlays.get(i), width, height, "scene " + i + " overlay");
         }
 
-        if(sensitiveTopic && mode != ProductionMode.FRAMING_EXPOSURE)
-            throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: sensitive-topic illustrations are disabled; no placeholder-only news or meme videos can render");
-        boolean illustrationRequired = mode != ProductionMode.FRAMING_EXPOSURE;
+        // A sensitive story cannot use synthesized event imagery. Its only
+        // supported route is verified procedural source/evidence graphics.
+        boolean illustrationRequired = mode != ProductionMode.FRAMING_EXPOSURE && !sensitiveTopic;
         if (illustrationRequired) {
             if (requiredGeneratedScenes == null || requiredGeneratedScenes.isEmpty())
                 throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: no ComfyUI illustration scenes were scheduled");
@@ -77,6 +77,7 @@ public final class VisualAssetGate {
         } else {
             // Deliberately non-fabricated visuals remain required: no empty,
             // missing, corrupt, or silently substituted evidence slides.
+            // This is an explicit safety route, not a generic ComfyUI failure fallback.
             if (requiredGeneratedScenes != null && !requiredGeneratedScenes.isEmpty())
                 throw new IllegalStateException("VISUAL_ASSETS_MISSING: unexpected ComfyUI scenes on graphics-only story");
             if (acceptedGenerated != 0)

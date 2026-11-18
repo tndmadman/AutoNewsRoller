@@ -41,6 +41,7 @@ public final class ProductionPreflight {
 
         Result policy=checkPolicy(fp,mode);
         if(!policy.eligible())return policy;
+        boolean evidenceGraphicsOnly=requiresEvidenceGraphics(fp,mode);
         if(mode==ProductionMode.MEME_RAGEBAIT){
             if(!cfg.getBool("memePipelineEnabled",true))
                 return reject("CONFIGURATION_INVALID","Meme production is disabled","Enable this production mode.");
@@ -55,16 +56,16 @@ public final class ProductionPreflight {
             if(useComfy&&!dryRun)
                 return reject("CONFIGURATION_INVALID","Framing exposure requires evidence graphics, not ComfyUI imagery",
                         "Disable ComfyUI for this mode.");
-        }else if(!dryRun&&!useComfy){
-            return reject("CONFIGURATION_INVALID","ComfyUI illustrations are mandatory for this production mode",
+        }else if(!dryRun&&!useComfy&&!evidenceGraphicsOnly){
+            return reject("CONFIGURATION_INVALID","ComfyUI illustrations are mandatory for non-sensitive stories in this production mode",
                     "Enable required ComfyUI illustrations.");
         }
-        if(requireComfy&&!useComfy&&!dryRun)
+        if(requireComfy&&!useComfy&&!dryRun&&!evidenceGraphicsOnly)
             return reject("CONFIGURATION_INVALID","ComfyUI is required but disabled","Fix the production settings.");
         if(!dryRun&&(requestedImages<1||requestedImages>40))
             return reject("CONFIGURATION_INVALID","Required image count is outside the supported range (1-40)",
                     "Correct the requested image count.");
-        if(!dryRun&&useComfy){
+        if(!dryRun&&useComfy&&!evidenceGraphicsOnly){
             int width=cfg.getInt("imageWidth",832),height=cfg.getInt("imageHeight",1472);
             int steps=cfg.getInt("imageSteps",32);
             if(width<256||height<256||width>4096||height>4096||width%8!=0||height%8!=0||steps<1||steps>150)
@@ -74,13 +75,24 @@ public final class ProductionPreflight {
         return allow();
     }
 
+    /**
+     * Safety-sensitive sources are not rejected merely because normal videos
+     * request AI illustrations. They must instead use the already supported
+     * source-grounded, non-generative evidence-card renderer and still undergo
+     * mandatory full-video scans and independent controller approval.
+     */
+    public static boolean requiresEvidenceGraphics(FactPackage fp,ProductionMode mode){
+        return fp!=null&&mode!=null&&mode!=ProductionMode.FRAMING_EXPOSURE
+                &&ContentSafetyPolicy.sensitive(fp.headline()+" "+fp.summary());
+    }
+
     public static Result checkPolicy(FactPackage fp,ProductionMode mode){
         if(fp==null)return reject("SOURCE_INVALID","Fact package is missing","Refresh source evidence.");
         if(mode==null)return reject("CONFIGURATION_INVALID","Production mode is missing","Choose a production mode.");
-        if(mode!=ProductionMode.FRAMING_EXPOSURE
-                &&ContentSafetyPolicy.sensitive(fp.headline()+" "+fp.summary()))
-            return reject("POLICY_BLOCKED","Safety-sensitive story cannot use required AI illustrations",
-                    "Use an approved evidence-graphics workflow; do not synthesize event imagery.");
+        if(requiresEvidenceGraphics(fp,mode))
+            return new Result(true,"EVIDENCE_GRAPHICS_REQUIRED",
+                    "Safety-sensitive reporting must use factual evidence graphics; no AI event depictions",
+                    false,"Use validated source graphics and retain both mandatory scanners.",Instant.now());
         return allow();
     }
 }
