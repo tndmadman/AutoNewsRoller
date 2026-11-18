@@ -1,6 +1,30 @@
 const $=s=>document.querySelector(s);
 let state={stories:[],feeds:[],workers:[],videos:[],counts:{}}, token="", activeFilter="ALL", eventSource=null, refreshTimer=null;
 let safetyHealthStatus="NOT CHECKED",safetyHealthNext=0,safetyHealthInFlight=false;
+let controllerScanPollInFlight=false;
+async function pollControllerSafetyProgress(){
+  if(controllerScanPollInFlight)return;
+  controllerScanPollInFlight=true;
+  try{
+    const result=await api("/api/safety/progress");
+    const scans=Array.isArray(result.activeScans)?result.activeScans:[];
+    const el=$("#controllerScanProgress");
+    if(!el)return;
+    if(!scans.length){el.textContent="No independent controller rescans in progress";return;}
+    el.textContent=scans.map(s=>{
+      const done=Number(s.framesProcessed),expected=Number(s.framesExpected);
+      const count=Number.isFinite(done)&&Number.isFinite(expected)&&expected>0
+        ?(" / "+done+" of "+expected+" frames"):" / frame count pending";
+      return String(s.jobId)+" / 99% / "+String(s.stage)+count+
+        " / "+String(s.backend||"pending")+
+        (Number(s.scannerPid)>0?" / PID "+Number(s.scannerPid):"");
+    }).join(" | ");
+  }catch(error){
+    const el=$("#controllerScanProgress");
+    if(el)el.textContent="Controller scan progress unavailable";
+  }finally{controllerScanPollInFlight=false;}
+}
+
 async function checkSafetyDetectorHealth(){
   if(safetyHealthInFlight||Date.now()<safetyHealthNext)return;
   safetyHealthInFlight=true;safetyHealthNext=Date.now()+60000;
@@ -917,6 +941,7 @@ function logEvent(e){
 function debouncedRefresh(){if(refreshTimer)return;refreshTimer=setTimeout(()=>{refreshTimer=null;loadState().catch(()=>{});loadBoard()},250)}
 setInterval(()=>{$("#clock").textContent=new Date().toLocaleTimeString([],{hour12:false})},500);
 setInterval(()=>{loadState().catch(()=>{});loadBoard()},5000);
+setInterval(()=>{pollControllerSafetyProgress().catch(()=>{})},2000);
 
 // This plot visualizes current source statuses. Coordinates are stable hashes, not geography.
 function drawRadar(){
@@ -949,4 +974,4 @@ function drawRadar(){
 }
 window.addEventListener('resize',drawRadar,{passive:true});
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(drawRadar).observe($("#radarCanvas"));
-connectEvents();loadState().catch(()=>{});loadBoard(true);drawRadar();
+connectEvents();loadState().catch(()=>{});loadBoard(true);pollControllerSafetyProgress().catch(()=>{});drawRadar();

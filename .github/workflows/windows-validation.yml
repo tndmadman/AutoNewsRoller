@@ -101,7 +101,9 @@ jobs:
           java -cp build/classes autonewsroller.visuals.ImageRetryCoordinatorSelfTest
           java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
           java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
-          python -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/test_content_safety_scan.py tools/audit_historical_outputs.py
+          python -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/safety_scanner_ipc.py tools/test_safety_scanner_protocol.py tools/test_content_safety_scan.py tools/audit_historical_outputs.py
+          python tools/test_safety_scanner_protocol.py
+          java -cp build/classes autonewsroller.safety.SafetyScanProgressSelfTest
       - name: Windows worker web launcher smoke
         shell: pwsh
         run: |
@@ -186,7 +188,9 @@ jobs:
           python3 tools/test_historical_audit.py
           python3 tools/test_production_failures.py
           python3 tools/test_canary_helper_guard.py
-          python3 -m py_compile tools/content_safety_scan.py tools/audit_historical_outputs.py
+          python3 -m py_compile tools/content_safety_scan.py tools/content_context_scan.py tools/safety_scanner_ipc.py tools/audit_historical_outputs.py
+          python3 tools/test_safety_scanner_protocol.py
+          java -cp build/classes autonewsroller.safety.SafetyScanProgressSelfTest
           java -cp build/classes autonewsroller.orchestration.ProductionStageTelemetrySelfTest
           java -cp build/classes autonewsroller.orchestration.ProductionServiceReadinessSelfTest
           java -cp build/classes autonewsroller.commandcenter.ControllerRecoverySelfTest
