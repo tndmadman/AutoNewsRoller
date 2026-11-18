@@ -101,6 +101,8 @@ jobs:
           java -cp build/classes autonewsroller.commandcenter.ControllerHttpRecoverySelfTest
           java -cp build/classes autonewsroller.commandcenter.WorkerConsoleSelfTest
           java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
+          java -cp build/classes autonewsroller.orchestration.ProductionSensitiveVisualRouteSelfTest
+          java -cp build/classes autonewsroller.script.NewsScriptRepairProgressSelfTest
           java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
           java -cp build/classes autonewsroller.visuals.ImageRetryCoordinatorSelfTest
           java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
@@ -190,6 +192,9 @@ jobs:
           bash build_linux.sh
           java -cp build/classes autonewsroller.Main --self-test
           java -cp build/classes autonewsroller.safety.ContentSafetySelfTest
+          java -cp build/classes autonewsroller.orchestration.ProductionSensitiveVisualRouteSelfTest
+          java -cp build/classes autonewsroller.script.NewsScriptRepairProgressSelfTest
+          java -cp build/classes autonewsroller.visuals.VisualAssetGateSelfTest
           java -cp build/classes autonewsroller.safety.SafetyPythonSelfTest
           java -cp build/classes autonewsroller.visuals.ImageRetryCoordinatorSelfTest
           python3 tools/test_historical_audit.py
