@@ -8,6 +8,7 @@ import java.net.http.*;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.*;
 
 /**
  * Local HTTP upload fault test. The payload is a synthetic byte fixture,
@@ -70,14 +71,42 @@ public final class ControllerHttpRecoverySelfTest {
             URI video=URI.create(base+"/api/jobs/"+id+"/video");
             Map<String,String>headers=Map.of("X-Worker-Id","test-worker",
                     "X-Claim-Id",claim,"X-Production-Epoch",epoch,"X-Media-Sha256",hash);
-            HttpResponse<String>first=request(http,video,"PUT",bytes,headers);
-            check(first.statusCode()==200&&mediaCount(root)==1,
-                    "first correct upload creates exactly one MP4 namespace entry");
+            // Synchronize request starts so both uploads race for the same
+            // initially absent destination, not merely two sequential retries.
+            CountDownLatch ready=new CountDownLatch(2),start=new CountDownLatch(1);
+            ExecutorService racers=Executors.newFixedThreadPool(2);
+            HttpResponse<String>first,concurrent;
+            try{
+                Callable<HttpResponse<String>> duplicate=()->{
+                    ready.countDown();
+                    if(!start.await(5,TimeUnit.SECONDS))
+                        throw new IllegalStateException("Concurrent upload barrier timed out");
+                    return request(http,video,"PUT",bytes,headers);
+                };
+                Future<HttpResponse<String>> one=racers.submit(duplicate);
+                Future<HttpResponse<String>> two=racers.submit(duplicate);
+                if(!ready.await(5,TimeUnit.SECONDS))
+                    throw new IllegalStateException("Concurrent uploads did not start");
+                start.countDown();
+                first=one.get(15,TimeUnit.SECONDS);
+                concurrent=two.get(15,TimeUnit.SECONDS);
+            }finally{
+                start.countDown();
+                racers.shutdownNow();
+            }
+            check(first.statusCode()==200&&concurrent.statusCode()==200&&mediaCount(root)==1,
+                    "concurrent identical uploads produce one durable media file");
             String filename=String.valueOf(Json.object(Json.parse(first.body())).get("filename"));
+            check(filename.equals(Json.object(Json.parse(concurrent.body())).get("filename")),
+                    "concurrent acknowledgements return one stable media identity");
             HttpResponse<String>duplicate=request(http,video,"PUT",bytes,headers);
             check(duplicate.statusCode()==200&&mediaCount(root)==1
                     &&filename.equals(Json.object(Json.parse(duplicate.body())).get("filename")),
                     "lost upload acknowledgement does not allocate another file");
+            HttpResponse<String>partial=request(http,video,"PUT",
+                    Arrays.copyOf(bytes,bytes.length/2),headers);
+            check(partial.statusCode()>=400&&mediaCount(root)==1,
+                    "truncated upload body cannot alter durable media");
             HttpResponse<String>tampered=request(http,video,"PUT","DIFFERENT".getBytes(),headers);
             check(tampered.statusCode()>=400&&mediaCount(root)==1,
                     "same upload identity with different bytes fails closed");

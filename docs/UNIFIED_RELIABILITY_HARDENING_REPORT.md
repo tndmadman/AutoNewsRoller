@@ -147,3 +147,13 @@
 - A separate reviewed re-verification procedure is required before historical
   worker-only artifacts can become newly publishable. Do not silently grant
   historic approvals during state migration.
+
+### Deterministic concurrent-upload regression
+
+- The loopback HTTP fixture launches two upload requests behind a latch so
+  both target the same initially absent permanent media path. It asserts one
+  durable MP4 and the same filename in both acknowledgements.
+- A truncated upload body with the original SHA-256 identity must fail and
+  preserve the original media file. This is a content-length/hash truncation
+  regression, not a simulated severed TCP connection or OS process crash.
+- These fixture assertions require exact-head CI to establish execution.
