@@ -92,6 +92,10 @@ public final class ControllerRecoverySelfTest {
         check(Boolean.TRUE.equals(replay.get("completed"))&&versions(again)==1,
                 "lost upload acknowledgement returns old approved identity");
         again.action(id,"REMAKE");
+        blocked(()->again.authorizeVideoTransfer(id,"worker-one",claim,epoch,sha),
+                "completed upload replay is rejected once a new RE-MAKE is queued");
+        blocked(()->again.completeAuthorized(id,done),
+                "old completion replay is rejected once a new RE-MAKE is queued");
         Map<String,Object>next=again.claim("worker-two",Map.of());
         String nextClaim=String.valueOf(next.get("claimId"));
         String nextEpoch=String.valueOf(next.get("productionEpoch"));

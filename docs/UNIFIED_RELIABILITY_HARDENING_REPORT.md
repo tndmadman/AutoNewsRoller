@@ -56,6 +56,7 @@
 
 ## Added executable tests
 
+- `autonewsroller.commandcenter.ControllerHttpRecoverySelfTest`: real loopback HTTP duplicate upload, stale claim, invalid bytes, legacy header rejection and restart of an isolated controller. Synthetic media only.
 - `autonewsroller.commandcenter.ControllerRecoverySelfTest`:
   claim and owner rejection, durable upload, lost upload and completion
   acknowledgements, restart, manual posting, RE-MAKE, expired lease and

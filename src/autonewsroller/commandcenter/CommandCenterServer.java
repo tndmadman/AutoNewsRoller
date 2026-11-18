@@ -27,6 +27,7 @@ public final class CommandCenterServer {
     private final CommandCenterStore store;
     private final CommandCenterAssistant assistant;
     private final ScheduledExecutorService scheduler=Executors.newScheduledThreadPool(2);
+    private final ExecutorService requestExecutor=Executors.newCachedThreadPool();
     private final CopyOnWriteArrayList<BlockingQueue<String>>subscribers=new CopyOnWriteArrayList<>();
     private final AtomicBoolean scanInFlight=new AtomicBoolean();
     private HttpServer server;
@@ -58,7 +59,7 @@ public final class CommandCenterServer {
 
     public int start() throws Exception {
         server=HttpServer.create(new InetSocketAddress(host,requestedPort),0);
-        server.setExecutor(Executors.newCachedThreadPool());
+        server.setExecutor(requestExecutor);
         server.createContext("/api/health",this::health);
         server.createContext("/api/safety/health",this::safetyHealth);
         server.createContext("/api/state",this::state);
@@ -85,7 +86,7 @@ public final class CommandCenterServer {
     public void block() throws InterruptedException {new CountDownLatch(1).await();}
 
     public void stop(){
-        scheduler.shutdownNow();if(server!=null)server.stop(1);
+        scheduler.shutdownNow();if(server!=null)server.stop(1);requestExecutor.shutdownNow();
     }
 
     private void scanSafe(){
@@ -371,7 +372,7 @@ public final class CommandCenterServer {
                             byte[] buffer=new byte[65536];int count;
                             while((count=in.read(buffer))!=-1){
                                 bytes+=count;
-                                if(bytes>2147483648L)throw new IllegalArgumentException("Video exceeds 2 GiB upload limit");
+                                if(bytes>2147483647L)throw new IllegalArgumentException("Video exceeds the signed 2 GiB upload limit");
                                 os.write(buffer,0,count);
                             }
                         }
@@ -393,6 +394,8 @@ public final class CommandCenterServer {
                                     throw new IllegalStateException("Concurrent upload bytes differ",collision);
                             }
                         }
+                        try(java.nio.channels.FileChannel durable=java.nio.channels.FileChannel.open(
+                                out,StandardOpenOption.WRITE)){durable.force(true);}
                         Map<String,Object>result=new LinkedHashMap<>(
                                 store.recordVideoTransfer(id,out,workerId,claimId,epoch,sha,bytes));
                         result.put("ok",true);json(x,200,result);

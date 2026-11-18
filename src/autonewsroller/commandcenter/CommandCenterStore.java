@@ -447,7 +447,7 @@ public final class CommandCenterStore {
             int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
             appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY"));
             renewLease(m);
-            persistQuiet();emit("story",publicStory(m));
+            persistRequired();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
             job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
             job.put("claimId",m.get("claimId"));job.put("productionEpoch",m.get("productionEpoch"));job.put("attemptNumber",claimCount);job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
@@ -485,7 +485,7 @@ public final class CommandCenterStore {
         m.put("biasClaimInputHash",m.getOrDefault("biasAnalysisInputHash",""));
         m.put("biasAnalysisStartedAt",Instant.now().toString());
         m.put("biasAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());m.remove("biasAnalysisError");
-        persistQuiet();emit("story",publicStory(m));
+        persistRequired();emit("story",publicStory(m));
         Map<String,Object>job=new LinkedHashMap<>();
         job.put("jobType","POLITICAL_ANALYSIS");job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
         job.put("analysisInputFingerprint",m.get("biasClaimInputHash"));
@@ -523,7 +523,7 @@ public final class CommandCenterStore {
                 story.put("biasAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());
             }
         }
-        if(System.currentTimeMillis()-lastHeartbeatSave>=5000){persistQuiet();lastHeartbeatSave=System.currentTimeMillis();}
+        if(System.currentTimeMillis()-lastHeartbeatSave>=5000){persistRequired();lastHeartbeatSave=System.currentTimeMillis();}
         emit("worker",publicCopy(m));
     }
 
@@ -755,7 +755,7 @@ public final class CommandCenterStore {
         m.put("memeAnalysisStartedAt",now.toString());
         m.put("memeAnalysisLeaseUntil",now.plusSeconds(leaseSeconds).toString());
         m.remove("memeRetryNotBefore");m.remove("memeAnalysisError");
-        persistQuiet();emit("story",publicStory(m));
+        persistRequired();emit("story",publicStory(m));
         Map<String,Object>job=new LinkedHashMap<>();
         job.put("jobType","MEME_ANALYSIS");job.put("jobId",m.get("id"));
         job.put("candidate",m.get("candidate"));job.put("topic",m.get("topic"));
@@ -820,7 +820,7 @@ public final class CommandCenterStore {
         m.put("memeAnalysisStatus",retry?"QUEUED":"FAILED");
         if(retry)m.put("memeRetryNotBefore",Instant.now()
                 .plusSeconds(20L*integer(m.get("memeAnalysisAttempts"))).toString());
-        clearMemeClaim(m);persistQuiet();emit("story",publicStory(m));
+        clearMemeClaim(m);persistRequired();emit("story",publicStory(m));
     }
     private int recoverExpiredMemeLeases(boolean announce){
         int count=0;
@@ -842,7 +842,7 @@ public final class CommandCenterStore {
 
     public synchronized void maintenance(){
         int recovered=recoverExpiredLeases(true)+recoverExpiredBiasLeases(true)+recoverExpiredMemeLeases(true);
-        if(recovered>0)persistQuiet();
+        if(recovered>0)persistRequired();
     }
 
 
@@ -870,7 +870,11 @@ public final class CommandCenterStore {
                 &&workerId.equals(m.get("lastCompletedWorkerId"))
                 &&claimId.equals(m.get("lastCompletedClaimId"))
                 &&epoch.equals(m.get("lastCompletedEpoch"))
-                &&sha.equals(m.get("lastCompletedSha256"));
+                &&epoch.equals(m.get("productionEpoch"))
+                &&sha.equals(m.get("lastCompletedSha256"))
+                &&("COMPLETE".equals(m.get("status"))
+                    ||("QUEUED".equals(m.get("status"))
+                        &&"FRAMING_QUEUED".equals(m.get("pairedVideoState"))));
     }
     private static boolean validHash(String sha){return sha!=null&&sha.matches("[0-9a-f]{64}");}
     public synchronized Map<String,Object> authorizeVideoTransfer(String jobId,String workerId,
@@ -1278,7 +1282,7 @@ public final class CommandCenterStore {
                 m.put("pairedVideoState","STANDARD_FAILED");
             activatePendingMeme(m);
         }
-        persistQuiet();emit("story",publicStory(m));
+        persistRequired();emit("story",publicStory(m));
     }
 
     public synchronized Map<String,Object> storyDetail(String id){
@@ -2002,7 +2006,14 @@ public final class CommandCenterStore {
         return root;
     }
     private void persistRequired(){
-        try{Json.write(statePath,persistenceState());stateDirty=false;}
+        try{
+            Json.write(statePath,persistenceState());
+            // A successful HTTP claim/completion acknowledgement must not
+            // outrun persistence of the controller's authoritative state.
+            try(java.nio.channels.FileChannel channel=java.nio.channels.FileChannel.open(
+                    statePath,StandardOpenOption.WRITE)){channel.force(true);}
+            stateDirty=false;
+        }
         catch(java.io.IOException e){stateDirty=true;throw new java.io.UncheckedIOException("Command Center state could not be saved",e);}
     }
     private void persistQuiet(){
