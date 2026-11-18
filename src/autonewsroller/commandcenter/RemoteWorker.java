@@ -216,7 +216,7 @@ public final class RemoteWorker {
                 complete.put("completedAt",Instant.now().toString());
                 Path sidecar=output.resolveSibling(output.getFileName()+".json");
                 if(Files.isRegularFile(sidecar))try{complete.put("sidecar",Json.read(sidecar));}catch(Exception ignored){}
-                post("/api/jobs/"+enc(jobId)+"/complete",complete);
+                post("/api/jobs/"+enc(jobId)+"/complete",complete,completionAckTimeout(cfg));
             }else{
                 post("/api/jobs/"+enc(jobId)+"/complete",Map.of("workerId",workerId,"claimId",claimId,"productionEpoch",epoch,"dryRun",true,"localPath",output.toString(),"completedAt",Instant.now().toString()));
             }
@@ -345,8 +345,19 @@ public final class RemoteWorker {
             post("/api/workers/heartbeat",m);lastHeartbeat=Instant.now();
         }catch(Exception e){error("heartbeat",e);}
     }
+    /**
+     * Both required scanners run on the controller after upload. The normal
+     * 30-second API timeout would otherwise report a false failed production.
+     */
+    static Duration completionAckTimeout(NewsConfig cfg){
+        long scanSeconds=Math.max(1L,cfg.getInt("contentSafetyVideoTimeoutSeconds",3600));
+        return Duration.ofSeconds(Math.min(43200L,Math.max(600L,scanSeconds*2L+300L)));
+    }
     private Map<String,Object> post(String path,Map<String,Object> body)throws Exception{
-        HttpRequest req=request(path).timeout(Duration.ofSeconds(30)).header("Content-Type","application/json")
+        return post(path,body,Duration.ofSeconds(30));
+    }
+    private Map<String,Object> post(String path,Map<String,Object> body,Duration timeout)throws Exception{
+        HttpRequest req=request(path).timeout(timeout).header("Content-Type","application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(Json.stringify(body),StandardCharsets.UTF_8)).build();
         HttpResponse<String> r=http.send(req,HttpResponse.BodyHandlers.ofString());
         if(r.statusCode()<200||r.statusCode()>=300)throw new IllegalStateException(path+" HTTP "+r.statusCode());

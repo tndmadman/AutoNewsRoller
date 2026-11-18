@@ -119,3 +119,17 @@
   Neither live detector execution nor real hardware safety approval is claimed
   by this code-only change. Historical manifests, controller restart during
   rescanning, and media-service calibration remain separate release gates.
+
+### Independent controller scan latency and concurrency
+
+- The real worker now uses a separate completion HTTP timeout calculated from
+  both mandatory controller scan time budgets plus encoded-media overhead.
+  Heartbeats continue while a completion response is pending.
+- Concurrent completion requests for the same job are serialized through a
+  bounded stripe of controller locks. An identical replay checks the durable
+  committed identity and does not repeat scanner work or append a new version.
+- The controller checks encoded MP4 validity before spending detector time on
+  malformed or silent media. The HTTP fixture asserts the completion timeout
+  budget covers two configured detector timeouts.
+- Live latency, controller interruption during scanning and end-to-end
+  restart tests remain unverified until exact-head CI and hardware acceptance.

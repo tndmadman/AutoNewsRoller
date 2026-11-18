@@ -31,6 +31,10 @@ public final class CommandCenterServer {
     private final ExecutorService requestExecutor=Executors.newCachedThreadPool();
     private final CopyOnWriteArrayList<BlockingQueue<String>>subscribers=new CopyOnWriteArrayList<>();
     private final AtomicBoolean scanInFlight=new AtomicBoolean();
+    // Fixed stripes avoid duplicate expensive controller scans on concurrent
+    // completion retries without creating unbounded per-job lock state.
+    private final Object[] completionLocks=java.util.stream.IntStream.range(0,64)
+            .mapToObj(i->new Object()).toArray();
     private HttpServer server;
     private volatile Map<String,Object> cachedSafetyHealth=Map.of();
     private volatile long safetyHealthCheckedAt=0;
@@ -404,6 +408,7 @@ public final class CommandCenterServer {
                 }
                 case "complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+                    synchronized(completionLocks[Math.floorMod(id.hashCode(),completionLocks.length)]){
                     Map<String,Object>b=new LinkedHashMap<>(bodyObject(x));
                     if(!Boolean.TRUE.equals(b.get("dryRun"))){
                         Path uploaded=store.pendingMediaForControllerApproval(id,b);
@@ -423,6 +428,7 @@ public final class CommandCenterServer {
                         Json.write(Path.of(String.valueOf(output.get("path"))+".json"),output.get("sidecar"));
                     }
                     json(x,200,Map.of("ok",true,"alreadyCompleted",!committed));
+                    }
                 }
                 case "fail"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
@@ -484,14 +490,16 @@ public final class CommandCenterServer {
     private Map<String,Object> approveOnController(Path media,String expectedSha)throws Exception{
         if(!expectedSha.equals(ContentSafetyService.hash(media)))
             throw new IllegalStateException("CONTENT_SAFETY: controller received different bytes");
-        Map<String,Object>scan=new ContentSafetyService(root,cfg).inspectVideo(media);
-        if(!"SAFE".equals(scan.get("status")))
-            throw new IllegalStateException("CONTENT_SAFETY: controller scan blocked approval: "+
-                    safe(String.valueOf(scan.getOrDefault("reason",scan.get("status")))));
+        // Reject malformed, silent or nonconforming media before spending time
+        // on two potentially slow detector scans.
         Map<String,Object>encoded=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),
                 cfg.get("ffmpegCommand","ffmpeg")).auditUploaded(media,
                 cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),
                 cfg.getInt("videoFps",30));
+        Map<String,Object>scan=new ContentSafetyService(root,cfg).inspectVideo(media);
+        if(!"SAFE".equals(scan.get("status")))
+            throw new IllegalStateException("CONTENT_SAFETY: controller scan blocked approval: "+
+                    safe(String.valueOf(scan.getOrDefault("reason",scan.get("status")))));
         if(!expectedSha.equals(ContentSafetyService.hash(media)))
             throw new IllegalStateException("CONTENT_SAFETY: media changed during controller approval");
         Map<String,Object>approved=new LinkedHashMap<>();

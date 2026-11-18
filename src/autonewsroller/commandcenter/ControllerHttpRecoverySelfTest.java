@@ -47,6 +47,9 @@ public final class ControllerHttpRecoverySelfTest {
         Json.write(root.resolve("data/command_center_state.json"),
                 Map.of("stories",Map.of(id,story),"videos",Map.of()));
         NewsConfig cfg=NewsConfig.load(root);
+        check(RemoteWorker.completionAckTimeout(cfg).toSeconds()>=
+                    cfg.getInt("contentSafetyVideoTimeoutSeconds",3600)*2L+240L,
+                "worker completion wait covers both mandatory controller scans");
         HttpClient http=HttpClient.newHttpClient();
         CommandCenterServer server=new CommandCenterServer(root,cfg,
                 "127.0.0.1",0,600,false,0.68,5,"",false);
