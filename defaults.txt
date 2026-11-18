@@ -171,6 +171,13 @@ commandCenterAutoMeme=false
 contentSafetyPython=auto
 contentSafetyImageTimeoutSeconds=120
 contentSafetyVideoTimeoutSeconds=3600
+# Resident pinned CPU models avoid reloading for each image or video.
+# Roll back to per-request Python using false. Safety verdicts remain mandatory.
+contentSafetyScannerPersistent=true
+# Bound each model startup separately from full-video scan timeout.
+contentSafetyScannerStartupSeconds=180
+# GPU remains disabled pending hardware, model-parity and CUDA execution gates.
+contentSafetyGpuMode=off
 # Requires dedicated .venv-safety Python 3.12 with NudeNet 3.4.2 + OpenNSFW2 0.19.0.
 # Windows: run setup_content_safety_windows.bat to create and verify it.
 # Explicit contentSafetyPython=PATH_TO_PYTHON_EXE overrides auto-selection.

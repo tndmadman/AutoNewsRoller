@@ -6,6 +6,7 @@ import autonewsroller.orchestration.NewsPipeline;
 import autonewsroller.audit.VideoAudit;
 import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.safety.SafetyPython;
+import autonewsroller.safety.SafetyScanProgress;
 import autonewsroller.util.Json;
 import com.sun.net.httpserver.*;
 
@@ -67,6 +68,7 @@ public final class CommandCenterServer {
         server.setExecutor(requestExecutor);
         server.createContext("/api/health",this::health);
         server.createContext("/api/safety/health",this::safetyHealth);
+        server.createContext("/api/safety/progress",this::safetyProgress);
         server.createContext("/api/state",this::state);
         server.createContext("/api/board/stories",this::boardStories);
         server.createContext("/api/assistant",this::assistant);
@@ -115,6 +117,12 @@ public final class CommandCenterServer {
 
     private void health(HttpExchange x)throws IOException{
         json(x,200,Map.of("ok",true,"service","AutoNewsRoller Command Center","time",Instant.now().toString()));
+    }
+
+    private void safetyProgress(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        json(x,200,SafetyScanProgress.snapshot());
     }
 
     private void safetyHealth(HttpExchange x)throws IOException{
@@ -416,7 +424,15 @@ public final class CommandCenterServer {
                             Map<String,Object>sidecar=new LinkedHashMap<>(Json.object(b.get("sidecar")));
                             Map<String,Object>workerManifest=Json.object(sidecar.get("contentSafety"));
                             String expectedSha=String.valueOf(workerManifest.get("videoSha256"));
-                            Map<String,Object>controllerManifest=approveOnController(uploaded,expectedSha);
+                            Map<String,Object>controllerManifest;
+                            try(SafetyScanProgress.Scope scope=SafetyScanProgress.open(id)){
+                                try{
+                                    controllerManifest=approveOnController(uploaded,expectedSha);
+                                }catch(Exception denied){
+                                    SafetyScanProgress.finished(id,false);
+                                    throw denied;
+                                }
+                            }
                             sidecar.put("contentSafety",controllerManifest);
                             b.put("sidecar",sidecar);
                         }
@@ -492,6 +508,7 @@ public final class CommandCenterServer {
             throw new IllegalStateException("CONTENT_SAFETY: controller received different bytes");
         // Reject malformed, silent or nonconforming media before spending time
         // on two potentially slow detector scans.
+        SafetyScanProgress.stage("CONTROLLER_AUDIT");
         Map<String,Object>encoded=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),
                 cfg.get("ffmpegCommand","ffmpeg")).auditUploaded(media,
                 cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),
@@ -512,6 +529,7 @@ public final class CommandCenterServer {
         approved.put("approvalOrigin","CONTROLLER_INDEPENDENT_RESCAN");
         approved.put("controllerEncodedAudit",encoded);
         ContentSafetyService.verify(media,approved,false);
+        SafetyScanProgress.finished(SafetyScanProgress.current(),true);
         return approved;
     }
 

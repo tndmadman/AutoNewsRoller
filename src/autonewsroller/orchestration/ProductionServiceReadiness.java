@@ -3,6 +3,7 @@ package autonewsroller.orchestration;
 import autonewsroller.config.NewsConfig;
 import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.safety.SafetyPython;
+import autonewsroller.safety.PersistentSafetyScanner;
 import autonewsroller.util.Json;
 import java.io.IOException;
 import java.net.URI;
@@ -158,8 +159,13 @@ public final class ProductionServiceReadiness {
             throw new IllegalStateException("SAFETY_SCANNER_UNAVAILABLE: "+last.reason);
         }
         try{
-            String output=run(python,90,tool.toAbsolutePath().toString(),"--health");
-            Map<String,Object>response=Json.object(Json.parse(output.trim()));
+            Map<String,Object>response;
+            if(cfg.getBool("contentSafetyScannerPersistent",true)){
+                response=PersistentSafetyScanner.health(root,cfg,script);
+            }else{
+                String output=run(python,90,tool.toAbsolutePath().toString(),"--health");
+                response=Json.object(Json.parse(output.trim()));
+            }
             if(!"READY".equals(response.get("status"))
                     ||!detector.equals(response.get("detector"))
                     ||!version.equals(response.get("version"))

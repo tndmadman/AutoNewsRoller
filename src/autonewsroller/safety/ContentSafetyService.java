@@ -40,7 +40,9 @@ public final class ContentSafetyService {
                     cfg.getInt("contentSafetyImageTimeoutSeconds",120);
             // Independent, mandatory models. Neither can be skipped by a
             // worker configuration flag. Any model failure fails the whole job.
+            SafetyScanProgress.stage("CONTROLLER_NUDENET");
             Map<String,Object>anatomy=runDetector("tools/content_safety_scan.py",kind,input,limit);
+            SafetyScanProgress.stage("CONTROLLER_OPENNSFW2");
             Map<String,Object>context=runDetector("tools/content_context_scan.py",kind,input,limit);
             if(!"NudeNet".equals(anatomy.get("detector"))||!"3.4.2".equals(anatomy.get("version")))
                 throw new IOException("unrecognized exposed-anatomy detector");
@@ -86,6 +88,12 @@ public final class ContentSafetyService {
         String python=SafetyPython.resolve(root,cfg);
         Path script=root.resolve(scriptName).toAbsolutePath();
         if(!Files.isRegularFile(script))throw new IOException("missing mandatory scanner: "+scriptName);
+        if(cfg.getBool("contentSafetyScannerPersistent",true)){
+            Map<String,Object>result=PersistentSafetyScanner.scan(root,cfg,scriptName,kind,input,
+                    hash(input),limit);
+            SafetyTelemetry.record(root,scriptName,kind,hash(input),result);
+            return result;
+        }
         Path log=Files.createTempFile("anr-content-scan-", ".stderr.log");
         try{
             ProcessBuilder pb=new ProcessBuilder(python,script.toString(),"--"+kind,input.toAbsolutePath().toString());
@@ -108,6 +116,7 @@ public final class ContentSafetyService {
             Map<String,Object>result=Json.object(Json.parse(stdout));
             if(!Set.of("SAFE","UNSAFE","REVIEW_REQUIRED").contains(String.valueOf(result.get("status"))))
                 throw new IOException("malformed scanner decision: "+scriptName);
+            SafetyTelemetry.record(root,scriptName,kind,hash(input),result);
             return result;
         }finally{
             Files.deleteIfExists(log);
