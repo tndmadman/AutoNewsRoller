@@ -1510,7 +1510,7 @@ public final class CommandCenterStore {
 
     private static final Set<String> BOARD_STATUSES=Set.of(
             "ALL","DISCOVERED","WORTHY","MEME_WORTHY","MEME_DISCOVERY","VERIFIED","QUEUED","PRODUCING",
-            "HOLD","FAILED","COMPLETE","TO_POST","UPLOADED","SCRAPPED","SKIPPED");
+            "HOLD","FAILED","COMPLETE","TO_POST","UNSCANNED","UPLOADED","SCRAPPED","SKIPPED");
     private static final Set<String> MEME_DISCOVERY_FILTERS=Set.of(
             "ALL_ANALYZED","EXCELLENT","WORTHY","POSSIBLE","LOW","INSUFFICIENT_EVIDENCE","PENDING","FAILED");
 
@@ -1731,6 +1731,7 @@ public final class CommandCenterStore {
             case "ALL"->true;
             case "COMPLETE"->rawStatus.startsWith("COMPLETE");
             case "TO_POST"->isToPost(m);
+            case "UNSCANNED"->isUnscannedReview(m);
             case "QUEUED"->"QUEUED".equals(rawStatus)||"WAITING".equals(rawStatus);
             case "UPLOADED"->Boolean.TRUE.equals(m.get("uploaded"))&&!Boolean.TRUE.equals(m.get("scrapped"));
             case "SCRAPPED"->Boolean.TRUE.equals(m.get("scrapped"));
@@ -1867,6 +1868,17 @@ public final class CommandCenterStore {
                 &&v.get("safetyManifest") instanceof Map<?,?> manifest
                 &&"CONTROLLER_INDEPENDENT_RESCAN".equals(
                         Json.object(manifest).get("approvalOrigin"));
+    }
+    private boolean isUnscannedReview(Map<String,Object>m){
+        if(!"COMPLETE".equals(m.get("status"))||!Boolean.TRUE.equals(m.get("entryHasVideo"))
+                ||Boolean.TRUE.equals(m.get("uploaded"))||Boolean.TRUE.equals(m.get("scrapped")))return false;
+        Map<String,Object>v=videos.get(String.valueOf(m.getOrDefault("currentVideoVersionId","")));
+        return v!=null&&"NOT_SCANNED".equals(v.get("safetyStatus"))
+                &&v.get("safetyManifest") instanceof Map<?,?> manifest
+                &&"CONTROLLER_UNSCANNED_ARCHIVE".equals(manifest.get("approvalOrigin"))
+                &&Boolean.FALSE.equals(manifest.get("publicationAllowed"))
+                &&manifest.get("controllerEncodedAudit") instanceof Map<?,?> encoded
+                &&"approved".equals(encoded.get("status"));
     }
     private boolean isToPost(Map<String,Object>m){
         Map<String,Object>v=currentVideo(m);
