@@ -1,10 +1,10 @@
 # Separate inference-only environment. Never install over .venv-safety.
-# ONNX Runtime 1.20.1 uses CUDA 12.x + cuDNN 9 on Windows.
+# ONNX Runtime 1.20.2 uses CUDA 12.x + cuDNN 9 on Windows.
 # Package versions alone DO NOT prove DLL/driver availability or GPU use.
 nudenet==3.4.2
 opennsfw2[keras3]==0.19.0
 tensorflow-cpu==2.20.0
-onnxruntime-gpu==1.20.1
+onnxruntime-gpu==1.20.2
 # Keras 3 -> ONNX exporter; 1.17 fixes protobuf compatibility vs 1.16.x.
 tf2onnx==1.17.0
 onnx==1.19.0
