@@ -42,6 +42,16 @@ if errorlevel 1 (
   exit /b 1
 )
 "%SAFETY_PY%" --version
+rem Repair accidental installation of the GPU wheel in the CPU environment.
+rem The two distributions share the onnxruntime module; reinstall CPU after removal.
+"%SAFETY_PY%" -c "import importlib.metadata as m; import sys; sys.exit(0 if any(d.metadata.get('Name','').lower()=='onnxruntime-gpu' for d in m.distributions()) else 1)"
+if not errorlevel 1 (
+  echo [SAFETY] Repairing CPU ONNX Runtime after GPU wheel contamination...
+  "%SAFETY_PY%" -m pip uninstall -y onnxruntime-gpu onnxruntime
+  if errorlevel 1 exit /b 1
+  "%SAFETY_PY%" -m pip install onnxruntime
+  if errorlevel 1 exit /b 1
+)
 echo [SAFETY] Installing pinned NudeNet, OpenNSFW2 and CPU TensorFlow...
 "%SAFETY_PY%" -m pip install -r requirements-content-safety.txt
 if errorlevel 1 (
