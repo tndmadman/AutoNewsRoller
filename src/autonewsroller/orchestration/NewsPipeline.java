@@ -611,9 +611,9 @@ public final class NewsPipeline {
                                 ImageQualityInspector.Result priorQuality=inspector.inspect(priorGenerated,
                                         requestedWidth,requestedHeight,acceptedHashes);
                                 if(priorQuality.accepted()){
-                                    Map<String,Object>originalScan=safety.inspectImageForRender(priorGenerated,imageSafetyScanningEnabled);
-                                    Map<String,Object>composedScan=safety.inspectImageForRender(priorComposed,imageSafetyScanningEnabled);
-                                    Map<String,Object>backgroundScan=safety.inspectImageForRender(priorBackground,imageSafetyScanningEnabled);
+                                    Map<String,Object>originalScan=safety.inspectImageForRender(priorGenerated,imageSafetyScanningEnabled,automaticSafetyScanningEnabled);
+                                    Map<String,Object>composedScan=safety.inspectImageForRender(priorComposed,imageSafetyScanningEnabled,automaticSafetyScanningEnabled);
+                                    Map<String,Object>backgroundScan=safety.inspectImageForRender(priorBackground,imageSafetyScanningEnabled,automaticSafetyScanningEnabled);
                                     if("SCANNER_UNAVAILABLE".equals(originalScan.get("status"))
                                             ||"SCANNER_UNAVAILABLE".equals(composedScan.get("status"))
                                             ||"SCANNER_UNAVAILABLE".equals(backgroundScan.get("status")))
@@ -624,9 +624,9 @@ public final class NewsPipeline {
                                             ?l.stream().map(String::valueOf).toList():List.of();
                                     OllamaVisionReviewer.Result priorVision=visionReviewer.review(priorGenerated,
                                             chosen.prompt(),expected,forbidden);
-                                    if(ContentSafetyService.eligibleImageForRender(originalScan,imageSafetyScanningEnabled)
-                                            &&ContentSafetyService.eligibleImageForRender(composedScan,imageSafetyScanningEnabled)
-                                            &&ContentSafetyService.eligibleImageForRender(backgroundScan,imageSafetyScanningEnabled)
+                                    if(ContentSafetyService.eligibleImageForRender(originalScan,imageSafetyScanningEnabled,automaticSafetyScanningEnabled)
+                                            &&ContentSafetyService.eligibleImageForRender(composedScan,imageSafetyScanningEnabled,automaticSafetyScanningEnabled)
+                                            &&ContentSafetyService.eligibleImageForRender(backgroundScan,imageSafetyScanningEnabled,automaticSafetyScanningEnabled)
                                             &&priorVision.accepted()&&savedScene.get("source") instanceof Map<?,?> savedSource){
                                         Map<String,Object>source=new LinkedHashMap<>(Json.object(savedSource));
                                         source.put("path",priorComposed.toString());
@@ -646,11 +646,11 @@ public final class NewsPipeline {
                                         acceptedHashes.add(priorQuality.perceptualHash());
                                         comfyGenerated++;
                                         recordImageAttempt(visuals,imageReviews,Map.of(
-                                                "sceneIndex",replace,"resumed",true,"accepted",true,"status",imageSafetyScanningEnabled?"REUSED_SAFE":"REUSED_PENDING_FINAL_SCAN",
+                                                "sceneIndex",replace,"resumed",true,"accepted",true,"status",imageSafetyScanningEnabled?"REUSED_SAFE":automaticSafetyScanningEnabled?"REUSED_PENDING_FINAL_SCAN":"REUSED_NOT_SCANNED",
                                                 "contentSafety",originalScan,"composedSafety",composedScan,
                                                 "backgroundSafety",backgroundScan));
                                         events.emit(worker,slot,PipelineStage.VISUALS,
-                                                "COMFYUI REUSED APPROVED SCENE "+replace+" (no GPU generation)");
+                                                "COMFYUI REUSED "+(imageSafetyScanningEnabled?"SCANNED":automaticSafetyScanningEnabled?"PENDING FINAL SCAN":"NOT_SCANNED")+" SCENE "+replace+" (no GPU generation)");
                                         continue;
                                     }
                                 }
@@ -691,9 +691,9 @@ public final class NewsPipeline {
                             Files.deleteIfExists(generated);
                             continue;
                         }
-                        Map<String,Object>nudity=safety.inspectImageForRender(generated,imageSafetyScanningEnabled);
+                        Map<String,Object>nudity=safety.inspectImageForRender(generated,imageSafetyScanningEnabled,automaticSafetyScanningEnabled);
                         review.put("contentSafety",nudity);
-                        if(!ContentSafetyService.eligibleImageForRender(nudity,imageSafetyScanningEnabled)){
+                        if(!ContentSafetyService.eligibleImageForRender(nudity,imageSafetyScanningEnabled,automaticSafetyScanningEnabled)){
                             review.put("status","REJECTED_IMAGE_SAFETY");
                             review.put("rejectionReason",String.valueOf(nudity.get("status")));
                             recordImageAttempt(visuals,imageReviews,review);
@@ -723,11 +723,11 @@ public final class NewsPipeline {
                         cards.renderWithImage(chosen,generated,composed,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
                         Path background=visuals.resolve(String.format("%02d_cropped_%02d.png",replace,attempt+1));
                         cards.renderBackground(chosen,generated,background,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
-                        Map<String,Object>composedSafety=safety.inspectImageForRender(composed,imageSafetyScanningEnabled);
-                        Map<String,Object>backgroundSafety=safety.inspectImageForRender(background,imageSafetyScanningEnabled);
+                        Map<String,Object>composedSafety=safety.inspectImageForRender(composed,imageSafetyScanningEnabled,automaticSafetyScanningEnabled);
+                        Map<String,Object>backgroundSafety=safety.inspectImageForRender(background,imageSafetyScanningEnabled,automaticSafetyScanningEnabled);
                         review.put("composedSafety",composedSafety);
                         review.put("backgroundSafety",backgroundSafety);
-                        if(!ContentSafetyService.eligibleImageForRender(composedSafety,imageSafetyScanningEnabled)||!ContentSafetyService.eligibleImageForRender(backgroundSafety,imageSafetyScanningEnabled)){
+                        if(!ContentSafetyService.eligibleImageForRender(composedSafety,imageSafetyScanningEnabled,automaticSafetyScanningEnabled)||!ContentSafetyService.eligibleImageForRender(backgroundSafety,imageSafetyScanningEnabled,automaticSafetyScanningEnabled)){
                             review.put("status","REJECTED_COMPOSITION_SAFETY");
                             review.put("rejectionReason","composed="+composedSafety.get("status")+
                                     "; background="+backgroundSafety.get("status"));
