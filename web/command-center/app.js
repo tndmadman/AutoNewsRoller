@@ -544,6 +544,8 @@ function storyCard(s){
   const review=s.entryMode==="FRAMING_EXPOSURE"||s.productionMode==="FRAMING_EXPOSURE";
   const meme=s.entryMode==="MEME_RAGEBAIT"||s.productionMode==="MEME_RAGEBAIT";
   const hasVideo=s.entryHasVideo===undefined?status==="COMPLETE":!!s.entryHasVideo;
+  const approved=hasVideo&&s.publicationApproved===true;
+  const privateReview=hasVideo&&s.safetyStatus==="NOT_SCANNED"&&!!s.currentVideoVersionId;
   const canRemake=s.entryMayRemake===undefined?status==="COMPLETE":!!s.entryMayRemake;
   const working=status==="QUEUED"||status==="PRODUCING"||status==="WAITING";
   const makeDisabled=working||["COMPLETE","COMPLETE_HISTORY"].includes(status);
@@ -589,14 +591,15 @@ function storyCard(s){
         ${s.comfyImages!=null?`<span><b>COMFY</b> ${num(s.comfyImages)} generated image(s)</span>`:""}
         ${num(s.leaseRecoveries)>0?`<span><b>RECOVERED</b> ${num(s.leaseRecoveries)} worker lease(s)</span>`:""}
       </div>`:"";
-  const boardVideoUrl=hasVideo&&s.videoFilename
-    ?"/videos/"+encodeURIComponent(s.videoFilename)+(token?"?token="+encodeURIComponent(token):""):"";
+  const boardVideoUrl=privateReview?privateReviewUrl(s.currentVideoVersionId)
+    :approved&&s.videoFilename?"/videos/"+encodeURIComponent(s.videoFilename)+(token?"?token="+encodeURIComponent(token):""):"";
   const uploadState=status==="COMPLETE"&&hasVideo
     ?(s.scrapped
       ?`<div class="uploadState scrapped"><b>× SCRAPPED VERSION ${num(s.videoVersion)||""}</b><span>${s.scrappedAt?new Date(s.scrappedAt).toLocaleString():""}${s.scrapReason?" // "+esc(s.scrapReason):""}</span></div>`
       :s.uploaded
         ?`<div class="uploadState uploaded"><b>✓ MANUALLY UPLOADED // V${num(s.videoVersion)||1}</b><span>${esc(s.uploadedPlatform||"platform not noted")}${s.uploadedAt?" // "+new Date(s.uploadedAt).toLocaleString():""}${s.uploadNote?" // "+esc(s.uploadNote):""}</span></div>`
-        :`<div class="uploadState pending"><b>⇧ READY TO POST // V${num(s.videoVersion)||1}</b><span>Not marked uploaded yet.</span></div>`)
+         :approved?`<div class="uploadState pending"><b>⇧ READY TO POST // V${num(s.videoVersion)||1}</b><span>Not marked uploaded yet.</span></div>`
+        :`<div class="uploadState pending"><b>NOT APPROVED FOR POSTING // V${num(s.videoVersion)||1}</b><span>${esc(s.safetyStatus||"NOT VERIFIED")}</span></div>`)
     :"";
   return `<article class="storyCard${cls}" data-story-id="${esc(s.sourceStoryId||s.id)}"
     data-board-entry-id="${esc(s.boardEntryId||s.id)}"
@@ -610,18 +613,18 @@ function storyCard(s){
         ${s.softVerificationOverride?'<span class="statusTag">RELAXED 1-SOURCE</span>':""}
         ${review?'<span class="statusTag">NARRATIVE REVIEW</span>':meme?'<span class="statusTag">MEME / RAGEBAIT</span>':s.boardEntryId?'<span class="statusTag">ORIGINAL NEWS</span>':""}
         ${s.pairedVideoState?'<span class="statusTag">PAIR: '+esc(s.pairedVideoState.replaceAll("_"," "))+"</span>":""}
-        ${s.scrapped?'<span class="statusTag scrapped">SCRAPPED</span>':s.uploaded?'<span class="statusTag uploaded">UPLOADED</span>':status==="COMPLETE"?'<span class="statusTag toPost">TO POST</span>':""}
+        ${s.scrapped?'<span class="statusTag scrapped">SCRAPPED</span>':s.uploaded?'<span class="statusTag uploaded">UPLOADED</span>':status==="COMPLETE"&&approved?'<span class="statusTag toPost">TO POST</span>':""}
         ${esc(s.category||"general").toUpperCase()} // ${num(s.independentSources)} INDEPENDENT // ${age(s.latestPublishedAt)} OLD</div>
       </div>
     </div>
     <div class="progressWrap"><div class="progressText"><span>${esc(s.stage||status)}</span><span>${Math.round(num(s.progress))}%</span></div><div class="progress"><i style="width:${pct(s.progress)}%"></i></div></div>
     ${failurePanel}
     ${liveDetail}
-    ${s.localDraft&&s.localDraft.productionMode===(s.entryMode||s.productionMode)?'<div class="liveDetail"><strong>NOT SCANNED — DRAFT OUTPUT ONLY</strong><br>Worker: '+esc(s.localDraft.workerId)+'<br>'+esc(s.localDraft.hostPath||s.localDraft.localPath)+'</div>':""}
+    ${!hasVideo&&s.localDraft&&s.localDraft.productionMode===(s.entryMode||s.productionMode)?'<div class="liveDetail"><strong>NOT SCANNED — DRAFT OUTPUT ONLY</strong><br>Worker: '+esc(s.localDraft.workerId)+'<br>'+esc(s.localDraft.hostPath||s.localDraft.localPath)+'</div>':""}
     ${uploadState}
     ${memeCandidate?memePanelHtml(s):""}
     <div class="storyActions">
-      ${!memeCandidate&&boardVideoUrl?`<a class="btn ghost" href="${esc(boardVideoUrl)}" target="_blank" rel="noopener">OPEN MP4</a>`:""}
+      ${!memeCandidate&&boardVideoUrl?`<a class="btn ghost" href="${esc(boardVideoUrl)}" target="_blank" rel="noopener noreferrer">${privateReview?"REVIEW MP4":"OPEN MP4"}</a>`:""}
       ${!memeCandidate&&!review&&!meme&&!completeLike?`
         <button class="btn good" data-command="WORTH" title="Queue standard news; automatic review pairing follows the configured setting" ${makeDisabled?"disabled":""}>★ WORTH IT</button>
         <button class="btn primary" data-command="MAKE" title="Make standard news; automatic review pairing follows the configured setting" ${makeDisabled?"disabled":""}>${status==="FAILED"?"↻ RETRY VIDEO":"▶ MAKE VIDEO"}</button>
@@ -642,7 +645,7 @@ function storyCard(s){
         ${s.scrapped
           ?`<button class="btn ghost" data-command="RESTORE">↩ RESTORE VIDEO</button>`
           :`<button class="btn bad" data-command="SCRAP">× SCRAP VIDEO</button>`}
-        ${!s.scrapped?(s.uploaded
+        ${!s.scrapped&&(approved||s.uploaded)?(s.uploaded
           ?`<button class="btn uploadedBtn" data-command="UNUPLOAD">↩ UNMARK UPLOADED</button>`
           :`<button class="btn publish" data-command="UPLOAD">⇧ MARK UPLOADED</button>`):""}`:""}
     </div>
@@ -693,8 +696,17 @@ function renderSafety(){
     return {key:versions,html:'<div class="safetyAuditRow"><div class="videoInfo"><strong>'+esc(v.productionMode||"STANDARD")+' / '+esc(versions)+' / '+esc(status)+'</strong><small>'+esc(v.filename||"")+' // '+esc(coverage)+' // '+esc(models)+'</small><small>'+esc(detail)+'</small></div></div>'};
   }),"No videos with new safety manifests yet.");
 }
+function privateReviewUrl(versionId){
+  return "/api/review-video?versionId="+encodeURIComponent(versionId)+(token?"&token="+encodeURIComponent(token):"");
+}
 function renderVideos(){
   const root=$("#videos"),vs=state.videos||[];
+  const modeKey=v=>JSON.stringify([v.storyId||v.jobId,v.productionMode||"STANDARD"]);
+  const latest=new Map();
+  for(const v of vs){
+    const key=modeKey(v);
+    if(!latest.has(key)||num(v.version)>num(latest.get(key).version))latest.set(key,v);
+  }
   root.className=vs.length?"videoList":"videoList emptyState";
   reconcileList(root,vs.slice().sort((a,b)=>{
     const stateRank=v=>v.scrapped?2:v.uploaded?1:0;
@@ -711,7 +723,8 @@ function renderVideos(){
       :v.uploaded
         ?`<span class="uploadBadge uploaded">UPLOADED // ${esc(v.uploadedPlatform||"UNSPECIFIED")}${v.uploadedAt?" // "+new Date(v.uploadedAt).toLocaleDateString():""}</span>`
         :`<span class="uploadBadge pending">TO POST</span>`;
-    const approved=v.safetyStatus==="APPROVED_FOR_EXPORT";
+    const approved=v.safetyStatus==="APPROVED_FOR_EXPORT"&&v.safetyManifest?.approvalOrigin==="CONTROLLER_INDEPENDENT_RESCAN";
+    const privateReview=v.safetyStatus==="NOT_SCANNED"&&!!versionId&&latest.get(modeKey(v))===v;
     const uploadButton=!approved?"":v.scrapped?"":v.uploaded
       ?`<button class="btn uploadedBtn" data-command="UNUPLOAD">UNMARK</button>`
       :`<button class="btn publish" data-command="UPLOAD">MARK UPLOADED</button>`;
@@ -721,7 +734,7 @@ function renderVideos(){
     const remakeButton=v.current
       ?`<button class="btn primary" data-command="${v.productionMode==="FRAMING_EXPOSURE"?"REMAKE_FRAMING_EXPOSURE":v.productionMode==="MEME_RAGEBAIT"?"REMAKE_MEME":"REMAKE"}">${v.productionMode==="FRAMING_EXPOSURE"?"RE-MAKE REVIEW":v.productionMode==="MEME_RAGEBAIT"?"RE-MAKE MEME":"RE-MAKE NEWS"}</button>`
       :"";
-    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.productionMode==="FRAMING_EXPOSURE"?"Narrative Review: "+String(v.topic||storyId).replace(/^Narrative Review:\s*/i,""):v.productionMode==="MEME_RAGEBAIT"?"Meme Roast: "+String(v.topic||storyId):v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${approved?lifecycle:`<span class="uploadBadge scrapped">NOT VERIFIED - DO NOT POST</span>`}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions">${approved?`<a href="${href}" target="_blank">OPEN MP4</a>`:""}${remakeButton}${uploadButton}${scrapButton}</div></div>`}
+    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.productionMode==="FRAMING_EXPOSURE"?"Narrative Review: "+String(v.topic||storyId).replace(/^Narrative Review:\s*/i,""):v.productionMode==="MEME_RAGEBAIT"?"Meme Roast: "+String(v.topic||storyId):v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${approved?lifecycle:`<span class="uploadBadge scrapped">NOT VERIFIED - DO NOT POST</span>`}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions">${approved?`<a href="${href}" target="_blank" rel="noopener noreferrer">OPEN MP4</a>`:privateReview?`<a href="${esc(privateReviewUrl(versionId))}" target="_blank" rel="noopener noreferrer">REVIEW MP4</a>`:""}${remakeButton}${uploadButton}${scrapButton}</div></div>`}
   }),"No completed videos yet.");
 }
 
