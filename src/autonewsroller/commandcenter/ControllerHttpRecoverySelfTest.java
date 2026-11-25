@@ -111,8 +111,8 @@ public final class ControllerHttpRecoverySelfTest {
                 &&Boolean.FALSE.equals(saved.get("claimAutomaticSafetyScanningEnabled")),"active claim snapshot survives restart");
             ExecutorService racers=Executors.newFixedThreadPool(2);
             try{
-                Future<HttpResponse<String>>first=racers.submit(()->request(http,URI.create(url+"/api/settings/content-safety"),on,auth));
-                Future<HttpResponse<String>>second=racers.submit(()->request(http,URI.create(url+"/api/settings/image-safety"),off,auth));
+                Future<HttpResponse<String>>first=racers.submit(()->request(http,URI.create(url+"/api/settings/content-safety"),"POST",on,auth));
+                Future<HttpResponse<String>>second=racers.submit(()->request(http,URI.create(url+"/api/settings/image-safety"),"POST",off,auth));
                 check(first.get(15,TimeUnit.SECONDS).statusCode()==200&&second.get(15,TimeUnit.SECONDS).statusCode()==200,"concurrent aliases serialize");
                 Object live=Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("automaticSafetyScanningEnabled");
                 Object disk=Json.object(Json.read(statePath)).get("automaticSafetyScanningEnabled");
