@@ -471,12 +471,13 @@ public final class CommandCenterStore {
             m.put("claimId",UUID.randomUUID().toString());m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
             m.put("claimContentSafetyScanningEnabled",contentSafetyScanningEnabled);
             m.put("claimImageSafetyScanningEnabled",imageSafetyScanningEnabled);
+            m.put("claimAutomaticSafetyScanningEnabled",imageSafetyScanningEnabled);
             int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
             appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY","contentSafetyScanningEnabled",contentSafetyScanningEnabled));
             renewLease(m);
             persistRequired();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
-            job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));Map<String,Object>claimSettings=new LinkedHashMap<>(settings);claimSettings.put("contentSafetyScanningEnabled",contentSafetyScanningEnabled);claimSettings.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);job.put("settings",claimSettings);job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
+            job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));Map<String,Object>claimSettings=new LinkedHashMap<>(settings);claimSettings.put("contentSafetyScanningEnabled",contentSafetyScanningEnabled);claimSettings.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);claimSettings.put("automaticSafetyScanningEnabled",imageSafetyScanningEnabled);job.put("settings",claimSettings);job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
             job.put("claimId",m.get("claimId"));job.put("productionEpoch",m.get("productionEpoch"));job.put("attemptNumber",claimCount);job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
             Map<String,Object>sourceMix=m.get("sourceMix") instanceof Map<?,?>?Json.object(m.get("sourceMix")):Map.of();
             Map<String,Object>framing=m.get("framingAnalysis") instanceof Map<?,?>?Json.object(m.get("framingAnalysis")):Map.of();
@@ -1125,6 +1126,7 @@ public final class CommandCenterStore {
         }else if(completedMode!=ProductionMode.STANDARD)
             throw new IllegalStateException("Experimental video requires a provenance sidecar.");
         boolean dryRun=Boolean.TRUE.equals(metadata.get("dryRun"));
+        boolean scanEnabled=!Boolean.FALSE.equals(m.get("claimAutomaticSafetyScanningEnabled"));
         Map<String,Object>manifest=Map.of();
         if(!dryRun){
             if(!(metadata.get("sidecar") instanceof Map<?,?>))
@@ -1136,7 +1138,8 @@ public final class CommandCenterStore {
             try{
                 Object serverVideo=m.get("serverVideo");
                 if(serverVideo==null)throw new IllegalStateException("Video upload missing");
-                ContentSafetyService.verify(Path.of(String.valueOf(serverVideo)),manifest,false);
+                if(scanEnabled)ContentSafetyService.verify(Path.of(String.valueOf(serverVideo)),manifest,false);
+                else ContentSafetyService.verifyUnscanned(Path.of(String.valueOf(serverVideo)),manifest,"CONTROLLER_UNSCANNED_ARCHIVE");
             }catch(Exception invalid){
                 throw new IllegalStateException("CONTENT_SAFETY: uploaded video not approved: "+invalid.getMessage(),invalid);
             }
@@ -1145,7 +1148,7 @@ public final class CommandCenterStore {
         String versionId=videoVersionId(jobId,version);
         m.put("status","COMPLETE");m.put("stage","COMPLETE");m.put("progress",100);clearLease(m);m.put("completedAt",Instant.now().toString());m.put("result",new LinkedHashMap<>(metadata));m.remove("error");
         m.put("videoVersion",version);m.put("currentVideoVersionId",versionId);
-        m.put("safetyStatus",dryRun?"NOT_PUBLISHABLE_DRY_RUN":"APPROVED_FOR_EXPORT");
+        m.put("safetyStatus",dryRun?"NOT_PUBLISHABLE_DRY_RUN":scanEnabled?"APPROVED_FOR_EXPORT":"NOT_SCANNED");
         m.put("safetyPolicyVersion",ContentSafetyService.POLICY);
         clearCurrentPublicationState(m);m.put("uploaded",false);m.put("scrapped",false);
         Object sidecarObj=metadata.get("sidecar");
@@ -1170,10 +1173,10 @@ public final class CommandCenterStore {
         }
         for(Map<String,Object>existing:videos.values())if(jobId.equals(String.valueOf(existing.get("storyId"))))existing.put("current",false);
         Map<String,Object>v=new LinkedHashMap<>();v.put("versionId",versionId);v.put("productionMode",completedMode.name());v.put("storyId",jobId);v.put("jobId",jobId);v.put("version",version);v.put("current",true);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));
-        v.put("safetyStatus",dryRun?"NOT_PUBLISHABLE_DRY_RUN":"APPROVED_FOR_EXPORT");
+        v.put("safetyStatus",dryRun?"NOT_PUBLISHABLE_DRY_RUN":scanEnabled?"APPROVED_FOR_EXPORT":"NOT_SCANNED");
         v.put("safetyPolicyVersion",ContentSafetyService.POLICY);
         v.put("safetyManifest",manifest);
-        v.put("contentSafetyScanningEnabled",!Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled")));
+        v.put("contentSafetyScanningEnabled",scanEnabled);
         v.put("imageSafetyScanningEnabled",!Boolean.FALSE.equals(m.get("claimImageSafetyScanningEnabled")));
         v.put("bytes",m.getOrDefault("videoBytes",0));
         copyPublicationState(m,v);videos.put(versionId,v);
@@ -1426,16 +1429,18 @@ public final class CommandCenterStore {
     }
 
     public synchronized boolean imageSafetyScanningEnabled(){return imageSafetyScanningEnabled;}
-    /** Image-only setting. Final MP4 scanning is always on for new claims from this control. */
+    public synchronized boolean automaticSafetyScanningEnabled(){return imageSafetyScanningEnabled;}
+    public synchronized boolean claimAutomaticSafetyScanningEnabled(String id){return !Boolean.FALSE.equals(requireStory(id).get("claimAutomaticSafetyScanningEnabled"));}
+    /** Master automatic scanner setting; unverified completions are never export approved. */
     public synchronized Map<String,Object> setImageSafetyScanningEnabled(boolean enabled,String actor){
         boolean previous=imageSafetyScanningEnabled,previousLegacy=contentSafetyScanningEnabled;
-        if(previous==enabled&&previousLegacy)return Map.of("imageSafetyScanningEnabled",enabled,"contentSafetyScanningEnabled",true);
-        Map<String,Object>event=Map.of("at",Instant.now().toString(),"actor",actor,"previous",previous,"enabled",enabled,"event","IMAGE_SAFETY_SETTING_CHANGED");
+        if(previous==enabled&&previousLegacy)return Map.of("automaticSafetyScanningEnabled",enabled,"imageSafetyScanningEnabled",enabled,"contentSafetyScanningEnabled",true);
+        Map<String,Object>event=Map.of("at",Instant.now().toString(),"actor",actor,"previous",previous,"enabled",enabled,"event","AUTOMATIC_SAFETY_SETTING_CHANGED");
         imageSafetyScanningEnabled=enabled;contentSafetyScanningEnabled=true;safetySettingAudit.add(event);
         try{persistRequired();}catch(java.io.UncheckedIOException failure){
             imageSafetyScanningEnabled=previous;contentSafetyScanningEnabled=previousLegacy;safetySettingAudit.remove(safetySettingAudit.size()-1);throw failure;
         }
-        Map<String,Object>payload=Map.of("imageSafetyScanningEnabled",enabled,"contentSafetyScanningEnabled",true,"audit",event);
+        Map<String,Object>payload=Map.of("automaticSafetyScanningEnabled",enabled,"imageSafetyScanningEnabled",enabled,"contentSafetyScanningEnabled",true,"audit",event);
         emit("settings",payload);return payload;
     }
     public synchronized boolean contentSafetyScanningEnabled(){return contentSafetyScanningEnabled;}
@@ -1504,7 +1509,7 @@ public final class CommandCenterStore {
         for(String status:List.of("QUEUED","ANALYZING","COMPLETE","FAILED"))
             counts.put("meme"+status.charAt(0)+status.substring(1).toLowerCase(Locale.ROOT),
                     stories.values().stream().filter(x->status.equals(x.get("memeAnalysisStatus"))).count());
-        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeRecentLookbackHours",memeRecentLookbackHours);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("contentSafetyScanningEnabled",contentSafetyScanningEnabled);out.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
+        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeRecentLookbackHours",memeRecentLookbackHours);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("contentSafetyScanningEnabled",contentSafetyScanningEnabled);out.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);out.put("automaticSafetyScanningEnabled",imageSafetyScanningEnabled);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
     }
 
 
@@ -1806,6 +1811,12 @@ public final class CommandCenterStore {
     private static double number(Object x){return x instanceof Number n?n.doubleValue():0;}
     private static int integer(Object x){return x instanceof Number n?n.intValue():0;}
     private boolean claimEligible(Map<String,Object>m,String workerId){
+        if(contentSafetyScanningEnabled&&!imageSafetyScanningEnabled){
+            Map<String,Object> worker=workers.get(workerId);
+            if(worker==null||!(worker.get("capabilities") instanceof List<?> capabilities)||!capabilities.contains("automatic_safety_setting_v2")){
+                m.put("stage","WAITING_FOR_COMPATIBLE_WORKER");m.put("detail","Update worker for master scanner toggle");return false;
+            }
+        }
         if(!contentSafetyScanningEnabled){
             Map<String,Object>worker=workers.get(workerId);
             if(worker==null||!(worker.get("capabilities") instanceof List<?> capabilities)||!capabilities.contains("local_draft_v1")){

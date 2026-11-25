@@ -30,7 +30,7 @@ async function checkSafetyDetectorHealth(){
   safetyHealthInFlight=true;safetyHealthNext=Date.now()+60000;
   try{
     const h=await api("/api/safety/health");
-    safetyHealthStatus=h.status==="DISABLED_LOCAL_ONLY"?"DISABLED — DRAFT OUTPUT ONLY":h.status==="READY"?("READY / "+String(h.detector||"LOCAL")+" "+String(h.version||"")):"UNAVAILABLE";
+    safetyHealthStatus=h.status==="DISABLED_AUTOMATIC_SCANS"?"OFF — NO AUTOMATIC SCANS":h.status==="DISABLED_LOCAL_ONLY"?"DISABLED — DRAFT OUTPUT ONLY":h.status==="READY"?("READY / "+String(h.detector||"LOCAL")+" "+String(h.version||"")):"UNAVAILABLE";
   }catch(e){safetyHealthStatus="SCANNER UNAVAILABLE";}
   finally{safetyHealthInFlight=false;const el=$("#safetyHealth");if(el)el.textContent=safetyHealthStatus;}
 }
@@ -284,11 +284,11 @@ function render(){
   }
   const safetyToggle=$("#contentSafetyToggle");
   if(safetyToggle){
-    const enabled=state.imageSafetyScanningEnabled!==false;
+    const enabled=state.automaticSafetyScanningEnabled!==false;
     safetyToggle.classList.toggle("on",enabled);safetyToggle.classList.toggle("off",!enabled);
     safetyToggle.setAttribute("aria-pressed",String(enabled));
-    $("#contentSafetyToggleText").textContent=enabled?"IMAGE SAFETY SCANS: ON":"IMAGE SAFETY SCANS: OFF — FINAL VIDEO SCANS ON";
-    safetyToggle.title=enabled?"Still images and final video are scanned":"Still-image scans deferred; final video scans remain mandatory";
+    $("#contentSafetyToggleText").textContent=enabled?"CONTENT SAFETY SCANS: ON":"CONTENT SAFETY SCANS: OFF — NORMAL RENDER";
+    safetyToggle.title=enabled?"Image, worker MP4 and controller MP4 scans enabled":"All automatic detector scans off; completed videos are unverified";
   }
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
@@ -816,16 +816,16 @@ document.addEventListener("click",e=>{
 // Toolbar actions also acknowledge the initial click and lock while the request runs.
 $("#contentSafetyToggle").onclick=async()=>{
   const btn=$("#contentSafetyToggle");if(btn.disabled)return;
-  const enabled=state.imageSafetyScanningEnabled===false;
-  if(!enabled&&!confirm("Turn off still-image scans for new jobs? Normal ComfyUI rendering and completed-video storage continue. Worker and controller final MP4 checks remain mandatory. Existing claims retain their settings."))return;
+  const enabled=state.automaticSafetyScanningEnabled===false;
+  if(!enabled&&!confirm("Turn off all automatic content detector scans for new jobs? Normal rendering and completed-video storage continue. Unscanned videos are not approved for publication. Existing claims retain their settings."))return;
   btn.disabled=true;
   try{
-    const result=await api("/api/settings/image-safety",{method:"POST",
+    const result=await api("/api/settings/automatic-safety",{method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({enabled})});
-    stateEpoch++;state.imageSafetyScanningEnabled=result.imageSafetyScanningEnabled;state.contentSafetyScanningEnabled=result.contentSafetyScanningEnabled;
+    stateEpoch++;state.automaticSafetyScanningEnabled=result.automaticSafetyScanningEnabled;state.contentSafetyScanningEnabled=result.contentSafetyScanningEnabled;
     safetyHealthNext=0;render();loadState().catch(()=>{});checkSafetyDetectorHealth().catch(()=>{});
-    toast(enabled?"Still-image scans enabled.":"Still-image scans off. Normal video production and final video scans remain active.");
+    toast(enabled?"All automatic content scans enabled.":"All automatic content scans off. Normal production and archive remain active.");
   }catch(e){toast(e.message,true);loadState().catch(()=>{});}
   finally{btn.disabled=false;}
 };

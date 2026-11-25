@@ -146,15 +146,18 @@ public final class NewsPipeline {
     }
     /** Normal production with an explicit, claim-scoped still-image inspection policy. */
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis,boolean dryRun,boolean imageSafetyScanningEnabled)throws Exception{
-        return produceInternal(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,suppliedPolitical,mode,rawAnalysis,dryRun,false,imageSafetyScanningEnabled);
+        return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,suppliedPolitical,mode,rawAnalysis,dryRun,imageSafetyScanningEnabled,true);
+    }
+    public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis,boolean dryRun,boolean imageSafetyScanningEnabled,boolean automaticSafetyScanningEnabled)throws Exception{
+        return produceInternal(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,suppliedPolitical,mode,rawAnalysis,dryRun,false,imageSafetyScanningEnabled&&automaticSafetyScanningEnabled,automaticSafetyScanningEnabled);
     }
 
     /** Diagnostic output only: procedural cards, watermark, no export approval. */
     public Path produceLocalDraft(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis)throws Exception{
-        return produceInternal(cand,worker,slot,slotDir,targetSeconds,encoder,false,false,maxComfyImages,suppliedPolitical,mode,rawAnalysis,false,true,true);
+        return produceInternal(cand,worker,slot,slotDir,targetSeconds,encoder,false,false,maxComfyImages,suppliedPolitical,mode,rawAnalysis,false,true,true,true);
     }
 
-    private Path produceInternal(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis,boolean dryRun,boolean localDraft,boolean imageSafetyScanningEnabled)throws Exception{
+    private Path produceInternal(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis,boolean dryRun,boolean localDraft,boolean imageSafetyScanningEnabled,boolean automaticSafetyScanningEnabled)throws Exception{
         ProductionPreflight.check(cand,mode,useComfy,requireComfy,maxComfyImages,dryRun,cfg,localDraft)
                 .requireEligible();
         Files.createDirectories(slotDir);
@@ -163,7 +166,7 @@ public final class NewsPipeline {
         String settingsFingerprint=Hashing.sha256(
                 Json.stringify(cand.toMap())+"|"+mode+"|"+targetSeconds+"|"+encoder+
                 "|"+useComfy+"|"+requireComfy+"|"+maxComfyImages+"|"+dryRun+
-                (localDraft?"|LOCAL_DRAFT_V1":"")+(imageSafetyScanningEnabled?"":"|IMAGE_SCANS_DEFERRED_V1")+
+                (localDraft?"|LOCAL_DRAFT_V1":"")+(imageSafetyScanningEnabled?"":"|IMAGE_SCANS_DEFERRED_V1")+(automaticSafetyScanningEnabled?"":"|UNSCANNED_ARCHIVE_V2")+
                 "|"+Json.stringify(rawAnalysis)+"|"+
                 Json.stringify(suppliedPolitical==null?Map.of():suppliedPolitical.toMap())+
                 "|"+cfg.get("ollamaModel","")+"|"+cfg.get("imageCheckpoint","")+
@@ -184,8 +187,9 @@ public final class NewsPipeline {
                     try{
                         Map<String,Object>saved=Json.object(Json.read(sidecar));
                         Map<String,Object>approval=Json.object(saved.get("contentSafety"));
-                        ContentSafetyService.verify(finalVideo,approval,false);
-                        events.emit(worker,slot,PipelineStage.APPROVED,"RESUMED APPROVED VIDEO: "+name);
+                        if(automaticSafetyScanningEnabled)ContentSafetyService.verify(finalVideo,approval,false);
+                        else ContentSafetyService.verifyUnscanned(finalVideo,approval,"WORKER_UNSCANNED_ARCHIVE");
+                        events.emit(worker,slot,PipelineStage.AUDIT,(automaticSafetyScanningEnabled?"RESUMED APPROVED VIDEO: ":"RESUMED NOT_SCANNED VIDEO: ")+name);
                         logs.worker(worker,"slot="+slot+" approved MP4 reused without model or renderer calls");
                         return finalVideo;
                     }catch(Exception invalid){
@@ -221,8 +225,8 @@ public final class NewsPipeline {
             }
         }
         if(!dryRun){
-            events.emit(worker,slot,PipelineStage.VERIFY,localDraft?"SAFETY SCANNING DISABLED — LOCAL OUTPUT ONLY; checking render dependencies":"PREFLIGHT: verifying Ollama, narration, encoder and both mandatory safety models");
-            if(localDraft)ProductionServiceReadiness.checkLocalDraft(root,cfg,encoder);
+            events.emit(worker,slot,PipelineStage.VERIFY,localDraft?"DIAGNOSTIC DRAFT — checking render dependencies":!automaticSafetyScanningEnabled?"AUTOMATIC CONTENT SCANS OFF — normal rendering; checking render dependencies":"PREFLIGHT: verifying Ollama, narration, encoder and both mandatory safety models");
+            if(localDraft||!automaticSafetyScanningEnabled)ProductionServiceReadiness.checkLocalDraft(root,cfg,encoder);
             else ProductionServiceReadiness.check(root,cfg,encoder);
         }
         StoryCluster c=mode==ProductionMode.FRAMING_EXPOSURE?cand.cluster():enrichForProduction(cand.cluster());
@@ -512,7 +516,7 @@ public final class NewsPipeline {
             }
         }
         ContentSafetyService safety=new ContentSafetyService(root,cfg);
-        if(!imageSafetyScanningEnabled)events.emit(worker,slot,PipelineStage.VISUALS,"STILL-IMAGE SCANS OFF — MANDATORY FINAL MP4 SCANS ON");
+        if(!imageSafetyScanningEnabled)events.emit(worker,slot,PipelineStage.VISUALS,automaticSafetyScanningEnabled?"STILL-IMAGE SCANS OFF — FINAL MP4 SCANS ON":"IMAGE AND FINAL MP4 SCANS OFF — normal rendering");
         boolean sensitiveTopic=ContentSafetyPolicy.sensitive(fp.headline()+" "+fp.summary());
         int unsafeImageRejections=0;
         List<Map<String,Object>>imageReviews=new ArrayList<>();
@@ -837,7 +841,7 @@ public final class NewsPipeline {
         visualQuality.put("visualSafetyRoute",evidenceGraphicsOnly?"EVIDENCE_GRAPHICS_NO_SYNTHETIC_EVENT":"STANDARD");
         visualQuality.put("unsafeImageRejections",unsafeImageRejections);
         Json.write(slotDir.resolve("visual_quality_report.json"),visualQuality);
-        audit.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);audit.put("videoSync",rr.syncReport());audit.put("visualQuality",visualQuality);audit.put("narrationTiming",alignment.toMap());if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("productionMode",mode.name());
+        audit.put("automaticSafetyScanningEnabled",automaticSafetyScanningEnabled);audit.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);audit.put("videoSync",rr.syncReport());audit.put("visualQuality",visualQuality);audit.put("narrationTiming",alignment.toMap());if(finalSeconds<minimumFinalSeconds)throw new IllegalStateException(String.format(Locale.ROOT,"Rendered video too short: %.2fs; minimum is %.2fs",finalSeconds,minimumFinalSeconds));audit.put("productionMode",mode.name());
         audit.put("introSound",Map.of("enabled",introEnabled,
                 "identity",introEnabled?introId:"",
                 "gainDb",introGainDb,
@@ -866,9 +870,16 @@ public final class NewsPipeline {
         List<Path>safetyAssets=new ArrayList<>(renderBackgrounds);
         safetyAssets.addAll(imgs);safetyAssets.add(disclosure);
         for(Path image:renderOverlays)if(image!=null)safetyAssets.add(image);
-        events.emit(worker,slot,PipelineStage.AUDIT,"SAFETY SCAN IN PROGRESS");
-        Map<String,Object>safetyManifest=safety.approve(render,safetyAssets,slotDir.resolve("content_safety_approval.json"));
-        events.emit(worker,slot,PipelineStage.AUDIT,"SAFETY SCAN COMPLETE");
+        Map<String,Object>safetyManifest;
+        if(automaticSafetyScanningEnabled){
+            events.emit(worker,slot,PipelineStage.AUDIT,"SAFETY SCAN IN PROGRESS");
+            safetyManifest=safety.approve(render,safetyAssets,slotDir.resolve("content_safety_approval.json"));
+            events.emit(worker,slot,PipelineStage.AUDIT,"SAFETY SCAN COMPLETE");
+        }else{
+            safetyManifest=ContentSafetyService.unscanned(render,"WORKER_UNSCANNED_ARCHIVE");
+            Json.write(slotDir.resolve("content_safety_unscanned.json"),safetyManifest);
+            events.emit(worker,slot,PipelineStage.AUDIT,"CONTENT SCANS OFF — NOT_SCANNED; normal archive transfer");
+        }
         Path finalDir=slotDir.getParent().resolve("final_videos");
         Path proposedFinal=FileNames.unique(finalDir,c.topic,".mp4");
         String proposedName=proposedFinal.getFileName().toString();
@@ -880,9 +891,11 @@ public final class NewsPipeline {
         // as a publishable file in final_videos.
         Path stagedVideo=finalDir.resolve(".safety-stage-"+UUID.randomUUID()+".pending");
         try{
-            ContentSafetyService.verify(render,safetyManifest,true);
+            if(automaticSafetyScanningEnabled)ContentSafetyService.verify(render,safetyManifest,true);
+            else ContentSafetyService.verifyUnscanned(render,safetyManifest,"WORKER_UNSCANNED_ARCHIVE");
             Files.copy(render,stagedVideo);
-            ContentSafetyService.verify(stagedVideo,safetyManifest,false);
+            if(automaticSafetyScanningEnabled)ContentSafetyService.verify(stagedVideo,safetyManifest,false);
+            else ContentSafetyService.verifyUnscanned(stagedVideo,safetyManifest,"WORKER_UNSCANNED_ARCHIVE");
         }catch(Exception safetyFailure){Files.deleteIfExists(stagedVideo);throw safetyFailure;}
         Map<String,Object>prov=new LinkedHashMap<>();prov.put("productionMode",mode.name());
         prov.put("introSound",Map.of("enabled",introEnabled,
@@ -902,25 +915,26 @@ public final class NewsPipeline {
             prov.put("sourceContentFingerprint",memeEvidence.fingerprint());
             prov.put("measuredNarrationSeconds",narrationSeconds);
             prov.put("actualFinalVideoSeconds",finalSeconds);}
-        if(evidence!=null){prov.put("framingEvidence",evidence.toMap());prov.put("lockedHeadline",script.headline());prov.put("lockedTeaser",PoliticalFramingScriptGenerator.TEASER);}prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("postLayout","tiktok-footer-220");prov.put("motionPackage","editorial-motion-v5");prov.put("narrationTiming",alignment.toMap());prov.put("visualStoryboard",storyboard.toMap());prov.put("visualQuality",visualQuality);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("visualSafetyRoute",evidenceGraphicsOnly?"EVIDENCE_GRAPHICS_NO_SYNTHETIC_EVENT":"STANDARD");prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("contentSafety",safetyManifest);prov.put("contentSafetyScanningEnabled",true);prov.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);prov.put("aiDisclosure","AI-GENERATED VISUALS / AI NARRATION; ILLUSTRATION - NOT ACTUAL FOOTAGE");prov.put("publicationChecklist",List.of("Enable platform creator-side AIGC setting before posting","Check attributed sources and platform policy"));prov.put("output",finalVideo.toString());Path sidecar=finalVideo.resolveSibling(finalVideo.getFileName()+".json");
+        if(evidence!=null){prov.put("framingEvidence",evidence.toMap());prov.put("lockedHeadline",script.headline());prov.put("lockedTeaser",PoliticalFramingScriptGenerator.TEASER);}prov.put("storyId",c.id);prov.put("storyFingerprint",c.fingerprint);prov.put("script",script.toMap());prov.put("hook",script.hook());prov.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());prov.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());prov.put("visualPackage",BroadcastTheme.PACKAGE_ID);prov.put("postLayout","tiktok-footer-220");prov.put("motionPackage","editorial-motion-v5");prov.put("narrationTiming",alignment.toMap());prov.put("visualStoryboard",storyboard.toMap());prov.put("visualQuality",visualQuality);prov.put("thumbnailStrategy","hook-frame-zero");prov.put("generatedTimestamp",Instant.now().toString());prov.put("sources",fp.sources());prov.put("factPackageHash",Hashing.sha256(Json.stringify(fp.toMap())));prov.put("scriptHash",Hashing.sha256(Json.stringify(script.toMap())));prov.put("ttsEngineActuallyUsed",nr.engine());prov.put("voice",nr.voice());prov.put("imageSources",imageSources);prov.put("visualSafetyRoute",evidenceGraphicsOnly?"EVIDENCE_GRAPHICS_NO_SYNTHETIC_EVENT":"STANDARD");prov.put("comfyCheckpoint",usedCheckpoint);prov.put("comfyImagesGenerated",comfyGenerated);prov.put("comfyRequired",requireComfy);prov.put("videoEncoderRequested",encoder);prov.put("videoEncoderActuallyUsed",rr.encoder());prov.put("ffmpegVersion",renderer.version());prov.put("ffmpegCommand",rr.command());prov.put("ollamaModel",cfg.get("ollamaModel","llama3.1:8b"));prov.put("visualPromptModel",visualPrompts.model());prov.put("visualPromptPlannerEnabled",cfg.getBool("visualPromptEnabled",true));prov.put("visualPromptFallbackCount",visualPrompts.fallbackCount());prov.put("visualPromptRepairCount",visualPrompts.repairAttempts());prov.put("visualPromptRejectedCount",visualPrompts.rejectedCount());prov.put("politicalContext",political.toMap());prov.put("politicalContextRendered",plan.items().stream().anyMatch(x->"POLITICAL_CONTEXT".equalsIgnoreCase(x.type())));prov.put("autoNewsRollerCommit",commitSha());prov.put("contentSafety",safetyManifest);prov.put("contentSafetyScanningEnabled",automaticSafetyScanningEnabled);prov.put("safetyStatus",automaticSafetyScanningEnabled?"APPROVED_FOR_EXPORT":"NOT_SCANNED");prov.put("publicationAllowed",automaticSafetyScanningEnabled);prov.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);prov.put("aiDisclosure","AI-GENERATED VISUALS / AI NARRATION; ILLUSTRATION - NOT ACTUAL FOOTAGE");prov.put("publicationChecklist",List.of("Enable platform creator-side AIGC setting before posting","Check attributed sources and platform policy"));prov.put("output",finalVideo.toString());Path sidecar=finalVideo.resolveSibling(finalVideo.getFileName()+".json");
         boolean promoted=false;
         try{
             Json.write(sidecar,prov);
             try{Files.move(stagedVideo,finalVideo,StandardCopyOption.ATOMIC_MOVE);}
             catch(AtomicMoveNotSupportedException unsupported){Files.move(stagedVideo,finalVideo);}
             promoted=true;
-            ContentSafetyService.verify(finalVideo,safetyManifest,false);
+            if(automaticSafetyScanningEnabled)ContentSafetyService.verify(finalVideo,safetyManifest,false);
+            else ContentSafetyService.verifyUnscanned(finalVideo,safetyManifest,"WORKER_UNSCANNED_ARCHIVE");
         }catch(Exception publishFailure){
             if(promoted)Files.deleteIfExists(finalVideo);
             Files.deleteIfExists(stagedVideo);
             Files.deleteIfExists(sidecar);
             throw publishFailure;
         }
-        history.append(c,finalVideo);publishHistory.append(c.id,finalVideo,c.fingerprint);
+        history.append(c,finalVideo);if(automaticSafetyScanningEnabled)publishHistory.append(c.id,finalVideo,c.fingerprint);
         checkpoint.accept("FINAL",settingsFingerprint,
                 Map.of("video",finalVideo,"sidecar",sidecar),
                 Map.of("filename",finalVideo.getFileName().toString()));
-        events.emit(worker,slot,PipelineStage.APPROVED,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+" approved output="+finalVideo);return finalVideo;
+        events.emit(worker,slot,automaticSafetyScanningEnabled?PipelineStage.APPROVED:PipelineStage.AUDIT,finalVideo.getFileName().toString());logs.worker(worker,"slot="+slot+(automaticSafetyScanningEnabled?" approved output=":" unscanned completed output=")+finalVideo);return finalVideo;
     }
 
     private static void recordImageAttempt(Path visualDir,List<Map<String,Object>> attempts,

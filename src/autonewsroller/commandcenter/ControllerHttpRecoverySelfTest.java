@@ -155,10 +155,13 @@ public final class ControllerHttpRecoverySelfTest {
             check(Boolean.FALSE.equals(migrated.get("imageSafetyScanningEnabled"))&&Boolean.TRUE.equals(migrated.get("contentSafetyScanningEnabled")),"old OFF migrates to image-only OFF; final scan remains on");
             byte[]off=Json.stringify(Map.of("enabled",false)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
             check(request(http,uri,"POST",off,json).statusCode()==200,"image-only OFF accepted without draft warning");
+            check(request(http,URI.create(base+"/api/jobs/claim?worker=old-worker"),"GET",new byte[0],Map.of()).statusCode()==204,"old worker cannot claim automatic scans OFF");
+            byte[]heartbeat=Json.stringify(Map.of("id","image-worker","capabilities",List.of("automatic_safety_setting_v2"))).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            check(request(http,URI.create(base+"/api/workers/heartbeat"),"POST",heartbeat,json).statusCode()==200,"master toggle compatible worker registers");
             HttpResponse<String>claim=request(http,URI.create(base+"/api/jobs/claim?worker=image-worker"),"GET",new byte[0],Map.of());
             check(claim.statusCode()==200,"image-only OFF permits normal video claim");
             Map<String,Object>job=Json.object(Json.parse(claim.body()));Map<String,Object>settings=Json.object(job.get("settings"));
-            check(Boolean.FALSE.equals(settings.get("imageSafetyScanningEnabled"))&&Boolean.TRUE.equals(settings.get("contentSafetyScanningEnabled")),"claim defers only image scans");
+            check(Boolean.FALSE.equals(settings.get("imageSafetyScanningEnabled"))&&Boolean.FALSE.equals(settings.get("automaticSafetyScanningEnabled"))&&Boolean.TRUE.equals(settings.get("contentSafetyScanningEnabled")),"master OFF disables all detector scans and preserves normal route");
             Map<String,String>headers=new LinkedHashMap<>();headers.put("X-Worker-Id","image-worker");headers.put("X-Claim-Id",String.valueOf(job.get("claimId")));headers.put("X-Production-Epoch",String.valueOf(job.get("productionEpoch")));headers.put("X-Media-Sha256","4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a");
             check(request(http,URI.create(base+"/api/jobs/"+id+"/local-draft-video"),"PUT",new byte[]{1},headers).statusCode()==409,"image-only claim cannot use isolated draft upload");
             check(request(http,URI.create(base+"/api/jobs/"+id+"/video"),"PUT",new byte[]{1},headers).statusCode()==200,"image-only claim uses normal upload staging");
@@ -166,6 +169,12 @@ public final class ControllerHttpRecoverySelfTest {
             Map<String,Object>deferred=new ContentSafetyService(root,cfg).inspectImageForRender(image,false);
             check("DEFERRED_TO_FINAL_VIDEO".equals(deferred.get("status"))&&ContentSafetyService.eligibleImageForRender(deferred,false)&&!ContentSafetyService.eligibleImageForRender(deferred,true),"deferred image never represented as SAFE");
             check(!ContentSafetyService.eligibleImageForRender(Map.of("status","UNSAFE"),false),"known unsafe verdict never accepted");
+            Map<String,Object>record=ContentSafetyService.unscanned(image,"CONTROLLER_UNSCANNED_ARCHIVE");
+            ContentSafetyService.verifyUnscanned(image,record,"CONTROLLER_UNSCANNED_ARCHIVE");
+            boolean denied=false;try{ContentSafetyService.verify(image,record,false);}catch(Exception expected){denied=true;}
+            check(denied,"unscanned completion record cannot pass export approval");
+            HttpResponse<String>health=request(http,URI.create(base+"/api/safety/health"),"GET",new byte[0],Map.of());
+            check(health.statusCode()==200&&"DISABLED_AUTOMATIC_SCANS".equals(Json.object(Json.parse(health.body())).get("status")),"master OFF skips automatic detector health probes");
         }finally{server.stop();}
     }
 

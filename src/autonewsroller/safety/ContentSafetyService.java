@@ -147,6 +147,17 @@ public final class ContentSafetyService {
         return HexFormat.of().formatHex(digest.digest());
     }
 
+    /** Hash-bound completion record only; it is not a detector approval. */
+    public static Map<String,Object> unscanned(Path video,String origin)throws Exception{
+        return new LinkedHashMap<>(Map.of("status","NOT_SCANNED","policyVersion",POLICY,"videoSha256",hash(video),
+                "approvalOrigin",origin,"publicationAllowed",false,"createdAt",Instant.now().toString()));
+    }
+    public static void verifyUnscanned(Path video,Map<String,Object>record,String origin)throws Exception{
+        if(!"NOT_SCANNED".equals(record.get("status"))||!POLICY.equals(record.get("policyVersion"))
+                ||!origin.equals(record.get("approvalOrigin"))||!Boolean.FALSE.equals(record.get("publicationAllowed"))
+                ||!hash(video).equals(record.get("videoSha256")))
+            throw new IllegalStateException("Unscanned media identity invalid");
+    }
     /** Call ONLY after rendering, before copying into a publishable directory. */
     public Map<String,Object> approve(Path video,List<Path>assets,Path report)throws Exception{
         List<Map<String,Object>>inputs=new ArrayList<>();

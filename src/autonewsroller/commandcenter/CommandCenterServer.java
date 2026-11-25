@@ -78,6 +78,7 @@ public final class CommandCenterServer {
         server.createContext("/api/settings/auto-video",this::autoVideoSetting);
         server.createContext("/api/settings/content-safety",this::contentSafetySetting);
         server.createContext("/api/settings/image-safety",this::contentSafetySetting);
+        server.createContext("/api/settings/automatic-safety",this::contentSafetySetting);
         server.createContext("/api/stories/",this::stories);
         server.createContext("/api/workers/heartbeat",this::heartbeat);
         server.createContext("/api/jobs/claim",this::claim);
@@ -133,6 +134,9 @@ public final class CommandCenterServer {
         if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         if(!store.contentSafetyScanningEnabled()){
             json(x,200,Map.of("status","DISABLED_LOCAL_ONLY"));return;
+        }
+        if(!store.automaticSafetyScanningEnabled()){
+            json(x,200,Map.of("status","DISABLED_AUTOMATIC_SCANS"));return;
         }
         try{
             Map<String,Object> health;
@@ -276,9 +280,9 @@ public final class CommandCenterServer {
 
     private void contentSafetySetting(HttpExchange x)throws IOException{
         if(!api(x))return;
-        boolean imageOnly="/api/settings/image-safety".equals(x.getRequestURI().getPath());
+        boolean imageOnly=Set.of("/api/settings/image-safety","/api/settings/automatic-safety").contains(x.getRequestURI().getPath());
         if("GET".equalsIgnoreCase(x.getRequestMethod())){
-            json(x,200,Map.of("contentSafetyScanningEnabled",store.contentSafetyScanningEnabled(),"imageSafetyScanningEnabled",store.imageSafetyScanningEnabled()));return;
+            json(x,200,Map.of("contentSafetyScanningEnabled",store.contentSafetyScanningEnabled(),"imageSafetyScanningEnabled",store.imageSafetyScanningEnabled(),"automaticSafetyScanningEnabled",store.automaticSafetyScanningEnabled()));return;
         }
         if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         // No separate administrator secret. A tokenless controller may change
@@ -385,7 +389,7 @@ public final class CommandCenterServer {
         if(!api(x))return;if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         Map<String,Object>body=bodyObject(x);String id=String.valueOf(body.getOrDefault("id","")).trim();
         if(id.isBlank()){json(x,400,Map.of("error","worker id required"));return;}
-        store.heartbeat(id,body);json(x,200,Map.of("ok",true,"contentSafetyScanningEnabled",store.contentSafetyScanningEnabled(),"imageSafetyScanningEnabled",store.imageSafetyScanningEnabled()));
+        store.heartbeat(id,body);json(x,200,Map.of("ok",true,"contentSafetyScanningEnabled",store.contentSafetyScanningEnabled(),"imageSafetyScanningEnabled",store.imageSafetyScanningEnabled(),"automaticSafetyScanningEnabled",store.automaticSafetyScanningEnabled()));
     }
 
     private void claim(HttpExchange x)throws IOException{
@@ -500,7 +504,14 @@ public final class CommandCenterServer {
                             Map<String,Object>workerManifest=Json.object(sidecar.get("contentSafety"));
                             String expectedSha=String.valueOf(workerManifest.get("videoSha256"));
                             Map<String,Object>controllerManifest;
-                            try(SafetyScanProgress.Scope scope=SafetyScanProgress.open(id)){
+                            if(!store.claimAutomaticSafetyScanningEnabled(id)){
+                                if(!expectedSha.equals(ContentSafetyService.hash(uploaded)))throw new IllegalStateException("Uploaded media hash mismatch");
+                                Map<String,Object>encoded=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).auditUploaded(uploaded,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));
+                                controllerManifest=ContentSafetyService.unscanned(uploaded,"CONTROLLER_UNSCANNED_ARCHIVE");
+                                if(!expectedSha.equals(controllerManifest.get("videoSha256")))throw new IllegalStateException("Uploaded media changed during integrity audit");
+                                controllerManifest.put("controllerEncodedAudit",encoded);
+                                sidecar.put("contentSafetyScanningEnabled",false);sidecar.put("imageSafetyScanningEnabled",false);sidecar.put("safetyStatus","NOT_SCANNED");sidecar.put("publicationAllowed",false);
+                            }else try(SafetyScanProgress.Scope scope=SafetyScanProgress.open(id)){
                                 try{
                                     controllerManifest=approveOnController(uploaded,expectedSha);
                                 }catch(Exception denied){
