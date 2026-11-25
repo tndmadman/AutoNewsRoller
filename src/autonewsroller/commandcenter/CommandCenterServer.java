@@ -357,6 +357,18 @@ public final class CommandCenterServer {
                 String versionId=String.valueOf(body.getOrDefault("versionId",""));
                 json(x,200,store.setUploadStatus(id,versionId,uploaded,platform,note,String.valueOf(body.getOrDefault("operationId",""))));return;
             }
+            if(p.length==2&&"external-upload-record".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
+                if(token.isBlank()&&!localSafetySettingRequest(x)){
+                    json(x,403,Map.of("error","External upload records require local access or controller authentication"));return;
+                }
+                Map<String,Object>body=bodyObject(x);
+                if(!Boolean.TRUE.equals(body.get("alreadyUploaded"))||!Boolean.TRUE.equals(body.get("aigcLabelConfirmed"))){
+                    json(x,409,Map.of("error","Confirm the external upload already occurred and verify its AIGC label"));return;
+                }
+                json(x,200,store.recordExternalUpload(id,String.valueOf(body.getOrDefault("versionId","")),
+                        String.valueOf(body.getOrDefault("platform","")),String.valueOf(body.getOrDefault("note","")),
+                        String.valueOf(body.getOrDefault("operationId",""))));return;
+            }
             if(p.length>=2&&"scrap-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>body=bodyObject(x);
                 boolean scrapped=Boolean.TRUE.equals(body.get("scrapped"));
