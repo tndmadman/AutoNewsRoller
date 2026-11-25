@@ -1,29 +1,30 @@
-# Controller content safety: isolated local drafts
+# Controller automatic content scanning and private review
 
-The Command Center has a persistent controller-local or existing API authenticated **Content Safety Scanning** toggle. Default is ON, including installations upgraded from a state file without this field. OFF means diagnostic drafts only; it does not change the normal export approval requirements.
+The Command Center has one persistent **automatic content scanning** toggle. ON is the default. OFF uses the same ordinary production route and archives completed media for authorized private review; it does not grant publication approval.
 
-## Windows operator verification
+## Operator verification
 
-1. Drain workers and stop the old controller. Back up state and output, and use an isolated checkout for verification. Fast-forward the existing integration branch, build, and run controller and workers at the same SHA. Do not deploy to production without CI and hardware acceptance.
-2. No separate administrator token is required. On an installation without an API token, open the controller using http://localhost:8787 (or its configured loopback port). Remote changes require the existing controller API authentication.
-3. Start the controller, open its Command Center, and authenticate with the existing API token if configured. In the content safety panel, click the toggle, accept the local-only warning. The setting is saved in data/command_center_state.json as contentSafetyScanningEnabled; its change history is saved in safetySettingAudit. No further controller restart is needed to change the setting.
-4. Start the updated worker, queue a test story with appropriate source rights, and inspect the worker console. OFF renders a procedural-only diagnostic video with a permanent NOT SCANNED / LOCAL DRAFT ONLY label. It uses no generated ComfyUI images and no detector initialization. Normal non-scanner dependencies (Ollama, TTS, FFmpeg) still apply.
-5. Locate the absolute worker-local output path on the controller story card (HOLD / NOT_SCANNED) or worker job history. The updated worker transfers the draft to output/command_center/unscanned_drafts on the host. The controller story card shows the host path. Open the file on the host in a local player. Drafts are not served by the approved /videos route or added to the approved version archive. New draft and approved host filenames include a sanitized story title and unique identity suffix; existing filenames remain unchanged. Existing approved archives remain governed by the independent approval gate.
-6. Restore ON via the toggle, then queue a new job. Existing leases retain the mode captured at claim time; new or recovered claims receive current policy. Updated workers receive the current state on heartbeat. Old workers cannot claim OFF-mode video jobs.
-7. To inspect an existing local draft after restoring ON, use this command from the worker repository folder, with AUTONEWS_TOKEN set if the controller uses an API token:
+1. Drain active jobs and stop the old worker and controller. Back up state and outputs. Fast-forward the existing integration branch in an isolated checkout and build both applications at the same validated SHA.
+2. On an installation without an API token, open http://localhost:8787 on the controller. Remote setting changes and private review require the existing controller API authentication. No separate administrator token is required.
+3. Change the automatic scanning setting. It is saved in `data/command_center_state.json` as `automaticSafetyScanningEnabled`. The audit history is stored in `safetySettingAudit`. A setting change requires no restart and applies to new claims, not existing claim snapshots.
+4. On OFF, queue a benign test story with appropriate source rights. Ordinary production retains its existing visual requirements, mode, narration, captions, audio/video integrity checks and title-based filename. The worker transfers the completed MP4 to `output/command_center/videos/`. A completed file has `NOT_SCANNED` status and no publication approval.
+5. Open **REVIEW MP4** on the completed story or latest archive version for its production format. Confirm the displayed filename and actual decoded scenes. The review route validates the controller archive record, encoded-media audit and media hash. It cannot change approval or publication status. Historical drafts retain their original files and metadata.
+6. Restore ON and queue a new job. Verify the enabled detector workflow, independent controller approval, and three production-mode canaries. Old workers that lack master-setting support cannot claim OFF jobs.
 
-       java -cp build\classes autonewsroller.safety.LocalDraftInspection http://127.0.0.1:8787 "C:\path\to\NOT_SCANNED_example.mp4"
+## Interface and migration
 
-   Substitute the trusted controller's actual URL and the draft path. The command validates the isolated path and original hash, checks that scanning is ON, and executes both existing pinned scanners. It writes a separate .inspection.json diagnostic report, not an export approval; the original draft is never promoted. To obtain publishable media, generate a normal ON-mode job and obtain the full worker and independent controller approvals.
+- GET/POST `/api/settings/automatic-safety`: the authoritative master setting. POST requires JSON with boolean `enabled`, existing authentication or tokenless loopback access.
+- The historical `/api/settings/content-safety` and `/api/settings/image-safety` URLs are aliases, not separate settings.
+- `imageSafetyScanningEnabled` is a compatibility alias for the master. The old `contentSafetyScanningEnabled` claim field is retained as a normal-production routing sentinel (true for new claims); do not interpret it as a detector verdict. Actual scan execution is represented by `automaticSafetyScanningEnabled` and per-claim snapshots.
+- Old saved global settings are migrated to the master. Existing claims are not rewritten. Historical isolated-draft endpoints remain for pre-upgrade claims; their original isolation and lease protections remain.
+- GET `/api/review-video?versionId=...`: authenticated or tokenless-loopback private review of the current completed unscanned archive version for the selected story and mode. Missing, changed, superseded or unarchived files are rejected.
+- The original `/videos/` publishable MP4 route and publication controls continue to require independent controller approval. Review is not export authorization.
+- Existing detector thresholds, AIGC disclosures, mode-specific editorial requirements and media-integrity protections are not changed.
 
-## Interfaces
+## Historical drafts
 
-- GET /api/settings/content-safety: existing controller API authentication if configured; returns contentSafetyScanningEnabled.
-- POST /api/settings/content-safety: existing controller API authentication if configured; otherwise loopback requests only. Requires application/json and boolean enabled. OFF also requires confirmLocalOnly=true.
-- Worker claim settings and heartbeat replies contain contentSafetyScanningEnabled. Workers advertise local_draft_v1.
-- PUT /api/jobs/{id}/local-draft-video: lease/epoch-fenced, hash-verified isolated draft transfer to the host, with idempotent completion. Legacy POST /api/jobs/{id}/local-draft-complete records worker metadata only. Ordinary video upload and completion routes reject local-only claims.
-- Historical detector policy, thresholds, coverage, CPU/GPU backends, controller rescans, and AIGC disclosure requirements are unchanged for normal jobs.
+Earlier releases produced procedural, watermarked isolated drafts under `output/command_center/unscanned_drafts/`. Do not rename them to imply approval or remove their embedded provenance. Their original inspection workflow remains diagnostic only. Generate a new ordinary video for replacement.
 
 ## Validation limitations
 
-The local draft path is intentionally procedural-only and has no controller-hosted player or automatic promotion/rescan queue. Inspection is a manual worker-local diagnostic operation. Physical Windows/GPU tests, real local rendering with CUDA/parity files absent, and three-mode canaries require operator hardware; synthetic HTTP and path tests do not establish that those tests passed. Retain draft PR status until exact-head CI and operator verification pass.
+Source and synthetic HTTP regressions do not establish real Windows/GPU rendering or pixel parity. Validate exact-head CI, real ComfyUI composition and audio/video output on operator hardware before deployment. Keep the existing PR in draft until acceptance.
