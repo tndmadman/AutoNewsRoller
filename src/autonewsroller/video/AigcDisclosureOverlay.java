@@ -10,6 +10,9 @@ import javax.imageio.ImageIO;
 public final class AigcDisclosureOverlay {
     private AigcDisclosureOverlay(){}
     public static Path create(Path out,ProductionMode mode,int width,int height)throws Exception{
+        return create(out,mode,width,height,false);
+    }
+    public static Path create(Path out,ProductionMode mode,int width,int height,boolean localDraft)throws Exception{
         if(width<480||height<640)throw new IllegalArgumentException("Disclosure requires portrait video");
         Files.createDirectories(out.toAbsolutePath().getParent());
         BufferedImage img=new BufferedImage(width,height,BufferedImage.TYPE_INT_ARGB);
@@ -28,6 +31,11 @@ public final class AigcDisclosureOverlay {
         g.drawString(first,390,166);
         g.setFont(new Font("SansSerif",Font.BOLD,23));
         g.drawString("ILLUSTRATION - NOT ACTUAL FOOTAGE",390,206);
+        if(localDraft){
+            g.setColor(new Color(35,12,12,245));g.fillRoundRect(120,270,840,100,12,12);
+            g.setColor(Color.WHITE);g.setFont(new Font("SansSerif",Font.BOLD,34));
+            g.drawString("NOT SCANNED / LOCAL DRAFT ONLY",155,333);
+        }
         g.dispose();
         if(!ImageIO.write(img,"png",out.toFile()))throw new IllegalStateException("PNG overlay writer missing");
         return out;

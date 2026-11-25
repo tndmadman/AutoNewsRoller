@@ -142,7 +142,16 @@ public final class NewsPipeline {
         return produce(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,suppliedPolitical,mode,Map.of(),dryRun);
     }
     public Path produce(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis,boolean dryRun)throws Exception{
-        ProductionPreflight.check(cand,mode,useComfy,requireComfy,maxComfyImages,dryRun,cfg)
+        return produceInternal(cand,worker,slot,slotDir,targetSeconds,encoder,useComfy,requireComfy,maxComfyImages,suppliedPolitical,mode,rawAnalysis,dryRun,false);
+    }
+
+    /** Diagnostic output only: procedural cards, watermark, no export approval. */
+    public Path produceLocalDraft(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis)throws Exception{
+        return produceInternal(cand,worker,slot,slotDir,targetSeconds,encoder,false,false,maxComfyImages,suppliedPolitical,mode,rawAnalysis,false,true);
+    }
+
+    private Path produceInternal(Candidate cand,int worker,int slot,Path slotDir,int targetSeconds,String encoder,boolean useComfy,boolean requireComfy,int maxComfyImages,PoliticalVisualData suppliedPolitical,ProductionMode mode,Map<String,Object>rawAnalysis,boolean dryRun,boolean localDraft)throws Exception{
+        ProductionPreflight.check(cand,mode,useComfy,requireComfy,maxComfyImages,dryRun,cfg,localDraft)
                 .requireEligible();
         Files.createDirectories(slotDir);
         // Controller retries share an epoch workspace. Contract changes invalidate
@@ -150,6 +159,7 @@ public final class NewsPipeline {
         String settingsFingerprint=Hashing.sha256(
                 Json.stringify(cand.toMap())+"|"+mode+"|"+targetSeconds+"|"+encoder+
                 "|"+useComfy+"|"+requireComfy+"|"+maxComfyImages+"|"+dryRun+
+                (localDraft?"|LOCAL_DRAFT_V1":"")+
                 "|"+Json.stringify(rawAnalysis)+"|"+
                 Json.stringify(suppliedPolitical==null?Map.of():suppliedPolitical.toMap())+
                 "|"+cfg.get("ollamaModel","")+"|"+cfg.get("imageCheckpoint","")+
@@ -159,7 +169,7 @@ public final class NewsPipeline {
                         ?ContentSafetyService.hash(root.resolve("defaults.txt")):"no-defaults"));
         ProductionCheckpoint checkpoint=new ProductionCheckpoint(slotDir,slotDir.getParent(),settingsFingerprint);
         Map<String,Object>cachedFinal=checkpoint.metadata("FINAL",settingsFingerprint);
-        if(cachedFinal!=null&&!dryRun){
+        if(cachedFinal!=null&&!dryRun&&!localDraft){
             String name=String.valueOf(cachedFinal.getOrDefault("filename",""));
             if(!name.isBlank()&&!name.contains("/")&&!name.contains("\\")
                     &&name.toLowerCase(Locale.ROOT).endsWith(".mp4")){
@@ -208,7 +218,8 @@ public final class NewsPipeline {
         }
         if(!dryRun){
             events.emit(worker,slot,PipelineStage.VERIFY,"PREFLIGHT: verifying Ollama, narration, encoder and both mandatory safety models");
-            ProductionServiceReadiness.check(root,cfg,encoder);
+            if(localDraft)ProductionServiceReadiness.checkLocalDraft(root,cfg,encoder);
+            else ProductionServiceReadiness.check(root,cfg,encoder);
         }
         StoryCluster c=mode==ProductionMode.FRAMING_EXPOSURE?cand.cluster():enrichForProduction(cand.cluster());
         VerificationResult refreshed=new SourceVerifier().verify(c,cfg.minimumIndependentSources());
@@ -218,7 +229,7 @@ public final class NewsPipeline {
         // Re-evaluate after enrichment because refreshed headlines and summaries
         // can change. Keep the later visual asset gate as a separate fail-closed defense.
         ProductionPreflight.checkPolicy(fp,mode).requireEligible();
-        boolean evidenceGraphicsOnly=ProductionPreflight.requiresEvidenceGraphics(fp,mode);
+        boolean evidenceGraphicsOnly=localDraft||ProductionPreflight.requiresEvidenceGraphics(fp,mode);
         if(evidenceGraphicsOnly)
             events.emit(worker,slot,PipelineStage.VERIFY,
                     "SAFETY ROUTE: evidence graphics; no synthesized people or events");
@@ -786,7 +797,7 @@ public final class NewsPipeline {
         // missing ComfyUI illustrations or invalid evidence graphics.
         VisualAssetGate.requireReady(mode,sensitiveTopic,requiredGeneratedScenes,comfyGenerated,
                 imageSources,imgs,renderBackgrounds,renderOverlays,
-                cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+                cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),localDraft);
         events.emit(worker,slot,PipelineStage.VISUALS,
                 "VISUAL ASSET GATE PASSED: ComfyUI "+comfyGenerated+
                 "/"+requiredGeneratedScenes.size()+" required; scenes="+imgs.size());
@@ -812,7 +823,7 @@ public final class NewsPipeline {
                     :new NewsIntroAudioMixer().mix(nr.wav(),slotDir.resolve("narration/intro_mixed.wav"),
                             cfg.get("ffmpegCommand","ffmpeg"),introGainDb);
         Path disclosure=autonewsroller.video.AigcDisclosureOverlay.create(slotDir.resolve("render/aigc_disclosure.png"),mode,
-                cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920));
+                cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),localDraft);
         Path render=slotDir.resolve("render/video.mp4");events.emit(worker,slot,PipelineStage.RENDER,"ffmpeg-v5-editorial");VideoRenderer renderer=new VideoRenderer(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30),classic);List<Double>sceneWeights=!classic&&cfg.getBool("visualNarrationSyncEnabled",true)?storyboard.durations():plan.items().stream().map(VisualPlan.Item::duration).toList();VideoRenderer.RenderResult rr=renderer.render(renderBackgrounds,renderOverlays,renderMotion,sceneWeights,renderAudio,render,encoder,cfg.get("captions","sentence"),script.narration(),cfg.getBool("visualUseExactTtsTiming",true)?timingSidecar:null,disclosure);
         events.emit(worker,slot,PipelineStage.RENDER,"ENCODER ACTUAL="+rr.encoder());
         Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,renderAudio,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();Map<String,Object>visualQuality=VisualQualityReport.create(cfg.get("ffmpegCommand","ffmpeg"),render,slotDir,finalSeconds,storyboard,cfg.getBool("visualGenerateContactSheet",true),!"off".equalsIgnoreCase(cfg.get("captions","sentence")),classic);
@@ -833,6 +844,20 @@ public final class NewsPipeline {
             audit.put("framingMaximumAutomaticTargetSeconds",cfg.getInt("politicalExposureMaxDurationSeconds",180));
         }
         audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);audit.put("hook",script.hook());audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());audit.put("visualPackage",BroadcastTheme.PACKAGE_ID);audit.put("postLayout","tiktok-footer-220");audit.put("thumbnailStrategy","hook-frame-zero");putVisualPromptAudit(audit,visualPrompts);putPoliticalAudit(audit,political,plan);Json.write(slotDir.resolve("audit.json"),audit);
+        if(localDraft){
+            Path drafts=slotDir.resolve("local_drafts");Files.createDirectories(drafts);
+            Path draft=drafts.resolve("NOT_SCANNED_"+UUID.randomUUID()+".mp4");
+            Path sidecar=draft.resolveSibling(draft.getFileName()+".json");
+            Map<String,Object>metadata=Map.of("safetyStatus","NOT_SCANNED","publicationAllowed",false,
+                    "productionMode",mode.name(),"videoSha256",ContentSafetyService.hash(render),
+                    "contentSafetyScanningEnabled",false,"visualMode","PROCEDURAL_LOCAL_DRAFT",
+                    "createdAt",Instant.now().toString());
+            Json.write(sidecar,metadata);
+            try{Files.copy(render,draft);}
+            catch(Exception failure){Files.deleteIfExists(draft);Files.deleteIfExists(sidecar);throw failure;}
+            events.emit(worker,slot,PipelineStage.AUDIT,"NOT SCANNED — LOCAL OUTPUT ONLY");
+            return draft;
+        }
         List<Path>safetyAssets=new ArrayList<>(renderBackgrounds);
         safetyAssets.addAll(imgs);safetyAssets.add(disclosure);
         for(Path image:renderOverlays)if(image!=null)safetyAssets.add(image);

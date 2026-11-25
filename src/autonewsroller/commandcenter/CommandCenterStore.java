@@ -23,6 +23,8 @@ public final class CommandCenterStore {
     private final Path statePath;
     private final BiasRegistry bias;
     private boolean autoQueue;
+    private boolean contentSafetyScanningEnabled=true;
+    private final List<Map<String,Object>> safetySettingAudit=new ArrayList<>();
     private final double autoThreshold;
     private final int maxQueued;
     private final int leaseSeconds;
@@ -466,12 +468,13 @@ public final class CommandCenterStore {
                 m.put("pairedVideoState","FRAMING_PRODUCING");
             m.putIfAbsent("productionEpoch",UUID.randomUUID().toString());
             m.put("claimId",UUID.randomUUID().toString());m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
+            m.put("claimContentSafetyScanningEnabled",contentSafetyScanningEnabled);
             int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
             appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY"));
             renewLease(m);
             persistRequired();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
-            job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
+            job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));Map<String,Object>claimSettings=new LinkedHashMap<>(settings);claimSettings.put("contentSafetyScanningEnabled",contentSafetyScanningEnabled);job.put("settings",claimSettings);job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
             job.put("claimId",m.get("claimId"));job.put("productionEpoch",m.get("productionEpoch"));job.put("attemptNumber",claimCount);job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
             Map<String,Object>sourceMix=m.get("sourceMix") instanceof Map<?,?>?Json.object(m.get("sourceMix")):Map.of();
             Map<String,Object>framing=m.get("framingAnalysis") instanceof Map<?,?>?Json.object(m.get("framingAnalysis")):Map.of();
@@ -917,6 +920,7 @@ public final class CommandCenterStore {
                     "bytes",integer(v.get("bytes")));
         }
         requireActiveClaim(jobId,workerId,claimId);
+        if(Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled")))throw new IllegalStateException("CONTENT_SAFETY: local draft cannot be uploaded");
         if(!epoch.equals(String.valueOf(m.getOrDefault("productionEpoch",""))))
             throw new IllegalStateException("WORKER_LEASE_EXPIRED: production epoch mismatch");
         if(claimId.equals(m.get("uploadedClaimId"))
@@ -962,6 +966,7 @@ public final class CommandCenterStore {
             throw new IllegalStateException("CONTENT_SAFETY: invalid media identity");
         if(completedIdentity(m,worker,claim,epoch,sha))return null;
         requireActiveClaim(jobId,worker,claim);
+        if(Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled")))throw new IllegalStateException("CONTENT_SAFETY: local draft cannot be approved via completion");
         if(!epoch.equals(String.valueOf(m.getOrDefault("productionEpoch","")))
                 ||!sha.equals(m.get("uploadedSha256"))
                 ||!claim.equals(m.get("uploadedClaimId"))
@@ -975,6 +980,33 @@ public final class CommandCenterStore {
         return file;
     }
 
+    /** Worker-local drafts are never uploaded, archived as approved, or served by /videos. */
+    public synchronized boolean completeLocalDraft(String jobId,Map<String,Object>metadata){
+        Map<String,Object>m=requireStory(jobId);
+        String worker=String.valueOf(metadata.getOrDefault("workerId",""));
+        String claim=String.valueOf(metadata.getOrDefault("claimId",""));
+        String epoch=String.valueOf(metadata.getOrDefault("productionEpoch",""));
+        String hash=String.valueOf(metadata.getOrDefault("videoSha256",""));
+        String path=String.valueOf(metadata.getOrDefault("localPath",""));
+        if(path.isBlank()||!validHash(hash))throw new IllegalArgumentException("Local draft path and SHA-256 required");
+        if(m.get("localDraft") instanceof Map<?,?> previous
+                &&!claim.isBlank()&&claim.equals(previous.get("claimId"))&&worker.equals(previous.get("workerId"))
+                &&epoch.equals(previous.get("productionEpoch"))&&hash.equals(previous.get("videoSha256"))
+                &&path.equals(previous.get("localPath"))){
+            if(stateDirty)persistRequired();return false;
+        }
+        requireActiveClaim(jobId,worker,claim);
+        if(!Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled"))||!epoch.equals(m.get("productionEpoch")))
+            throw new IllegalStateException("Local draft completion requires a matching local-only claim");
+        Map<String,Object>draft=new LinkedHashMap<>(Map.of("status","NOT_SCANNED","workerId",worker,
+                "claimId",claim,"productionEpoch",epoch,"videoSha256",hash,"localPath",path,
+                "productionMode",String.valueOf(m.get("productionMode")),"completedAt",Instant.now().toString()));
+        m.put("localDraft",draft);m.put("status","HOLD");m.put("stage","NOT_SCANNED");
+        m.put("progress",100);m.put("decision","HOLD");m.put("detail","NOT SCANNED — LOCAL OUTPUT ONLY");
+        m.remove("error");m.remove("assignedWorker");clearLease(m);
+        appendProductionAttempt(m,Instant.now(),Map.of("event","LOCAL_DRAFT_COMPLETE","safetyStatus","NOT_SCANNED"));
+        persistRequired();emit("story",publicStory(m));return true;
+    }
     public synchronized boolean completeAuthorized(String jobId,Map<String,Object>metadata){
         Map<String,Object>m=requireStory(jobId);
         String workerId=String.valueOf(metadata.getOrDefault("workerId",""));
@@ -992,6 +1024,7 @@ public final class CommandCenterStore {
             return false;
         }
         requireActiveClaim(jobId,workerId,claimId);
+        if(Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled")))throw new IllegalStateException("CONTENT_SAFETY: local draft cannot complete as an export");
         if(!epoch.equals(String.valueOf(m.getOrDefault("productionEpoch",""))))
             throw new IllegalStateException("WORKER_LEASE_EXPIRED: production epoch mismatch");
         if(!dry&&(!validHash(sha)||!sha.equals(m.get("uploadedSha256"))
@@ -1348,6 +1381,18 @@ public final class CommandCenterStore {
         Map<String,Object>m=stories.get(id);return m==null?null:deepCopyMap(m);
     }
 
+    public synchronized boolean contentSafetyScanningEnabled(){return contentSafetyScanningEnabled;}
+    public synchronized Map<String,Object> setContentSafetyScanningEnabled(boolean enabled){
+        boolean previous=contentSafetyScanningEnabled;
+        if(previous==enabled)return Map.of("contentSafetyScanningEnabled",enabled);
+        Map<String,Object>event=Map.of("at",Instant.now().toString(),"actor","authenticated administrator","previous",previous,"enabled",enabled,"event","CONTENT_SAFETY_SETTING_CHANGED");
+        contentSafetyScanningEnabled=enabled;safetySettingAudit.add(event);
+        try{persistRequired();}catch(java.io.UncheckedIOException failure){
+            contentSafetyScanningEnabled=previous;safetySettingAudit.remove(safetySettingAudit.size()-1);throw failure;
+        }
+        Map<String,Object>payload=Map.of("contentSafetyScanningEnabled",enabled,"audit",event);
+        emit("settings",payload);return payload;
+    }
     public synchronized Map<String,Object> setAutoQueue(boolean enabled){
         autoQueue=enabled;
         persistRequired();
@@ -1402,7 +1447,7 @@ public final class CommandCenterStore {
         for(String status:List.of("QUEUED","ANALYZING","COMPLETE","FAILED"))
             counts.put("meme"+status.charAt(0)+status.substring(1).toLowerCase(Locale.ROOT),
                     stories.values().stream().filter(x->status.equals(x.get("memeAnalysisStatus"))).count());
-        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeRecentLookbackHours",memeRecentLookbackHours);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
+        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeRecentLookbackHours",memeRecentLookbackHours);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("contentSafetyScanningEnabled",contentSafetyScanningEnabled);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
     }
 
 
@@ -1704,6 +1749,13 @@ public final class CommandCenterStore {
     private static double number(Object x){return x instanceof Number n?n.doubleValue():0;}
     private static int integer(Object x){return x instanceof Number n?n.intValue():0;}
     private boolean claimEligible(Map<String,Object>m,String workerId){
+        if(!contentSafetyScanningEnabled){
+            Map<String,Object>worker=workers.get(workerId);
+            if(worker==null||!(worker.get("capabilities") instanceof List<?> capabilities)||!capabilities.contains("local_draft_v1")){
+                m.put("stage","WAITING_FOR_COMPATIBLE_WORKER");
+                m.put("detail","Local-only mode requires an updated worker");return false;
+            }
+        }
         ProductionMode mode=ProductionMode.fromPersisted(m.get("productionMode"));
         if(mode==ProductionMode.STANDARD)return true;
         Map<String,Object>worker=workers.get(workerId);
@@ -1984,6 +2036,9 @@ public final class CommandCenterStore {
             Map<String,Object>root=Json.object(Json.read(statePath));copyMap(root.get("stories"),stories);copyMap(root.get("feeds"),feeds);copyMap(root.get("videos"),videos);
             if(root.get("operations") instanceof Map<?,?>op)for(var entry:op.entrySet())processedOperations.put(String.valueOf(entry.getKey()),String.valueOf(entry.getValue()));
             if(root.get("autoQueue") instanceof Boolean b)autoQueue=b;
+            if(root.get("contentSafetyScanningEnabled") instanceof Boolean b)contentSafetyScanningEnabled=b;
+            if(root.get("safetySettingAudit") instanceof List<?> audit)
+                for(Object entry:audit)if(entry instanceof Map<?,?>)safetySettingAudit.add(new LinkedHashMap<>(Json.object(entry)));
             Object scan=root.get("lastScan");if(scan instanceof Map<?,?>)lastScan=new LinkedHashMap<>(Json.object(scan));
             boolean migrated=migrateVideoArchive();
             if(!pairFramingAfterStandard){
@@ -2069,6 +2124,7 @@ public final class CommandCenterStore {
         Map<String,Object>root=new LinkedHashMap<>();
         root.put("stories",stories);root.put("feeds",feeds);root.put("videos",videos);
         root.put("lastScan",lastScan);root.put("autoQueue",autoQueue);root.put("operations",processedOperations);
+        root.put("contentSafetyScanningEnabled",contentSafetyScanningEnabled);root.put("safetySettingAudit",safetySettingAudit);
         return root;
     }
     private void persistRequired(){

@@ -30,6 +30,13 @@ public final class VisualAssetGate {
             List<Integer> requiredGeneratedScenes, int acceptedGenerated,
             List<Map<String,Object>> sources, List<Path> composed,
             List<Path> backgrounds, List<Path> overlays, int width, int height) {
+        requireReady(mode,sensitiveTopic,requiredGeneratedScenes,acceptedGenerated,sources,composed,backgrounds,overlays,width,height,false);
+    }
+
+    public static void requireReady(ProductionMode mode, boolean sensitiveTopic,
+            List<Integer> requiredGeneratedScenes, int acceptedGenerated,
+            List<Map<String,Object>> sources, List<Path> composed,
+            List<Path> backgrounds, List<Path> overlays, int width, int height,boolean localDraft) {
         if (mode == null || sources == null || composed == null
                 || backgrounds == null || overlays == null)
             throw new IllegalStateException("VISUAL_ASSETS_MISSING: absent scene evidence");
@@ -49,7 +56,7 @@ public final class VisualAssetGate {
 
         // A sensitive story cannot use synthesized event imagery. Its only
         // supported route is verified procedural source/evidence graphics.
-        boolean illustrationRequired = mode != ProductionMode.FRAMING_EXPOSURE && !sensitiveTopic;
+        boolean illustrationRequired = mode != ProductionMode.FRAMING_EXPOSURE && !sensitiveTopic && !localDraft;
         if (illustrationRequired) {
             if (requiredGeneratedScenes == null || requiredGeneratedScenes.isEmpty())
                 throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: no ComfyUI illustration scenes were scheduled");

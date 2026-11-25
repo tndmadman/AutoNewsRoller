@@ -29,6 +29,13 @@ public final class ProductionPreflight {
 
     public static Result check(NewsPipeline.Candidate candidate,ProductionMode mode,
             boolean useComfy,boolean requireComfy,int requestedImages,boolean dryRun,NewsConfig cfg){
+        return check(candidate,mode,useComfy,requireComfy,requestedImages,dryRun,cfg,false);
+    }
+
+    public static Result check(NewsPipeline.Candidate candidate,ProductionMode mode,
+            boolean useComfy,boolean requireComfy,int requestedImages,boolean dryRun,NewsConfig cfg,boolean localDraft){
+        if(localDraft&&(useComfy||requireComfy||dryRun))
+            return reject("CONFIGURATION_INVALID","Local draft requires procedural visuals and actual rendering","Use the dedicated local draft route.");
         if(candidate==null||candidate.cluster()==null||candidate.factPackage()==null)
             return reject("SOURCE_INVALID","Missing story or fact package","Refresh story evidence.");
         if(mode==null)
@@ -41,7 +48,7 @@ public final class ProductionPreflight {
 
         Result policy=checkPolicy(fp,mode);
         if(!policy.eligible())return policy;
-        boolean evidenceGraphicsOnly=requiresEvidenceGraphics(fp,mode);
+        boolean evidenceGraphicsOnly=localDraft||requiresEvidenceGraphics(fp,mode);
         if(mode==ProductionMode.MEME_RAGEBAIT){
             if(!cfg.getBool("memePipelineEnabled",true))
                 return reject("CONFIGURATION_INVALID","Meme production is disabled","Enable this production mode.");

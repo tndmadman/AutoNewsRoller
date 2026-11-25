@@ -29,15 +29,19 @@ public final class ProductionServiceReadiness {
     private static final long HEALTH_OK_MILLIS=300000, HEALTH_FAILED_MILLIS=15000;
 
     public static void check(Path root,NewsConfig cfg,String encoder)throws Exception{
-        checkOllama(cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate"),
-                cfg.get("ollamaModel","llama3.1:8b"));
-        checkNarration(root,cfg);
-        checkEncoders(cfg.get("ffmpegCommand","ffmpeg"),
-                cfg.get("ffprobeCommand","ffprobe"),encoder);
+        checkLocalDraft(root,cfg,encoder);
         // Both pinned independent models are required before any expensive
         // generation. Cache only a bounded health result, never a video verdict.
         health(root,cfg,"tools/content_safety_scan.py","NudeNet","3.4.2");
         health(root,cfg,"tools/content_context_scan.py","OpenNSFW2","0.19.0");
+    }
+
+    /** Non-export diagnostic rendering still checks all non-scanner dependencies. */
+    public static void checkLocalDraft(Path root,NewsConfig cfg,String encoder)throws Exception{
+        checkOllama(cfg.get("ollamaUrl","http://127.0.0.1:11434/api/generate"),
+                cfg.get("ollamaModel","llama3.1:8b"));
+        checkNarration(root,cfg);
+        checkEncoders(cfg.get("ffmpegCommand","ffmpeg"),cfg.get("ffprobeCommand","ffprobe"),encoder);
     }
 
     /** Ollama /api/tags has no inference cost; /api/generate would load a model. */

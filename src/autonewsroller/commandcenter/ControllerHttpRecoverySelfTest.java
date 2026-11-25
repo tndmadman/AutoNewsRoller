@@ -37,8 +37,52 @@ public final class ControllerHttpRecoverySelfTest {
         }
     }
     public static void main(String[]args)throws Exception{System.out.println("Passed: "+run());}
+    private static void localDraftSettingRegression()throws Exception{
+        Path root=Files.createTempDirectory("anr-local-draft-setting-");
+        String id="local-draft-fixture";
+        Json.write(root.resolve("data/command_center_state.json"),Map.of("stories",Map.of(id,
+            Map.of("id",id,"status","QUEUED","stage","QUEUED","topic","Synthetic fixture","productionMode","STANDARD","score",0.95)),"videos",Map.of()));
+        NewsConfig cfg=NewsConfig.load(root);
+        String env=System.getenv("AUTONEWS_ADMIN_TOKEN");
+        String admin=env!=null&&!env.isBlank()?env:"isolated-admin-token";
+        cfg.set("commandCenterAdminToken",admin);
+        CommandCenterServer server=new CommandCenterServer(root,cfg,"127.0.0.1",0,600,false,0.68,5,"worker-token",false);
+        HttpClient http=HttpClient.newHttpClient();
+        String base="http://127.0.0.1:"+server.start();
+        byte[]off=Json.stringify(Map.of("enabled",false,"confirmLocalOnly",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Map<String,String>worker=Map.of("X-AutoNews-Token","worker-token");
+        Map<String,String>authorized=Map.of("X-AutoNews-Token","worker-token","X-AutoNews-Admin-Token",admin);
+        try{
+            URI uri=URI.create(base+"/api/settings/content-safety");
+            check(Boolean.TRUE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"scanning defaults on");
+            check(request(http,uri,"POST",off,worker).statusCode()==403,"worker token cannot disable scanning");
+            check(request(http,uri,"POST",off,authorized).statusCode()==200,"administrator can select local-only drafts");
+            check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"updated setting visible without restart");
+            byte[]heartbeat=Json.stringify(Map.of("id","updated-worker","capabilities",List.of("local_draft_v1"))).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            check(request(http,URI.create(base+"/api/workers/heartbeat"),"POST",heartbeat,worker).statusCode()==200,"updated worker registers");
+            HttpResponse<String>claimed=request(http,URI.create(base+"/api/jobs/claim?worker=updated-worker"),"GET",new byte[0],worker);
+            check(claimed.statusCode()==200,"updated worker can claim local draft");
+            Map<String,Object>job=Json.object(Json.parse(claimed.body()));
+            check(Boolean.FALSE.equals(Json.object(job.get("settings")).get("contentSafetyScanningEnabled")),"claim receives immutable local draft setting");
+            byte[]done=Json.stringify(Map.of("workerId","updated-worker","claimId",job.get("claimId"),"productionEpoch",job.get("productionEpoch"),
+                "localPath","fixture.mp4","videoSha256","a".repeat(64))).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            URI local=URI.create(base+"/api/jobs/"+id+"/local-draft-complete");
+            check(request(http,local,"POST",done,worker).statusCode()==200,"local draft completion recorded");
+            check(request(http,local,"POST",done,worker).statusCode()==200,"local completion replay idempotent");
+            check(mediaCount(root)==0,"local draft does not enter controller media archive");
+        }finally{server.stop();}
+        CommandCenterServer restarted=new CommandCenterServer(root,cfg,"127.0.0.1",0,600,false,0.68,5,"worker-token",false);
+        try{
+            URI uri=URI.create("http://127.0.0.1:"+restarted.start()+"/api/settings/content-safety");
+            check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"local-only selection persists");
+            byte[]on=Json.stringify(Map.of("enabled",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            check(request(http,uri,"POST",on,authorized).statusCode()==200,"administrator can restore mandatory scanning");
+        }finally{restarted.stop();}
+    }
+
     public static int run()throws Exception{
         count=0;
+        localDraftSettingRegression();
         Path root=Files.createTempDirectory("anr-http-recovery-");
         Files.createDirectories(root.resolve("data"));
         String id="http-fixture";

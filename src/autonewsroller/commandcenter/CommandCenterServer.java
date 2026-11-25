@@ -76,6 +76,7 @@ public final class CommandCenterServer {
         server.createContext("/api/events",this::events);
         server.createContext("/api/scan",this::scanNow);
         server.createContext("/api/settings/auto-video",this::autoVideoSetting);
+        server.createContext("/api/settings/content-safety",this::contentSafetySetting);
         server.createContext("/api/stories/",this::stories);
         server.createContext("/api/workers/heartbeat",this::heartbeat);
         server.createContext("/api/jobs/claim",this::claim);
@@ -129,6 +130,9 @@ public final class CommandCenterServer {
     private void safetyHealth(HttpExchange x)throws IOException{
         if(!api(x))return;
         if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        if(!store.contentSafetyScanningEnabled()){
+            json(x,200,Map.of("status","DISABLED_LOCAL_ONLY"));return;
+        }
         try{
             Map<String,Object> health;
             synchronized(this){
@@ -269,6 +273,28 @@ public final class CommandCenterServer {
         scheduler.submit(this::scanSafe);json(x,202,Map.of("ok",true,"status","scan-started"));
     }
 
+    private void contentSafetySetting(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        if("GET".equalsIgnoreCase(x.getRequestMethod())){
+            json(x,200,Map.of("contentSafetyScanningEnabled",store.contentSafetyScanningEnabled()));return;
+        }
+        if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        String admin=cfg.get("commandCenterAdminToken","");
+        String env=System.getenv("AUTONEWS_ADMIN_TOKEN");
+        if(env!=null&&!env.isBlank())admin=env;
+        String supplied=x.getRequestHeaders().getFirst("X-AutoNews-Admin-Token");
+        if(admin.isBlank()||admin.equals(token)||supplied==null||!java.security.MessageDigest.isEqual(
+                admin.getBytes(StandardCharsets.UTF_8),supplied.getBytes(StandardCharsets.UTF_8))){
+            json(x,403,Map.of("error","Distinct administrator token required"));return;
+        }
+        Map<String,Object>body=bodyObject(x);
+        if(!(body.get("enabled") instanceof Boolean enabled)){json(x,400,Map.of("error","enabled boolean required"));return;}
+        if(!enabled&&!Boolean.TRUE.equals(body.get("confirmLocalOnly"))){
+            json(x,400,Map.of("error","Local-only warning must be acknowledged"));return;
+        }
+        try{json(x,200,store.setContentSafetyScanningEnabled(enabled));}
+        catch(UncheckedIOException e){json(x,500,Map.of("error","Unable to save content safety setting"));}
+    }
     private void autoVideoSetting(HttpExchange x)throws IOException{
         if(!api(x))return;
         if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
@@ -338,7 +364,7 @@ public final class CommandCenterServer {
         if(!api(x))return;if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         Map<String,Object>body=bodyObject(x);String id=String.valueOf(body.getOrDefault("id","")).trim();
         if(id.isBlank()){json(x,400,Map.of("error","worker id required"));return;}
-        store.heartbeat(id,body);json(x,200,Map.of("ok",true));
+        store.heartbeat(id,body);json(x,200,Map.of("ok",true,"contentSafetyScanningEnabled",store.contentSafetyScanningEnabled()));
     }
 
     private void claim(HttpExchange x)throws IOException{
@@ -422,6 +448,11 @@ public final class CommandCenterServer {
                                 store.recordVideoTransfer(id,out,workerId,claimId,epoch,sha,bytes));
                         result.put("ok",true);json(x,200,result);
                     }finally{Files.deleteIfExists(staging);}
+                }
+                case "local-draft-complete"->{
+                    if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+                    boolean committed=store.completeLocalDraft(id,bodyObject(x));
+                    json(x,200,Map.of("ok",true,"alreadyCompleted",!committed,"safetyStatus","NOT_SCANNED"));
                 }
                 case "complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}

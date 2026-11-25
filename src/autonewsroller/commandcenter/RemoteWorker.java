@@ -39,6 +39,7 @@ public final class RemoteWorker {
     private volatile Instant lastContact,lastHeartbeat,lastErrorAt;
     private volatile int failures;
     private volatile boolean running=true,paused=false,draining=false;
+    private volatile boolean controllerSafetyScanningEnabled=true;
     private volatile ProductionStageTelemetry telemetry;
 
     public RemoteWorker(Path root,NewsConfig cfg,String controller,String workerId,String token){
@@ -103,7 +104,7 @@ public final class RemoteWorker {
     public boolean isDraining(){return draining;}
     public Map<String,Object> snapshot(){
         Map<String,Object> m=new LinkedHashMap<>();
-        m.put("workerId",workerId);m.put("controllerUrl",controller);
+        m.put("workerId",workerId);m.put("controllerUrl",controller);m.put("contentSafetyScanningEnabled",controllerSafetyScanningEnabled);
         m.put("running",launched.get()&&running);m.put("paused",paused);m.put("draining",draining);
         m.put("state",state);m.put("currentJob",currentJob);m.put("currentTopic",currentTopic);
         m.put("claimActive",!currentJob.isBlank());m.put("jobType",jobType);m.put("stage",stage);m.put("detail",detail);
@@ -166,6 +167,7 @@ public final class RemoteWorker {
                     throw new IllegalStateException("STALE_FRAMING_EVIDENCE: Article text changed since analysis.");
             }
             Map<String,Object> settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
+            boolean localDraft=Boolean.FALSE.equals(settings.get("contentSafetyScanningEnabled"));
             int requestedDuration=settings.get("duration") instanceof Number n?n.intValue():cfg.duration();
             int duration=Math.max(cfg.getInt("commandCenterMinimumTargetSeconds",70),requestedDuration);
             if(productionMode==ProductionMode.FRAMING_EXPOSURE)
@@ -191,7 +193,7 @@ public final class RemoteWorker {
             // The epoch changes on a new manual production request, not on retry.
             // Each retry resumes the same workspace after a worker restart.
             String epoch=String.valueOf(job.getOrDefault("productionEpoch",currentClaimId));
-            Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+safeName(epoch));
+            Path batch=root.resolve("output/remote_worker").resolve(safeName(jobId)+"_"+safeName(epoch)+(localDraft?"_local_draft":""));
             Files.createDirectories(batch);
             event("job-dir",Map.of("dir",batch.toString()));
             try(FileChannel workspaceChannel=FileChannel.open(batch.resolve(".production.lock"),
@@ -203,7 +205,17 @@ public final class RemoteWorker {
             NewsPipeline pipeline=new NewsPipeline(root,cfg,batch,e->progressSafe(jobId,claimId,e));
             PoliticalVisualData political=job.get("politicalVisualData") instanceof Map<?,?>?PoliticalVisualData.fromMap(Json.object(job.get("politicalVisualData"))):null;
             Map<String,Object>framingAnalysis=job.get("framingAnalysis") instanceof Map<?,?>?Json.object(job.get("framingAnalysis")):Map.of();
-            Path output=pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,framingAnalysis,dryRun);
+            Path output=localDraft
+                    ?pipeline.produceLocalDraft(candidate,1,1,batch.resolve("slot_001"),duration,encoder,comfyImages,political,productionMode,framingAnalysis)
+                    :pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,framingAnalysis,dryRun);
+            if(localDraft){
+                post("/api/jobs/"+enc(jobId)+"/local-draft-complete",Map.of("workerId",workerId,
+                        "claimId",claimId,"productionEpoch",epoch,"localPath",output.toAbsolutePath().toString(),
+                        "videoSha256",ContentSafetyService.hash(output)));
+                if(telemetry!=null){telemetry.progress("NOT_SCANNED","Worker-local draft only");telemetry.complete(true,"");}
+                event("job-finish",Map.of("jobId",jobId,"result","NOT_SCANNED","stage","NOT_SCANNED","outputPath",output.toString()));
+                return;
+            }
             stage="UPLOAD";detail="Local output ready; awaiting controller acknowledgement";
             if(telemetry!=null)telemetry.progress(stage,detail);
             event("progress",Map.of("stage",stage,"detail",detail));
@@ -340,9 +352,11 @@ public final class RemoteWorker {
             if(cfg.getBool("politicalExposureEnabled",true))capabilities.add("framing_exposure_v1");
             if(cfg.getBool("memePipelineEnabled",true))capabilities.add("meme_ragebait_v1");
             if(cfg.getBool("memeWorthinessEnabled",true))capabilities.add("meme_analysis_v1");
+            capabilities.add("local_draft_v1");
             m.put("capabilities",capabilities);
             m.put("metrics",metrics.get());m.put("timestamp",Instant.now().toString());
-            post("/api/workers/heartbeat",m);lastHeartbeat=Instant.now();
+            Map<String,Object>response=post("/api/workers/heartbeat",m);
+            controllerSafetyScanningEnabled=!Boolean.FALSE.equals(response.get("contentSafetyScanningEnabled"));lastHeartbeat=Instant.now();
         }catch(Exception e){error("heartbeat",e);}
     }
     /**
