@@ -597,7 +597,7 @@ function storyCard(s){
     ?(s.scrapped
       ?`<div class="uploadState scrapped"><b>× SCRAPPED VERSION ${num(s.videoVersion)||""}</b><span>${s.scrappedAt?new Date(s.scrappedAt).toLocaleString():""}${s.scrapReason?" // "+esc(s.scrapReason):""}</span></div>`
       :s.uploaded
-        ?`<div class="uploadState uploaded"><b>✓ MANUALLY UPLOADED // V${num(s.videoVersion)||1}</b><span>${esc(s.uploadedPlatform||"platform not noted")}${s.uploadedAt?" // "+new Date(s.uploadedAt).toLocaleString():""}${s.uploadNote?" // "+esc(s.uploadNote):""}</span></div>`
+        ?`<div class="uploadState uploaded"><b>✓ MANUALLY UPLOADED${s.unscannedArchive===true?" // NOT SCANNED":""} // V${num(s.videoVersion)||1}</b><span>${esc(s.uploadedPlatform||"platform not noted")}${s.uploadedAt?" // "+new Date(s.uploadedAt).toLocaleString():""}${s.uploadNote?" // "+esc(s.uploadNote):""}</span></div>`
          :approved?`<div class="uploadState pending"><b>⇧ READY TO POST // V${num(s.videoVersion)||1}</b><span>Not marked uploaded yet.</span></div>`
         :`<div class="uploadState pending"><b>NOT APPROVED FOR POSTING // V${num(s.videoVersion)||1}</b><span>${esc(s.safetyStatus||"NOT VERIFIED")}</span></div>`)
     :"";
@@ -645,9 +645,9 @@ function storyCard(s){
         ${s.scrapped
           ?`<button class="btn ghost" data-command="RESTORE">↩ RESTORE VIDEO</button>`
           :`<button class="btn bad" data-command="SCRAP">× SCRAP VIDEO</button>`}
-        ${!s.scrapped&&(approved||s.uploaded)?(s.uploaded
+        ${!s.scrapped&&(approved||s.uploaded||s.unscannedArchive===true)?(s.uploaded
           ?`<button class="btn uploadedBtn" data-command="UNUPLOAD">↩ UNMARK UPLOADED</button>`
-          :`<button class="btn publish" data-command="UPLOAD">⇧ MARK UPLOADED</button>`):""}`:""}
+          :`<button class="btn ${approved?"publish":"ghost"}" data-command="${approved?"UPLOAD":"RECORD_EXTERNAL_UPLOAD"}">⇧ MARK UPLOADED</button>`):""}`:""}
     </div>
     <details class="storyDetails"><summary>INTELLIGENCE / SOURCES / FRAMING / PRODUCTION DETAILS</summary><div class="storyIntel">
     <div class="verifyReason">${verified?"✓ VERIFIED // ":s.worthy?"★ WORTHY // ":"⚠ "}${esc(s.verificationReason||"")}</div>
@@ -734,7 +734,7 @@ function renderVideos(){
     const remakeButton=v.current
       ?`<button class="btn primary" data-command="${v.productionMode==="FRAMING_EXPOSURE"?"REMAKE_FRAMING_EXPOSURE":v.productionMode==="MEME_RAGEBAIT"?"REMAKE_MEME":"REMAKE"}">${v.productionMode==="FRAMING_EXPOSURE"?"RE-MAKE REVIEW":v.productionMode==="MEME_RAGEBAIT"?"RE-MAKE MEME":"RE-MAKE NEWS"}</button>`
       :"";
-    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.productionMode==="FRAMING_EXPOSURE"?"Narrative Review: "+String(v.topic||storyId).replace(/^Narrative Review:\s*/i,""):v.productionMode==="MEME_RAGEBAIT"?"Meme Roast: "+String(v.topic||storyId):v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${approved?lifecycle:`<span class="uploadBadge scrapped">NOT VERIFIED - DO NOT POST</span>`}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions">${approved?`<a href="${href}" target="_blank" rel="noopener noreferrer">OPEN MP4</a>`:privateReview?`<a href="${esc(privateReviewUrl(versionId))}" target="_blank" rel="noopener noreferrer">REVIEW MP4</a>`:""}${remakeButton}${uploadButton}${scrapButton}</div></div>`}
+    return {key:String(versionId||storyId+"#v"+(v.version||1)),html:`<div class="videoRow" data-story-id="${esc(storyId)}" data-version-id="${esc(versionId)}"><div class="videoInfo"><strong>${esc(v.productionMode==="FRAMING_EXPOSURE"?"Narrative Review: "+String(v.topic||storyId).replace(/^Narrative Review:\s*/i,""):v.productionMode==="MEME_RAGEBAIT"?"Meme Roast: "+String(v.topic||storyId):v.topic||storyId)} // V${num(v.version)||1}${v.current?" // CURRENT":""} // ${esc(v.productionMode||"STANDARD")}</strong><small>${esc(v.filename||"")} // ${v.completedAt?new Date(v.completedAt).toLocaleString():""}${tech?"<br>"+esc(tech):""}</small>${approved?lifecycle:`${v.uploaded?lifecycle:""}<span class="uploadBadge scrapped">NOT VERIFIED - DO NOT POST</span>`}${v.scrapReason?`<small class="uploadNote">SCRAP: ${esc(v.scrapReason)}</small>`:""}${v.uploadNote?`<small class="uploadNote">${esc(v.uploadNote)}</small>`:""}</div><div class="videoActions">${approved?`<a href="${href}" target="_blank" rel="noopener noreferrer">OPEN MP4</a>`:privateReview?`<a href="${esc(privateReviewUrl(versionId))}" target="_blank" rel="noopener noreferrer">REVIEW MP4</a>`:""}${remakeButton}${uploadButton}${scrapButton}</div></div>`}
   }),"No completed videos yet.");
 }
 
@@ -796,10 +796,12 @@ document.addEventListener("click",e=>{
     submitOperation(id,button,path+"/analyze-bias",{},"POST","Political framing analysis queued for an idle worker.");
     return;
   }
-  if(["UPLOAD","UNUPLOAD"].includes(command)){
-    const uploaded=command==="UPLOAD";
+  if(["UPLOAD","UNUPLOAD","RECORD_EXTERNAL_UPLOAD"].includes(command)){
+    const external=command==="RECORD_EXTERNAL_UPLOAD";
+    const uploaded=command!=="UNUPLOAD";
     let platform="",note="";
     if(uploaded){
+      if(external&&!confirm("Confirm this video was already uploaded outside AutoNewsRoller. This only records the upload; the video remains NOT SCANNED and is not approved for publication."))return;
       const p=prompt("Where did you manually upload this video?",localStorage.getItem("autonewsUploadPlatform")||"TikTok");
       if(p===null)return;platform=p.trim();
       const n=prompt("Optional upload note (account, caption/version, etc.):","");
@@ -808,7 +810,7 @@ document.addEventListener("click",e=>{
       if(platform)localStorage.setItem("autonewsUploadPlatform",platform);
     }else if(!confirm("Mark this video as NOT uploaded? The history entry will be kept."))return;
     if(!versionId){toast("Video version not identified; reload before changing upload status.",true);return}
-    submitOperation(id,button,path+"/upload-status",{uploaded,platform,note,versionId,aigcLabelConfirmed:uploaded},"POST",uploaded?"Marked manually uploaded with AIGC confirmation.":"Upload mark removed.");
+    submitOperation(id,button,path+(external?"/external-upload-record":"/upload-status"),{uploaded,platform,note,versionId,aigcLabelConfirmed:uploaded,...(external?{alreadyUploaded:true}:{})},"POST",external?"External upload recorded; scan status unchanged.":uploaded?"Marked manually uploaded with AIGC confirmation.":"Upload mark removed.");
     return;
   }
   if(["SCRAP","RESTORE"].includes(command)){
