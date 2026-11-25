@@ -24,7 +24,7 @@ An incomplete/unknown scan never produces an approval.
 2. Run PowerShell tools/setup_content_safety_gpu_windows.ps1 in a separate
    test checkout of the integration branch. It creates .venv-safety-gpu.
    Verify NVIDIA driver, CUDA 12.x, cuDNN 9 and MSVC runtime DLLs. The pinned
-   onnxruntime-gpu==1.20.1 is intended for CUDA 12 + cuDNN 9. ORT 1.27+
+   onnxruntime-gpu==1.20.2 is intended for CUDA 12 + cuDNN 9. ORT 1.27+
    defaults to CUDA 13 packages on PyPI. Do not upgrade without retesting.
    Documentation: https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html
 3. Export the original OpenNSFW2 model with:
