@@ -308,7 +308,7 @@ function renderRails(){
   const f=boardData.facets||{};
   const fields={railAll:"ALL",railFound:"DISCOVERED",railVerified:"WORTHY",railMemeDiscovery:"MEME_DISCOVERY",railQueued:"QUEUED",
     railProducing:"PRODUCING",railFailed:"FAILED",railComplete:"COMPLETE",
-    railToPost:"TO_POST",railUploaded:"UPLOADED",railScrapped:"SCRAPPED"};
+    railToPost:"TO_POST",railUnscanned:"UNSCANNED",railUploaded:"UPLOADED",railScrapped:"SCRAPPED"};
   for(const [id,status] of Object.entries(fields))$("#"+id).textContent=f[status]||0;
   renderStatusDistribution();
 }
