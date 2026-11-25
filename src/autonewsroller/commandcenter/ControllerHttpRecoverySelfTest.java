@@ -178,8 +178,51 @@ public final class ControllerHttpRecoverySelfTest {
         }finally{server.stop();}
     }
 
+    /** Synthetic persisted archive fixture; tests identity/access routing, not video decoding. */
+    private static void currentArchiveReviewRegression()throws Exception{
+        Path root=Files.createTempDirectory("anr-current-review-").toRealPath();
+        Path dir=Files.createDirectories(root.resolve("output/command_center/videos"));
+        String id="review-fixture",oldId=id+"#v1",newId=id+"#v2";
+        Path old=dir.resolve("older.mp4"),current=dir.resolve("newer.mp4");
+        Files.writeString(old,"old benign fixture");Files.writeString(current,"new benign fixture");
+        Map<String,Object>record=ContentSafetyService.unscanned(current,"CONTROLLER_UNSCANNED_ARCHIVE");
+        record.put("controllerEncodedAudit",Map.of("status","approved"));
+        Map<String,Object>oldRecord=ContentSafetyService.unscanned(old,"CONTROLLER_UNSCANNED_ARCHIVE");
+        oldRecord.put("controllerEncodedAudit",Map.of("status","approved"));
+        Map<String,Object>older=Map.of("versionId",oldId,"storyId",id,"version",1,"productionMode","STANDARD",
+                "filename","older.mp4","path",old.toString(),"safetyStatus","NOT_SCANNED","safetyManifest",oldRecord);
+        Map<String,Object>newer=Map.of("versionId",newId,"storyId",id,"version",2,"productionMode","STANDARD",
+                "filename","newer.mp4","path",current.toString(),"safetyStatus","NOT_SCANNED","safetyManifest",record);
+        Map<String,Object>story=Map.of("id",id,"status","COMPLETE","topic","Review fixture","productionMode","STANDARD",
+                "localDraft",Map.of("productionMode","STANDARD","hostPath","historical-draft.mp4"),"currentVideoVersionId",newId);
+        Json.write(root.resolve("data/command_center_state.json"),Map.of("stories",Map.of(id,story),"videos",Map.of(oldId,older,newId,newer)));
+        CommandCenterServer server=new CommandCenterServer(root,NewsConfig.load(root),"127.0.0.1",0,600,false,0.68,5,"review-token",false);
+        HttpClient http=HttpClient.newHttpClient();String base="http://127.0.0.1:"+server.start();
+        Map<String,String>auth=Map.of("X-AutoNews-Token","review-token");
+        URI review=URI.create(base+"/api/review-video?versionId="+id+"%23v2");
+        try{
+            check(request(http,review,"GET",new byte[0],Map.of()).statusCode()==401,"private review requires existing authentication");
+            HttpResponse<String>response=request(http,review,"GET",new byte[0],auth);
+            check(response.statusCode()==200&&"new benign fixture".equals(response.body()),"review resolves exact current archive bytes");
+            check("NOT_SCANNED".equals(response.headers().firstValue("X-AutoNews-Safety-Status").orElse("")),"review retains unscanned identity");
+            check(request(http,URI.create(base+"/api/review-video?versionId="+id+"%23v1"),"GET",new byte[0],auth).statusCode()==404,"superseded version cannot be served by current review");
+            check(request(http,URI.create(base+"/api/review-video?versionId=staged"),"GET",new byte[0],auth).statusCode()==404,"unarchived media cannot be reviewed");
+            check(request(http,URI.create(base+"/videos/newer.mp4"),"GET",new byte[0],auth).statusCode()==409,"publishable endpoint still rejects unapproved media");
+            Map<String,Object>board=Json.object(Json.parse(request(http,URI.create(base+"/api/board/stories"),"GET",new byte[0],auth).body()));
+            List<?>rows=(List<?>)board.get("stories");Map<String,Object>row=Json.object(rows.get(0));
+            check(newId.equals(row.get("currentVideoVersionId"))&&"newer.mp4".equals(row.get("videoFilename"))
+                    &&!row.containsKey("localDraft"),"current board ignores historical draft without deleting it");
+            check(Boolean.FALSE.equals(row.get("publicationApproved"))&&"NOT_SCANNED".equals(row.get("safetyStatus")),"board does not imply publication approval");
+            Files.writeString(current,"changed");
+            check(request(http,review,"GET",new byte[0],auth).statusCode()==409,"tampered archive denied");
+            Files.delete(current);
+            check(request(http,review,"GET",new byte[0],auth).statusCode()==409,"missing archive denied");
+        }finally{server.stop();}
+    }
+
     public static int run()throws Exception{
         count=0;
+        currentArchiveReviewRegression();
         localDraftSettingRegression();
         imageOnlySettingRegression();
         tokenlessLocalSafetySettingRegression();
