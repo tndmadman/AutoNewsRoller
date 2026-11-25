@@ -281,7 +281,7 @@ public final class CommandCenterServer {
 
     private void contentSafetySetting(HttpExchange x)throws IOException{
         if(!api(x))return;
-        boolean imageOnly=Set.of("/api/settings/image-safety","/api/settings/automatic-safety").contains(x.getRequestURI().getPath());
+        // All three historical endpoint names address the same persisted setting.
         if("GET".equalsIgnoreCase(x.getRequestMethod())){
             json(x,200,Map.of("contentSafetyScanningEnabled",store.contentSafetyScanningEnabled(),"imageSafetyScanningEnabled",store.imageSafetyScanningEnabled(),"automaticSafetyScanningEnabled",store.automaticSafetyScanningEnabled()));return;
         }
@@ -298,12 +298,9 @@ public final class CommandCenterServer {
         }
         Map<String,Object>body=bodyObject(x);
         if(!(body.get("enabled") instanceof Boolean enabled)){json(x,400,Map.of("error","enabled boolean required"));return;}
-        if(!imageOnly&&!enabled&&!Boolean.TRUE.equals(body.get("confirmLocalOnly"))){
-            json(x,400,Map.of("error","Local-only warning must be acknowledged"));return;
-        }
         try{
             String actor=token.isBlank()?"local controller operator":"authenticated controller operator";
-            json(x,200,imageOnly?store.setImageSafetyScanningEnabled(enabled,actor):store.setContentSafetyScanningEnabled(enabled,actor));
+            json(x,200,store.setAutomaticSafetyScanningEnabled(enabled,actor));
         }
         catch(UncheckedIOException e){json(x,500,Map.of("error","Unable to save content safety setting"));}
     }
