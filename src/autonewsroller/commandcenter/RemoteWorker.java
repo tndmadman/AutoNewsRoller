@@ -378,7 +378,17 @@ public final class RemoteWorker {
         HttpRequest req=request(path).timeout(timeout).header("Content-Type","application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(Json.stringify(body),StandardCharsets.UTF_8)).build();
         HttpResponse<String> r=http.send(req,HttpResponse.BodyHandlers.ofString());
-        if(r.statusCode()<200||r.statusCode()>=300)throw new IllegalStateException(path+" HTTP "+r.statusCode());
+        if(r.statusCode()<200||r.statusCode()>=300){
+            String reason="";
+            try{
+                Map<String,Object> response=Json.object(Json.parse(r.body()));
+                reason=String.valueOf(response.getOrDefault("error",""));
+            }catch(Exception ignored){}
+            // Report the structured controller rejection, not only its HTTP code.
+            reason=reason.replaceAll("[\\r\\n\\t]"," ").trim();
+            if(reason.length()>500)reason=reason.substring(0,500);
+            throw new IllegalStateException(path+" HTTP "+r.statusCode()+(reason.isBlank()?"":": "+reason));
+        }
         lastContact=Instant.now();return r.body().isBlank()?Map.of():Json.object(Json.parse(r.body()));
     }
     private HttpRequest.Builder request(String path){

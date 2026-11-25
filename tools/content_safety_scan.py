@@ -12,6 +12,14 @@ BLOCK_CLASSES = {
     "FEMALE_BREAST_EXPOSED", "FEMALE_GENITALIA_EXPOSED",
     "MALE_GENITALIA_EXPOSED", "BUTTOCKS_EXPOSED", "ANUS_EXPOSED",
 }
+# NudeNet 3.4.2 also reports ordinary anatomy and covered regions.
+# These are recognized classes, not explicit-content block classifications.
+KNOWN_CLASSES = BLOCK_CLASSES | {
+    "ARMPITS_EXPOSED", "BELLY_EXPOSED", "FEET_EXPOSED", "MALE_BREAST_EXPOSED",
+    "FACE_FEMALE", "FACE_MALE", "FEMALE_GENITALIA_COVERED",
+    "BUTTOCKS_COVERED", "FEMALE_BREAST_COVERED", "ANUS_COVERED",
+    "ARMPITS_COVERED", "BELLY_COVERED", "FEET_COVERED",
+}
 # NudeNet 3.4.2 internally hardcodes NMS score threshold 0.25; this is NOT production calibrated.
 THRESHOLD = 0.25
 
@@ -69,10 +77,9 @@ def scan(image, detector):
             confidence = float(d.get("score", -1))
             if not (0 <= confidence <= 1):
                 raise ValueError("invalid detector confidence")
-            # A future detector can add new exposure classes. Unknown exposed
-            # anatomy must not be silently treated as harmless content.
-            if label.endswith("_EXPOSED") and label not in BLOCK_CLASSES:
-                raise ValueError("unrecognized exposure class: " + label)
+            # Validate the pinned model vocabulary independently of the explicit-content policy.
+            if label not in KNOWN_CLASSES:
+                raise ValueError("unrecognized detector class: " + label)
             if label in BLOCK_CLASSES and confidence >= THRESHOLD:
                 hits.append({"category": label, "confidence": round(confidence, 5), "region": name})
     return hits
