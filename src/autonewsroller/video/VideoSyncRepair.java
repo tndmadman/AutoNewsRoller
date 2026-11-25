@@ -1,6 +1,7 @@
 package autonewsroller.video;
 
 import autonewsroller.audit.VideoAudit;
+import autonewsroller.util.Json;
 import java.nio.file.*;
 import java.util.*;
 import java.util.function.Consumer;
@@ -51,13 +52,16 @@ public final class VideoSyncRepair {
         report.put("sourceSampleRate",t.sampleRate());report.put("expectedVideoFrames",t.totalFrames());
         report.put("expectedVideoDuration",t.videoDuration());report.put("sceneFrames",t.sceneFrames());
         report.put("repairAttempted",false);report.put("repairAttempts",0);
+        List<Map<String,Object>> attempts=new ArrayList<>();report.put("attemptDetails",attempts);
+        try{
         Media before=probe(output);metrics(report,before,"BeforeRepair");
         if(!audioValid(before,t))throw new IllegalStateException("SYNC_FAILED: encoded audio does not match source narration timeline");
         if(aligned(before,t)){
             metrics(report,before,"AfterRepair");report.put("repairStatus","VERIFIED");
             report.put("actualEncoder",encoder);progress.accept("AUDIO/VIDEO SYNC VERIFIED");return report;
         }
-        double mismatch=Math.max(Math.abs(before.video-t.videoDuration()),Math.abs(before.video-before.audio));
+        double mismatch=Math.max(Math.max(Math.abs(before.video-t.videoDuration()),Math.abs(before.video-before.audio)),
+                Math.abs((long)before.frames-t.totalFrames())/(double)t.fps());
         if(!enabled||maxAttempts==0||mismatch>maxMismatch||Math.abs(before.videoStart)>0.002)
             throw new IllegalStateException("SYNC_FAILED: timing mismatch outside enabled repair limits: "+mismatch);
         // Do not repair silent or undecodable audio. Keep the original AAC bytes.
@@ -72,6 +76,10 @@ public final class VideoSyncRepair {
             if(Thread.currentThread().isInterrupted())throw new InterruptedException("Sync repair interrupted");
             String actual="nvenc".equals(encoder)&&attempt==1?"nvenc":"x264";
             progress.accept("REPAIRING VIDEO SYNC — ATTEMPT "+attempt+"/"+maxAttempts);
+            report.put("repairAttempted",true);report.put("repairAttempts",attempt);
+            Map<String,Object> detail=new LinkedHashMap<>();attempts.add(detail);
+            detail.put("attempt",attempt);detail.put("encoder",actual);
+            long attemptStart=System.nanoTime();
             Path temp=Files.createTempFile(output.toAbsolutePath().getParent(),".sync-repair-",".mp4");
             try{
                 List<String> cmd=new ArrayList<>(List.of(ffmpeg,"-y","-hide_banner","-nostdin","-xerror","-loglevel","warning",
@@ -82,7 +90,10 @@ public final class VideoSyncRepair {
                 if("nvenc".equals(actual))cmd.addAll(List.of("-c:v","h264_nvenc","-preset","p6","-tune","hq","-rc","vbr","-cq","19","-b:v","0"));
                 else cmd.addAll(List.of("-c:v","libx264","-preset","medium","-crf","19"));
                 cmd.addAll(List.of("-movflags","+faststart",temp.toString()));
-                FfmpegRunner.run(cmd,1200);
+                Path log=output.resolveSibling(output.getFileName()+".sync-attempt-"+attempt+".log");
+                detail.put("command",List.copyOf(cmd));detail.put("log",log.getFileName().toString());
+                FfmpegRunner.run(cmd,1200,log);
+                detail.put("ffmpegExitStatus",0);
                 progress.accept("VERIFYING REPAIRED VIDEO");
                 Media after=probe(temp);
                 if(!aligned(after,t))throw new IllegalStateException("Repaired streams still misaligned");
@@ -92,11 +103,20 @@ public final class VideoSyncRepair {
                 report.put("repairAttempts",attempt);report.put("repairMethod","FRAME_ALIGNMENT_AUDIO_COPY");
                 report.put("actualEncoder",actual);report.put("repairStatus","VERIFIED");
                 report.put("repairDurationMs",(System.nanoTime()-start)/1_000_000);
+                detail.put("status","VERIFIED");
                 progress.accept("AUDIO/VIDEO SYNC VERIFIED");return report;
-            }catch(InterruptedException e){Thread.currentThread().interrupt();throw e;}
-            catch(Exception e){last=e;progress.accept("SYNC REPAIR FAILED: "+e.getMessage());}
-            finally{Files.deleteIfExists(temp);}
+            }catch(InterruptedException e){detail.put("status","INTERRUPTED");Thread.currentThread().interrupt();throw e;}
+            catch(Exception e){last=e;detail.put("status","FAILED");detail.put("failure",String.valueOf(e.getMessage()));progress.accept("SYNC REPAIR FAILED: "+e.getMessage());}
+            finally{detail.put("durationMs",(System.nanoTime()-attemptStart)/1_000_000);Files.deleteIfExists(temp);}
         }
         throw new IllegalStateException("SYNC_FAILED: bounded repair exhausted; original retained",last);
+        }catch(Exception failure){
+            report.put("repairStatus",failure instanceof InterruptedException?"INTERRUPTED":"FAILED");
+            report.put("failure",String.valueOf(failure.getMessage()));throw failure;
+        }finally{
+            report.put("verificationDurationMs",(System.nanoTime()-start)/1_000_000);
+            try{Json.write(output.resolveSibling(output.getFileName()+".sync.json"),report);}
+            catch(Exception diagnosticFailure){System.err.println("Sync diagnostics write failed: "+diagnosticFailure);}
+        }
     }
 }

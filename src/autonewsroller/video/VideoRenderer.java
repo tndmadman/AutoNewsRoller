@@ -61,13 +61,15 @@ public final class VideoRenderer {
 
         String actual=resolved;
         try{
-            FfmpegRunner.run(cmd,1200);
+            FfmpegRunner.run(cmd,1200,output.resolveSibling(output.getFileName()+".render.log"));
+        }catch(InterruptedException cancelled){
+            Thread.currentThread().interrupt();throw cancelled;
         }catch(Exception first){
             if("nvenc".equals(resolved)&&"auto".equals(VideoEncoderProbe.normalize(requestedEncoder))){
                 System.err.println("NVENC render failed; retrying with x264: "+first.getMessage());
                 actual="x264";
                 cmd=motionCommand(backgrounds,overlays,motion,timeline,audio,output,actual,ass,disclosure);
-                FfmpegRunner.run(cmd,1200);
+                FfmpegRunner.run(cmd,1200,output.resolveSibling(output.getFileName()+".fallback-render.log"));
             }else throw first;
         }
 
