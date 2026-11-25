@@ -1273,12 +1273,27 @@ public final class CommandCenterStore {
         return setUploadStatus(storyId,versionId,uploaded,platform,note,"");
     }
     public synchronized Map<String,Object> setUploadStatus(String storyId,String versionId,boolean uploaded,String platform,String note,String operationId){
+        return updateUploadRecord(storyId,versionId,uploaded,platform,note,operationId,false);
+    }
+    /** Record an upload that the operator already made outside this application.
+     * This is not controller publication approval and cannot authorize export.
+     */
+    public synchronized Map<String,Object> recordExternalUpload(String storyId,String versionId,String platform,String note,String operationId){
+        if(versionId==null||versionId.isBlank())throw new IllegalArgumentException("Exact video version required");
+        return updateUploadRecord(storyId,versionId,true,platform,note,operationId,true);
+    }
+    private Map<String,Object> updateUploadRecord(String storyId,String versionId,boolean uploaded,String platform,String note,String operationId,boolean external){
         Map<String,Object>m=requireStory(storyId);
-        String identity="upload:"+storyId+":"+versionId+":"+uploaded+":"+safeText(platform,80)+":"+safeText(note,500);
+        String identity=(external?"external-upload:":"upload:")+storyId+":"+versionId+":"+uploaded+":"+safeText(platform,80)+":"+safeText(note,500);
         if(alreadyHandled(operationId,identity))return publicStory(m);
         Map<String,Object>v=resolveVideo(storyId,versionId);
         if(v==null)throw new IllegalStateException("No completed local video version is available.");
-        if(uploaded){
+        if(external){
+            if(!isUnscannedArchive(v)||currentReviewRecord(versionId)==null)
+                throw new IllegalStateException("Only a current completed unscanned archive can be recorded as externally uploaded");
+            try{ContentSafetyService.verifyUnscanned(Path.of(String.valueOf(v.get("path"))),Json.object(v.get("safetyManifest")),"CONTROLLER_UNSCANNED_ARCHIVE");}
+            catch(Exception e){throw new IllegalStateException("Unscanned archive changed or missing",e);}
+        }else if(uploaded){
             if(!"APPROVED_FOR_EXPORT".equals(v.getOrDefault("safetyStatus","NOT_SCANNED")))
                 throw new IllegalStateException("CONTENT_SAFETY: historical or dry-run videos cannot be marked publishable");
             // Preserve historical versions, but do not treat legacy worker-only
@@ -1306,7 +1321,8 @@ public final class CommandCenterStore {
         appendStateHistory(v,"uploadHistory",now,Map.of(
                 "uploaded",uploaded,
                 "platform",cleanPlatform,
-                "note",cleanNote
+                "note",cleanNote,
+                "externalUploadRecord",external
         ));
 
         v.put("uploaded",uploaded);
@@ -1657,6 +1673,7 @@ public final class CommandCenterStore {
         row.put("entryActive",live);
         row.put("entryHasVideo",completed!=null&&!live);
         row.put("publicationApproved",false);
+        row.put("unscannedArchive",false);
         row.put("entryMayRemake","COMPLETE".equals(String.valueOf(story.get("status")))
                 &&completed!=null);
         if(mode==ProductionMode.MEME_RAGEBAIT&&Boolean.TRUE.equals(story.get("pendingMemeRequest"))&&!active){
@@ -1675,6 +1692,7 @@ public final class CommandCenterStore {
             row.put("completedAt",completed.getOrDefault("completedAt",""));
             row.put("safetyStatus",completed.getOrDefault("safetyStatus","NOT_SCANNED"));
             row.put("publicationApproved",controllerApproved(completed));
+            row.put("unscannedArchive",isUnscannedArchive(completed));
             // The archived version is authoritative for this format; keep legacy
             // draft records in persisted history, not on the current board card.
             row.remove("localDraft");
@@ -1873,6 +1891,9 @@ public final class CommandCenterStore {
         if(!"COMPLETE".equals(m.get("status"))||!Boolean.TRUE.equals(m.get("entryHasVideo"))
                 ||Boolean.TRUE.equals(m.get("uploaded"))||Boolean.TRUE.equals(m.get("scrapped")))return false;
         Map<String,Object>v=videos.get(String.valueOf(m.getOrDefault("currentVideoVersionId","")));
+        return isUnscannedArchive(v);
+    }
+    private static boolean isUnscannedArchive(Map<String,Object>v){
         return v!=null&&"NOT_SCANNED".equals(v.get("safetyStatus"))
                 &&v.get("safetyManifest") instanceof Map<?,?> manifest
                 &&"CONTROLLER_UNSCANNED_ARCHIVE".equals(manifest.get("approvalOrigin"))
