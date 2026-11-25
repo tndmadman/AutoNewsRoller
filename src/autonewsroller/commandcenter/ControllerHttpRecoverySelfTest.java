@@ -50,92 +50,75 @@ public final class ControllerHttpRecoverySelfTest {
             check(request(http,uri,"GET",new byte[0],Map.of()).statusCode()==200,"local setting readable without token");
             check(request(http,uri,"POST",off,Map.of("Content-Type","text/plain")).statusCode()==415,"tokenless cross-site simple request rejected");
             check(request(http,uri,"POST",off,json).statusCode()==200,"local controller toggle OFF needs no token");
-            check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],Map.of()).body())).get("contentSafetyScanningEnabled")),"tokenless OFF persisted");
+            check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],Map.of()).body())).get("automaticSafetyScanningEnabled")),"tokenless OFF persisted");
             check(request(http,uri,"POST",on,json).statusCode()==200,"local controller toggle ON needs no token");
         }finally{server.stop();}
     }
 
-    private static void localDraftSettingRegression()throws Exception{
-        Path root=Files.createTempDirectory("anr-local-draft-setting-");
-        String id="local-draft-fixture";
-        Json.write(root.resolve("data/command_center_state.json"),Map.of("stories",Map.of(id,
+    private static void masterAliasSettingRegression()throws Exception{
+        Path root=Files.createTempDirectory("anr-master-alias-setting-");
+        String id="master-alias-fixture";
+        Path statePath=root.resolve("data/command_center_state.json");
+        Json.write(statePath,Map.of("stories",Map.of(id,
             Map.of("id",id,"status","QUEUED","stage","QUEUED","topic","Synthetic fixture","productionMode","STANDARD","score",0.95)),"videos",Map.of()));
         NewsConfig cfg=NewsConfig.load(root);
         CommandCenterServer server=new CommandCenterServer(root,cfg,"127.0.0.1",0,600,false,0.68,5,"worker-token",false);
-        HttpClient http=HttpClient.newHttpClient();
-        String base="http://127.0.0.1:"+server.start();
-        byte[]off=Json.stringify(Map.of("enabled",false,"confirmLocalOnly",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        HttpClient http=HttpClient.newHttpClient();String base="http://127.0.0.1:"+server.start();
+        byte[]off=Json.stringify(Map.of("enabled",false)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[]on=Json.stringify(Map.of("enabled",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Map<String,String>auth=Map.of("X-AutoNews-Token","worker-token","Content-Type","application/json");
         Map<String,String>worker=Map.of("X-AutoNews-Token","worker-token");
-        Map<String,String>authorized=Map.of("X-AutoNews-Token","worker-token","Content-Type","application/json");
+        String claimId,epoch;
         try{
-            URI uri=URI.create(base+"/api/settings/content-safety");
-            check(Boolean.TRUE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"scanning defaults on");
-            check(request(http,uri,"POST",off,Map.of("Content-Type","application/json")).statusCode()==401,"existing controller authentication still required");
-            check(request(http,uri,"POST",off,worker).statusCode()==415,"non-JSON setting request rejected");
-            check(request(http,uri,"POST",Json.stringify(Map.of("enabled",false)).getBytes(java.nio.charset.StandardCharsets.UTF_8),authorized).statusCode()==400,"local-only warning confirmation required");
-            check(request(http,uri,"GET",new byte[0],Map.of()).statusCode()==401,"anonymous settings access denied");
-            check(request(http,uri,"POST",off,authorized).statusCode()==200,"existing controller token can select local-only drafts without another secret");
-            HttpResponse<String>health=request(http,URI.create(base+"/api/safety/health"),"GET",new byte[0],worker);
-            check(health.statusCode()==200&&"DISABLED_LOCAL_ONLY".equals(Json.object(Json.parse(health.body())).get("status")),"disabled health does not probe missing scanners or GPU configuration");
-            check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"updated setting visible without restart");
-            byte[]heartbeat=Json.stringify(Map.of("id","updated-worker","capabilities",List.of("local_draft_v1"))).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            HttpResponse<String>heartbeatResult=request(http,URI.create(base+"/api/workers/heartbeat"),"POST",heartbeat,worker);
-            check(heartbeatResult.statusCode()==200,"updated worker registers");
-            check(Boolean.FALSE.equals(Json.object(Json.parse(heartbeatResult.body())).get("contentSafetyScanningEnabled")),"heartbeat reports current policy");
-            check(request(http,URI.create(base+"/api/jobs/claim?worker=old-worker"),"GET",new byte[0],worker).statusCode()==204,"old worker cannot claim a local-only job");
-            HttpResponse<String>claimed=request(http,URI.create(base+"/api/jobs/claim?worker=updated-worker"),"GET",new byte[0],worker);
-            check(claimed.statusCode()==200,"updated worker can claim local draft");
-            Map<String,Object>job=Json.object(Json.parse(claimed.body()));
-            check(Boolean.FALSE.equals(Json.object(job.get("settings")).get("contentSafetyScanningEnabled")),"claim receives immutable local draft setting");
-            byte[]done=Json.stringify(Map.of("workerId","updated-worker","claimId",job.get("claimId"),"productionEpoch",job.get("productionEpoch"),
-                "localPath","fixture.mp4","videoSha256","a".repeat(64))).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            URI local=URI.create(base+"/api/jobs/"+id+"/local-draft-complete");
-            byte[]on=Json.stringify(Map.of("enabled",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            check(request(http,uri,"POST",on,authorized).statusCode()==200,"administrator can restore scanning while draft is active");
-            Map<String,String>uploadHeaders=new LinkedHashMap<>(worker);
-            uploadHeaders.put("X-Worker-Id","updated-worker");
-            uploadHeaders.put("X-Claim-Id",String.valueOf(job.get("claimId")));
-            uploadHeaders.put("X-Production-Epoch",String.valueOf(job.get("productionEpoch")));
-            uploadHeaders.put("X-Media-Sha256","4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a");
-            check(request(http,URI.create(base+"/api/jobs/"+id+"/video"),"PUT",new byte[]{1},uploadHeaders).statusCode()==409,"local-only claim cannot upload even after scanning is restored");
-            Map<String,Object>forged=new LinkedHashMap<>(Json.object(Json.parse(new String(done,java.nio.charset.StandardCharsets.UTF_8))));
-            forged.put("dryRun",true);
-            check(request(http,URI.create(base+"/api/jobs/"+id+"/complete"),"POST",Json.stringify(forged).getBytes(java.nio.charset.StandardCharsets.UTF_8),worker).statusCode()==409,"local-only claim cannot masquerade as normal completion");
-            URI draftUpload=URI.create(base+"/api/jobs/"+id+"/local-draft-video");
-            check(request(http,draftUpload,"PUT",new byte[]{2},uploadHeaders).statusCode()==409,"draft hash mismatch rejected");
-            HttpResponse<String>stored=request(http,draftUpload,"PUT",new byte[]{1},uploadHeaders);
-            check(stored.statusCode()==200,"isolated draft uploaded under claim snapshot");
-            Map<String,Object>draft=Json.object(Json.parse(stored.body()));
-            String filename=String.valueOf(draft.get("filename"));
-            check(filename.startsWith("NOT_SCANNED_synthetic_fixture_"),"draft includes sanitized title");
-            Path hostPath=Path.of(String.valueOf(draft.get("hostPath")));
-            check(hostPath.getParent().equals(root.resolve("output/command_center/unscanned_drafts").toAbsolutePath().normalize())
-                &&Files.isRegularFile(hostPath),"draft stored in separate host directory");
-            check(request(http,draftUpload,"PUT",new byte[]{1},uploadHeaders).statusCode()==200,"draft upload replay idempotent");
-            check(request(http,local,"POST",done,worker).statusCode()==409,"metadata-only replay cannot replace hosted completion");
-            check(mediaCount(root)==0,"local draft does not enter controller media archive");
-            check(request(http,uri,"POST",off,authorized).statusCode()==200,"local-only policy can be restored for restart test");
+            URI legacy=URI.create(base+"/api/settings/content-safety");
+            URI master=URI.create(base+"/api/settings/automatic-safety");
+            URI image=URI.create(base+"/api/settings/image-safety");
+            check(Boolean.TRUE.equals(Json.object(Json.parse(request(http,master,"GET",new byte[0],worker).body())).get("automaticSafetyScanningEnabled")),"master defaults on");
+            check(request(http,legacy,"POST",off,Map.of("Content-Type","application/json")).statusCode()==401,"existing controller authentication still required");
+            check(request(http,legacy,"GET",new byte[0],Map.of()).statusCode()==401,"anonymous settings access denied");
+            check(request(http,legacy,"POST",off,worker).statusCode()==415,"non-JSON setting request rejected");
+            check(request(http,legacy,"POST",off,auth).statusCode()==200,"legacy URL updates master only");
+            for(URI uri:List.of(legacy,master,image)){
+                Map<String,Object>settings=Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body()));
+                check(Boolean.FALSE.equals(settings.get("automaticSafetyScanningEnabled"))
+                    &&Boolean.FALSE.equals(settings.get("imageSafetyScanningEnabled"))
+                    &&Boolean.TRUE.equals(settings.get("contentSafetyScanningEnabled")),"setting aliases agree and normal route remains enabled");
+            }
+            check(request(http,URI.create(base+"/api/jobs/claim?worker=old-worker"),"GET",new byte[0],worker).statusCode()==204,"old workers cannot claim master-OFF jobs");
+            byte[]heartbeat=Json.stringify(Map.of("id","updated-worker","capabilities",List.of("automatic_safety_setting_v2","local_draft_v1"))).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            check(request(http,URI.create(base+"/api/workers/heartbeat"),"POST",heartbeat,auth).statusCode()==200,"compatible worker registers");
+            HttpResponse<String>claim=request(http,URI.create(base+"/api/jobs/claim?worker=updated-worker"),"GET",new byte[0],worker);
+            check(claim.statusCode()==200,"master-OFF claim uses ordinary route");
+            Map<String,Object>job=Json.object(Json.parse(claim.body()));
+            claimId=String.valueOf(job.get("claimId"));epoch=String.valueOf(job.get("productionEpoch"));
+            Map<String,Object>settings=Json.object(job.get("settings"));
+            check(Boolean.FALSE.equals(settings.get("automaticSafetyScanningEnabled"))
+                &&Boolean.TRUE.equals(settings.get("contentSafetyScanningEnabled")),"claim snapshots master OFF without draft route");
+            check(request(http,image,"POST",on,auth).statusCode()==200,"image alias restores master ON");
+            Map<String,Object>disk=Json.object(Json.read(statePath));
+            Map<String,Object>saved=Json.object(Json.object(disk.get("stories")).get(id));
+            check(Boolean.TRUE.equals(disk.get("automaticSafetyScanningEnabled"))
+                &&Boolean.FALSE.equals(saved.get("claimAutomaticSafetyScanningEnabled")),"global change leaves active claim unchanged");
+            check(request(http,master,"POST",off,auth).statusCode()==200,"master OFF persisted for restart");
         }finally{server.stop();}
         CommandCenterServer restarted=new CommandCenterServer(root,cfg,"127.0.0.1",0,600,false,0.68,5,"worker-token",false);
         try{
-            URI uri=URI.create("http://127.0.0.1:"+restarted.start()+"/api/settings/content-safety");
-            check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"local-only selection persists");
-            Map<String,Object>state=Json.object(Json.read(root.resolve("data/command_center_state.json")));
-            check(state.get("safetySettingAudit") instanceof List<?> audit&&audit.size()>=3,"durable settings audit retained");
-            Map<String,Object>saved=Json.object(Json.object(state.get("stories")).get(id));
-            check("NOT_SCANNED".equals(Json.object(saved.get("localDraft")).get("status")),"local draft classification survives restart");
-            byte[]on=Json.stringify(Map.of("enabled",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            check(request(http,uri,"POST",on,authorized).statusCode()==200,"administrator can restore mandatory scanning");
-            ExecutorService settingsRacers=Executors.newFixedThreadPool(2);
+            String url="http://127.0.0.1:"+restarted.start();
+            URI uri=URI.create(url+"/api/settings/automatic-safety");
+            check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("automaticSafetyScanningEnabled")),"master OFF survives restart");
+            Map<String,Object>saved=Json.object(Json.object(Json.object(Json.read(statePath)).get("stories")).get(id));
+            check(claimId.equals(saved.get("claimId"))&&epoch.equals(saved.get("productionEpoch"))
+                &&Boolean.FALSE.equals(saved.get("claimAutomaticSafetyScanningEnabled")),"active claim snapshot survives restart");
+            ExecutorService racers=Executors.newFixedThreadPool(2);
             try{
-                Future<HttpResponse<String>>first=settingsRacers.submit(()->request(http,uri,"POST",off,authorized));
-                Future<HttpResponse<String>>second=settingsRacers.submit(()->request(http,uri,"POST",on,authorized));
-                check(first.get(15,TimeUnit.SECONDS).statusCode()==200&&second.get(15,TimeUnit.SECONDS).statusCode()==200,"concurrent setting updates serialized");
-                Object live=Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled");
-                Object disk=Json.object(Json.read(root.resolve("data/command_center_state.json"))).get("contentSafetyScanningEnabled");
-                check(Objects.equals(live,disk),"concurrent final state matches durable state");
-                check(request(http,uri,"POST",on,authorized).statusCode()==200,"scanning restored after concurrency test");
-            }finally{settingsRacers.shutdownNow();}
+                Future<HttpResponse<String>>first=racers.submit(()->request(http,URI.create(url+"/api/settings/content-safety"),on,auth));
+                Future<HttpResponse<String>>second=racers.submit(()->request(http,URI.create(url+"/api/settings/image-safety"),off,auth));
+                check(first.get(15,TimeUnit.SECONDS).statusCode()==200&&second.get(15,TimeUnit.SECONDS).statusCode()==200,"concurrent aliases serialize");
+                Object live=Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("automaticSafetyScanningEnabled");
+                Object disk=Json.object(Json.read(statePath)).get("automaticSafetyScanningEnabled");
+                check(Objects.equals(live,disk),"master state matches persisted setting");
+                check(request(http,uri,"POST",on,auth).statusCode()==200,"master restored ON");
+            }finally{racers.shutdownNow();}
         }finally{restarted.stop();}
     }
 
@@ -169,6 +152,9 @@ public final class ControllerHttpRecoverySelfTest {
             Map<String,Object>deferred=new ContentSafetyService(root,cfg).inspectImageForRender(image,false);
             check("DEFERRED_TO_FINAL_VIDEO".equals(deferred.get("status"))&&ContentSafetyService.eligibleImageForRender(deferred,false)&&!ContentSafetyService.eligibleImageForRender(deferred,true),"deferred image never represented as SAFE");
             check(!ContentSafetyService.eligibleImageForRender(Map.of("status","UNSAFE"),false),"known unsafe verdict never accepted");
+            Map<String,Object>skipped=new ContentSafetyService(root,cfg).inspectImageForRender(image,false,false);
+            check("NOT_SCANNED".equals(skipped.get("status"))&&ContentSafetyService.eligibleImageForRender(skipped,false,false)
+                &&!ContentSafetyService.eligibleImageForRender(skipped,true,false)&&!ContentSafetyService.eligibleImageForRender(skipped,false,true),"master OFF records actual skipped scan without false approval");
             Map<String,Object>record=ContentSafetyService.unscanned(image,"CONTROLLER_UNSCANNED_ARCHIVE");
             ContentSafetyService.verifyUnscanned(image,record,"CONTROLLER_UNSCANNED_ARCHIVE");
             boolean denied=false;try{ContentSafetyService.verify(image,record,false);}catch(Exception expected){denied=true;}
@@ -223,7 +209,7 @@ public final class ControllerHttpRecoverySelfTest {
     public static int run()throws Exception{
         count=0;
         currentArchiveReviewRegression();
-        localDraftSettingRegression();
+        masterAliasSettingRegression();
         imageOnlySettingRegression();
         tokenlessLocalSafetySettingRegression();
         autonewsroller.safety.LocalDraftInspection.selfTest();
