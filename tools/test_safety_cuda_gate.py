@@ -11,7 +11,7 @@ def main():
     with tempfile.TemporaryDirectory() as d:
         p=Path(d,"parity.json");sha="a"*64
         denied(None,"NudeNet",sha)
-        manifest={"schemaVersion":1,"status":"UNVALIDATED",
+        manifest={"schemaVersion":1,"status":"UNVALIDATED","ortVersion":"1.20.2",
             "nudeNetDecisionFlips":0,"contextThresholdFlips":0,
             "verifiedDevice":0,"fixturesEvaluated":51,
             "encodedVideoFramesEvaluated":110,"licensedFixturesConfirmed":True,
@@ -36,5 +36,8 @@ def main():
         p.write_text(json.dumps(manifest))
         assert cuda._manifest(p,"NudeNet",sha,0)["status"]=="PASS"
         denied(p,"OpenNSFW2","b"*64)
+        manifest["ortVersion"]="1.20.1"
+        p.write_text(json.dumps(manifest))
+        denied(p,"NudeNet",sha)
     print("SafetyCudaGateTest PASS")
 if __name__=="__main__":main()
