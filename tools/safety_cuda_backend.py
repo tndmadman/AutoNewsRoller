@@ -42,7 +42,7 @@ def _verified_cuda_session(path,device,probe):
     if "CUDAExecutionProvider" not in ort.get_available_providers():
         raise RuntimeError("CUDA EP not installed")
     options=ort.SessionOptions()
-    if ort.__version__!="1.20.1":
+    if ort.__version__!="1.20.2":
         raise RuntimeError("unvalidated ONNX Runtime GPU release: "+ort.__version__)
     options.enable_profiling=True
     # No hidden CPU provider handoff: unsupported CUDA operators block rollout.
@@ -75,6 +75,7 @@ def _manifest(path,detector,model_sha,device):
         raise RuntimeError("GPU parity manifest required before any production CUDA scan")
     m=json.loads(Path(path).read_text(encoding="utf-8"))
     if (m.get("schemaVersion")!=1 or m.get("status")!="PASS"
+        or m.get("ortVersion")!="1.20.2"
         or m.get("nudeNetDecisionFlips")!=0
         or m.get("contextThresholdFlips")!=0
         or m.get("verifiedDevice")!=device
