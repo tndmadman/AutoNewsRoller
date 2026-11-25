@@ -1661,6 +1661,7 @@ public final class CommandCenterStore {
                 String.valueOf(story.getOrDefault("status","")));
         row.put("entryActive",live);
         row.put("entryHasVideo",completed!=null&&!live);
+        row.put("publicationApproved",false);
         row.put("entryMayRemake","COMPLETE".equals(String.valueOf(story.get("status")))
                 &&completed!=null);
         if(mode==ProductionMode.MEME_RAGEBAIT&&Boolean.TRUE.equals(story.get("pendingMemeRequest"))&&!active){
@@ -1677,6 +1678,11 @@ public final class CommandCenterStore {
             row.put("videoFilename",completed.getOrDefault("filename",""));
             row.put("serverVideo",completed.getOrDefault("path",""));
             row.put("completedAt",completed.getOrDefault("completedAt",""));
+            row.put("safetyStatus",completed.getOrDefault("safetyStatus","NOT_SCANNED"));
+            row.put("publicationApproved",controllerApproved(completed));
+            // The archived version is authoritative for this format; keep legacy
+            // draft records in persisted history, not on the current board card.
+            row.remove("localDraft");
             for(String key:List.of("ttsEngine","ttsVoice","visualMode","comfyCheckpoint","comfyImages"))
                 if(completed.containsKey(key))row.put(key,completed.get(key));else row.remove(key);
             copyPublicationState(completed,row);
@@ -2085,7 +2091,7 @@ public final class CommandCenterStore {
             &&claimMatches(m,claimId);
     }
     private static boolean isOnline(Map<String,Object>x){try{return Duration.between(Instant.parse(String.valueOf(x.get("lastSeen"))),Instant.now()).toSeconds()<45;}catch(Exception e){return false;}}
-    private Map<String,Object>publicStory(Map<String,Object>m){Map<String,Object>x=new LinkedHashMap<>(m);x.remove("candidate");x=deepCopyMap(x);x.put("actionableWorthy",isActionableWorthy(m));return x;}
+    private Map<String,Object>publicStory(Map<String,Object>m){Map<String,Object>x=new LinkedHashMap<>(m);x.remove("candidate");x=deepCopyMap(x);x.put("actionableWorthy",isActionableWorthy(m));Map<String,Object>v=videos.get(String.valueOf(m.getOrDefault("currentVideoVersionId","")));x.put("publicationApproved",v!=null&&controllerApproved(v));return x;}
     private static boolean isActionableWorthy(Map<String,Object>m){
         if(!Boolean.TRUE.equals(m.get("worthy")))return false;
         String status=String.valueOf(m.getOrDefault("status",""));
