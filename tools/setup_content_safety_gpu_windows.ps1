@@ -18,9 +18,9 @@ if($LASTEXITCODE -ne 0){throw "GPU dependencies installation failed"}
 # in a single environment may shadow the CUDA module. Enforce GPU-only wheel.
 & $exe -m pip uninstall -y onnxruntime
 if($LASTEXITCODE -ne 0){throw "Could not remove shadowing CPU ORT wheel"}
-& $exe -m pip install --no-deps --force-reinstall onnxruntime-gpu==1.20.1
+& $exe -m pip install --no-deps --force-reinstall onnxruntime-gpu==1.20.2
 if($LASTEXITCODE -ne 0){throw "Could not activate isolated GPU ORT wheel"}
-& $exe -c "import onnxruntime as o; assert o.__version__=='1.20.1'; assert 'CUDAExecutionProvider' in o.get_available_providers(); print('ORT EP installed; hardware and model inference NOT YET VALIDATED')"
+& $exe -c "import onnxruntime as o; assert o.__version__=='1.20.2'; assert 'CUDAExecutionProvider' in o.get_available_providers(); print('ORT EP installed; hardware and model inference NOT YET VALIDATED')"
 if($LASTEXITCODE -ne 0){throw "CUDA provider not present in isolated environment"}
 if($CreateOnly){Write-Host "GPU environment created. GPU scanner remains DISABLED in defaults.txt";exit 0}
 # Driver/DLL readiness is a prerequisite to the actual parity validator.
