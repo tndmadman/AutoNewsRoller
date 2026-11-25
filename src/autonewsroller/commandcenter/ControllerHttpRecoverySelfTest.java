@@ -199,6 +199,12 @@ public final class ControllerHttpRecoverySelfTest {
             check(newId.equals(row.get("currentVideoVersionId"))&&"newer.mp4".equals(row.get("videoFilename"))
                     &&!row.containsKey("localDraft"),"current board ignores historical draft without deleting it");
             check(Boolean.FALSE.equals(row.get("publicationApproved"))&&"NOT_SCANNED".equals(row.get("safetyStatus")),"board does not imply publication approval");
+            Map<String,Object>unscanned=Json.object(Json.parse(request(http,URI.create(base+"/api/board/stories?status=UNSCANNED"),"GET",new byte[0],auth).body()));
+            List<?>unscannedRows=(List<?>)unscanned.get("stories");
+            check(unscannedRows.size()==1&&newId.equals(Json.object(unscannedRows.get(0)).get("currentVideoVersionId")),"UNSCANNED lists the current completed unscanned version");
+            check(((Number)Json.object(unscanned.get("facets")).get("UNSCANNED")).intValue()==1,"UNSCANNED facet counts current review entries");
+            Map<String,Object>toPost=Json.object(Json.parse(request(http,URI.create(base+"/api/board/stories?status=TO_POST"),"GET",new byte[0],auth).body()));
+            check(((List<?>)toPost.get("stories")).isEmpty(),"unscanned review entries do not appear in TO POST");
             Files.writeString(current,"changed");
             check(request(http,review,"GET",new byte[0],auth).statusCode()==409,"tampered archive denied");
             Files.delete(current);
