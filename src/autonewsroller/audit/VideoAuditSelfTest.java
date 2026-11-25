@@ -44,6 +44,7 @@ public final class VideoAuditSelfTest {
                 "-c:a","aac","-shortest",silence.toString()),90);
         expectRejected(()->audit.audit(silence,sourceAudio,320,568,30),
                 "Silent encoded audio");
+        autonewsroller.video.VideoRendererSyncSelfTest.run(dir);
         System.out.println("VideoAuditSelfTest PASS");
     }
 

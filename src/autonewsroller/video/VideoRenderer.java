@@ -8,6 +8,13 @@ public final class VideoRenderer {
     private final String ffmpeg,ffprobe;
     private final int width,height,fps;
     private final boolean classicCaptions;
+    private boolean syncEnabled=true;
+    private double maxSyncMismatch=2.0;
+    private int maxSyncAttempts=2;
+    private java.util.function.Consumer<String> syncProgress=s->{};
+    public VideoRenderer configureSync(boolean enabled,double limit,int attempts,java.util.function.Consumer<String> progress){
+        syncEnabled=enabled;maxSyncMismatch=limit;maxSyncAttempts=attempts;syncProgress=Objects.requireNonNull(progress);return this;
+    }
 
     public VideoRenderer(String ffmpeg,String ffprobe,int width,int height,int fps){
         this(ffmpeg,ffprobe,width,height,fps,false);
@@ -46,11 +53,11 @@ public final class VideoRenderer {
         if(!motion.isEmpty()&&motion.size()!=backgrounds.size())throw new IllegalArgumentException("Motion flag count must match visuals");
         Files.createDirectories(output.getParent());
 
-        double duration=probeDuration(audio);
-        List<Double>sceneDurations=normalizedSceneDurations(backgrounds.size(),sceneWeights,duration);
+        RenderTimeline timeline=RenderTimeline.fromAudio(ffprobe,audio,fps,backgrounds.size(),sceneWeights);
+        double duration=timeline.audioDuration();
         Path ass=CaptionWriter.write(output.resolveSibling(output.getFileName()+".ass"),narration,duration,captionMode,timingFile,width,height,classicCaptions);
         String resolved=new VideoEncoderProbe(ffmpeg).resolve(requestedEncoder);
-        List<String>cmd=motionCommand(backgrounds,overlays,motion,sceneDurations,audio,output,resolved,ass,disclosure);
+        List<String>cmd=motionCommand(backgrounds,overlays,motion,timeline,audio,output,resolved,ass,disclosure);
 
         String actual=resolved;
         try{
@@ -59,17 +66,19 @@ public final class VideoRenderer {
             if("nvenc".equals(resolved)&&"auto".equals(VideoEncoderProbe.normalize(requestedEncoder))){
                 System.err.println("NVENC render failed; retrying with x264: "+first.getMessage());
                 actual="x264";
-                cmd=motionCommand(backgrounds,overlays,motion,sceneDurations,audio,output,actual,ass,disclosure);
+                cmd=motionCommand(backgrounds,overlays,motion,timeline,audio,output,actual,ass,disclosure);
                 FfmpegRunner.run(cmd,1200);
             }else throw first;
         }
 
         if(!Files.isRegularFile(output)||Files.size(output)<1024)
             throw new IllegalStateException("FFmpeg did not create a usable video");
-        return new RenderResult(output,actual,duration,List.copyOf(cmd));
+        Map<String,Object> sync=new VideoSyncRepair(ffmpeg,ffprobe,width,height).verify(output,audio,timeline,actual,
+                syncEnabled,maxSyncMismatch,maxSyncAttempts,syncProgress);
+        return new RenderResult(output,String.valueOf(sync.get("actualEncoder")),duration,List.copyOf(cmd),Map.copyOf(sync));
     }
 
-    private List<String>motionCommand(List<Path>backgrounds,List<Path>overlays,List<Boolean>motion,List<Double>durations,
+    private List<String>motionCommand(List<Path>backgrounds,List<Path>overlays,List<Boolean>motion,RenderTimeline timeline,
                                        Path audio,Path output,String encoder,Path ass,Path disclosure){
         List<String>cmd=new ArrayList<>(List.of(ffmpeg,"-y","-hide_banner","-loglevel","warning"));
         List<Integer>backgroundInputs=new ArrayList<>();
@@ -77,7 +86,7 @@ public final class VideoRenderer {
         int inputIndex=0;
 
         for(int i=0;i<backgrounds.size();i++){
-            double d=durations.get(i);
+            double d=(timeline.sceneFrames().get(i)+1.0)/fps;
             cmd.addAll(List.of("-loop","1","-framerate",Integer.toString(fps),"-t",fmt(d),"-i",backgrounds.get(i).toString()));
             backgroundInputs.add(inputIndex++);
             Path overlay=(overlays!=null&&i<overlays.size())?overlays.get(i):null;
@@ -93,8 +102,7 @@ public final class VideoRenderer {
 
         StringBuilder fc=new StringBuilder();
         for(int i=0;i<backgrounds.size();i++){
-            double d=durations.get(i);
-            int frames=Math.max(1,(int)Math.ceil(d*fps));
+            int frames=timeline.sceneFrames().get(i);
             String base="["+backgroundInputs.get(i)+":v]";
             if(motion!=null&&i<motion.size()&&Boolean.TRUE.equals(motion.get(i))){
                 String z,x,y;
@@ -112,13 +120,13 @@ public final class VideoRenderer {
                   .append("crop=").append(width).append(":").append(height)
                   .append(",zoompan=z=").append(z).append(":x=").append(x).append(":y=").append(y)
                   .append(":d=1:s=").append(width).append("x").append(height).append(":fps=").append(fps)
-                  .append(",trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[bg").append(i).append("];");
+                  .append(",trim=end_frame=").append(frames).append(",settb=1/").append(fps).append(",setpts=N[bg").append(i).append("];");
             }else{
                 fc.append(base)
                   .append("scale=").append(width).append(":").append(height).append(":force_original_aspect_ratio=decrease,")
                   .append("pad=").append(width).append(":").append(height).append(":(ow-iw)/2:(oh-ih)/2:black,")
-                  .append("fps=").append(fps).append(",trim=duration=").append(fmt(d))
-                  .append(",setpts=PTS-STARTPTS[bg").append(i).append("];");
+                  .append("fps=").append(fps).append(",trim=end_frame=").append(frames)
+                  .append(",settb=1/").append(fps).append(",setpts=N[bg").append(i).append("];");
             }
 
             int overlayInput=overlayInputs.get(i);
@@ -126,16 +134,16 @@ public final class VideoRenderer {
                 fc.append("[").append(overlayInput).append(":v]scale=").append(width).append(":").append(height)
                   .append(",format=rgba,");
                 if(i>0)fc.append("fade=t=in:st=0:d=0.18:alpha=1,");
-                fc.append("trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[ov").append(i).append("];")
-                  .append("[bg").append(i).append("][ov").append(i).append("]overlay=0:0:format=auto,")
-                  .append("trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[s").append(i).append("];");
+                fc.append("trim=end_frame=").append(frames).append(",settb=1/").append(fps).append(",setpts=N[ov").append(i).append("];")
+                  .append("[bg").append(i).append("][ov").append(i).append("]overlay=0:0:format=auto:shortest=1,")
+                  .append("trim=end_frame=").append(frames).append(",settb=1/").append(fps).append(",setpts=N[s").append(i).append("];");
             }else{
-                fc.append("[bg").append(i).append("]trim=duration=").append(fmt(d)).append(",setpts=PTS-STARTPTS[s").append(i).append("];");
+                fc.append("[bg").append(i).append("]trim=end_frame=").append(frames).append(",settb=1/").append(fps).append(",setpts=N[s").append(i).append("];");
             }
         }
 
         for(int i=0;i<backgrounds.size();i++)fc.append("[s").append(i).append("]");
-        fc.append("concat=n=").append(backgrounds.size()).append(":v=1:a=0[vcat];");
+        fc.append("concat=n=").append(backgrounds.size()).append(":v=1:a=0,settb=1/").append(fps).append(",setpts=N[vcat];");
         String videoLabel="vcat";
         if(ass!=null){
             fc.append("[vcat]subtitles='").append(escapeFilter(ass.toAbsolutePath().toString())).append("'[vcap];");
@@ -144,36 +152,18 @@ public final class VideoRenderer {
         // Last composition layer persists through all transitions and motion crops.
         if(disclosure!=null){
             fc.append("[").append(videoLabel).append("][").append(audioInput+1).append(":v]")
-                .append("overlay=0:0:format=auto[withAigc];");
+                .append("overlay=0:0:format=auto:shortest=1[withAigc];");
             videoLabel="withAigc";
         }
-        fc.append("[").append(videoLabel).append("]format=yuv420p[vout]");
+        fc.append("[").append(videoLabel).append("]trim=end_frame=").append(timeline.totalFrames()).append(",settb=1/").append(fps).append(",setpts=N,format=yuv420p[vout]");
 
-        cmd.addAll(List.of("-filter_complex",fc.toString(),"-map","[vout]","-map",audioInput+":a","-shortest"));
+        cmd.addAll(List.of("-filter_complex",fc.toString(),"-map","[vout]","-map",audioInput+":a:0","-af","asetpts=PTS-STARTPTS","-r",Integer.toString(fps)));
         if("nvenc".equals(encoder))
             cmd.addAll(List.of("-c:v","h264_nvenc","-preset","p6","-tune","hq","-rc","vbr","-cq","19","-b:v","0"));
         else
             cmd.addAll(List.of("-c:v","libx264","-preset","medium","-crf","19"));
         cmd.addAll(List.of("-c:a","aac","-b:a","192k","-fps_mode","cfr","-movflags","+faststart",output.toString()));
         return cmd;
-    }
-
-    private static List<Double>normalizedSceneDurations(int count,List<Double>weights,double duration){
-        if(count<=0)return List.of();
-        List<Double>w=new ArrayList<>(count);
-        double total=0;
-        for(int i=0;i<count;i++){
-            double v=(weights!=null&&i<weights.size()&&weights.get(i)!=null)?weights.get(i):1.0;
-            if(!Double.isFinite(v)||v<=0)v=1.0;
-            w.add(v);total+=v;
-        }
-        List<Double>out=new ArrayList<>(count);
-        double assigned=0;
-        for(int i=0;i<count;i++){
-            double d=i==count-1?Math.max(.05,duration-assigned):duration*w.get(i)/total;
-            out.add(d);assigned+=d;
-        }
-        return out;
     }
 
     public double probeDuration(Path file)throws Exception{
@@ -189,5 +179,7 @@ public final class VideoRenderer {
     private static String fmt(double x){return String.format(Locale.US,"%.4f",x);}
     private static String escapeFilter(String x){return x.replace("\\","/").replace(":","\\:").replace("'","\\'").replace(",","\\,").replace("[","\\[").replace("]","\\]");}
 
-    public record RenderResult(Path path,String encoder,double audioDuration,List<String> command){}
+    public record RenderResult(Path path,String encoder,double audioDuration,List<String> command,Map<String,Object> syncReport){
+        public RenderResult(Path path,String encoder,double audioDuration,List<String> command){this(path,encoder,audioDuration,command,Map.of());}
+    }
 }

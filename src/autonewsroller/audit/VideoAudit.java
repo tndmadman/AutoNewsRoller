@@ -98,6 +98,10 @@ public final class VideoAudit {
             sourceSeconds=number(Json.object(sourceProbe.get("format")).get("duration"));
             if(!Double.isFinite(sourceSeconds)||sourceSeconds<=0)
                 throw new IllegalStateException("Cannot measure source narration audio");
+            double sampleRate=number(audioStream.get("sample_rate"));
+            double tolerance=Double.isFinite(sampleRate)&&sampleRate>0?1024.0/sampleRate+0.002:0.05;
+            if(Math.abs(audioSeconds-sourceSeconds)>tolerance)
+                throw new IllegalStateException("Encoded audio duration does not match source narration");
         }
         Map<String,Object>result=new LinkedHashMap<>();
         result.put("status","approved");
@@ -121,7 +125,7 @@ public final class VideoAudit {
 
     private Map<String,Object>probe(Path path)throws Exception{
         String response=FfmpegRunner.run(List.of(ffprobe,"-v","error",
-                "-show_entries","format=duration:stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,duration",
+                "-show_entries","format=duration:stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,duration,sample_rate",
                 "-of","json",path.toString()),30);
         return Json.object(Json.parse(response));
     }
