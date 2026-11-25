@@ -40,7 +40,14 @@ def main():
         raise RuntimeError("export destination exists; refuse to overwrite previous model")
     try:
         # Keras 3 supports ONNX model export through tf2onnx when compatible.
-        model.export(str(destination),format="onnx",opset_version=17)
+        import tensorflow as tf
+        # Keras 3 requires a real call before exporting, even for a built model.
+        warm=np.asarray(model(np.zeros((1,224,224,3),dtype=np.float32),training=False))
+        if warm.shape!=(1,2) or not np.isfinite(warm).all():
+            raise RuntimeError("reference model warmup returned invalid output")
+        # Keep the batch dimension dynamic for the production eight-frame batches.
+        model.export(str(destination),format="onnx",opset_version=17,
+                     input_signature=[tf.TensorSpec((None,224,224,3),tf.float32)])
     except Exception as problem:
         destination.unlink(missing_ok=True)
         raise RuntimeError("Keras3 -> ONNX export unavailable for this pinned environment: "+
