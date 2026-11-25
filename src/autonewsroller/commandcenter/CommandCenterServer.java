@@ -275,29 +275,41 @@ public final class CommandCenterServer {
 
     private void contentSafetySetting(HttpExchange x)throws IOException{
         if(!api(x))return;
-        String admin=cfg.get("commandCenterAdminToken","");
-        String env=System.getenv("AUTONEWS_ADMIN_TOKEN");
-        if(env!=null&&!env.isBlank())admin=env;
-        String supplied=x.getRequestHeaders().getFirst("X-AutoNews-Admin-Token");
-        boolean authenticatedAdmin=!admin.isBlank()&&!admin.equals(token)&&supplied!=null&&
-                java.security.MessageDigest.isEqual(admin.getBytes(StandardCharsets.UTF_8),supplied.getBytes(StandardCharsets.UTF_8));
         if("GET".equalsIgnoreCase(x.getRequestMethod())){
-            if(token.isBlank()&&!authenticatedAdmin){
-                json(x,401,Map.of("error","Administrator or configured API token required"));return;
-            }
             json(x,200,Map.of("contentSafetyScanningEnabled",store.contentSafetyScanningEnabled()));return;
         }
         if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-        if(!authenticatedAdmin){
-            json(x,403,Map.of("error","Distinct administrator token required"));return;
+        // No separate administrator secret. A tokenless controller may change
+        // this setting only through its loopback address, not over the LAN.
+        if(token.isBlank()&&!localSafetySettingRequest(x)){
+            json(x,403,Map.of("error","Open the controller at http://localhost:"+server.getAddress().getPort()+" to change this setting, or use the existing controller API authentication."));return;
+        }
+        // Reject simple cross-site form/fetch submissions to tokenless localhost.
+        String contentType=x.getRequestHeaders().getFirst("Content-Type");
+        if(contentType==null||!"application/json".equalsIgnoreCase(contentType.split(";",2)[0].trim())){
+            json(x,415,Map.of("error","application/json required"));return;
         }
         Map<String,Object>body=bodyObject(x);
         if(!(body.get("enabled") instanceof Boolean enabled)){json(x,400,Map.of("error","enabled boolean required"));return;}
         if(!enabled&&!Boolean.TRUE.equals(body.get("confirmLocalOnly"))){
             json(x,400,Map.of("error","Local-only warning must be acknowledged"));return;
         }
-        try{json(x,200,store.setContentSafetyScanningEnabled(enabled));}
+        try{json(x,200,store.setContentSafetyScanningEnabled(enabled,token.isBlank()?"local controller operator":"authenticated controller operator"));}
         catch(UncheckedIOException e){json(x,500,Map.of("error","Unable to save content safety setting"));}
+    }
+    private static boolean localSafetySettingRequest(HttpExchange x){
+        if(x.getRemoteAddress().getAddress()==null||!x.getRemoteAddress().getAddress().isLoopbackAddress())return false;
+        // Reject arbitrary Host names, including DNS-rebinding requests.
+        String hostHeader=x.getRequestHeaders().getFirst("Host");
+        if(hostHeader==null)return false;
+        try{
+            URI address=URI.create("http://"+hostHeader);
+            String name=address.getHost();
+            return name!=null&&address.getUserInfo()==null&&address.getRawPath().isEmpty()
+                    &&address.getRawQuery()==null&&address.getRawFragment()==null
+                    &&("localhost".equalsIgnoreCase(name)||"127.0.0.1".equals(name)
+                    ||"[::1]".equals(name)||"::1".equals(name));
+        }catch(IllegalArgumentException invalid){return false;}
     }
     private void autoVideoSetting(HttpExchange x)throws IOException{
         if(!api(x))return;

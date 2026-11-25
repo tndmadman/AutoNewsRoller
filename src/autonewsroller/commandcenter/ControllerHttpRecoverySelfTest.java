@@ -37,28 +37,44 @@ public final class ControllerHttpRecoverySelfTest {
         }
     }
     public static void main(String[]args)throws Exception{System.out.println("Passed: "+run());}
+    private static void tokenlessLocalSafetySettingRegression()throws Exception{
+        Path root=Files.createTempDirectory("anr-local-toggle-no-token-");
+        CommandCenterServer server=new CommandCenterServer(root,NewsConfig.load(root),
+                "127.0.0.1",0,600,false,0.68,5,"",false);
+        HttpClient http=HttpClient.newHttpClient();
+        URI uri=URI.create("http://127.0.0.1:"+server.start()+"/api/settings/content-safety");
+        Map<String,String>json=Map.of("Content-Type","application/json");
+        byte[]off=Json.stringify(Map.of("enabled",false,"confirmLocalOnly",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[]on=Json.stringify(Map.of("enabled",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        try{
+            check(request(http,uri,"GET",new byte[0],Map.of()).statusCode()==200,"local setting readable without token");
+            check(request(http,uri,"POST",off,Map.of("Content-Type","text/plain")).statusCode()==415,"tokenless cross-site simple request rejected");
+            check(request(http,uri,"POST",off,json).statusCode()==200,"local controller toggle OFF needs no token");
+            check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],Map.of()).body())).get("contentSafetyScanningEnabled")),"tokenless OFF persisted");
+            check(request(http,uri,"POST",on,json).statusCode()==200,"local controller toggle ON needs no token");
+        }finally{server.stop();}
+    }
+
     private static void localDraftSettingRegression()throws Exception{
         Path root=Files.createTempDirectory("anr-local-draft-setting-");
         String id="local-draft-fixture";
         Json.write(root.resolve("data/command_center_state.json"),Map.of("stories",Map.of(id,
             Map.of("id",id,"status","QUEUED","stage","QUEUED","topic","Synthetic fixture","productionMode","STANDARD","score",0.95)),"videos",Map.of()));
         NewsConfig cfg=NewsConfig.load(root);
-        String env=System.getenv("AUTONEWS_ADMIN_TOKEN");
-        String admin=env!=null&&!env.isBlank()?env:"isolated-admin-token";
-        cfg.set("commandCenterAdminToken",admin);
         CommandCenterServer server=new CommandCenterServer(root,cfg,"127.0.0.1",0,600,false,0.68,5,"worker-token",false);
         HttpClient http=HttpClient.newHttpClient();
         String base="http://127.0.0.1:"+server.start();
         byte[]off=Json.stringify(Map.of("enabled",false,"confirmLocalOnly",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Map<String,String>worker=Map.of("X-AutoNews-Token","worker-token");
-        Map<String,String>authorized=Map.of("X-AutoNews-Token","worker-token","X-AutoNews-Admin-Token",admin);
+        Map<String,String>authorized=Map.of("X-AutoNews-Token","worker-token","Content-Type","application/json");
         try{
             URI uri=URI.create(base+"/api/settings/content-safety");
             check(Boolean.TRUE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"scanning defaults on");
-            check(request(http,uri,"POST",off,worker).statusCode()==403,"worker token cannot disable scanning");
+            check(request(http,uri,"POST",off,Map.of("Content-Type","application/json")).statusCode()==401,"existing controller authentication still required");
+            check(request(http,uri,"POST",off,worker).statusCode()==415,"non-JSON setting request rejected");
             check(request(http,uri,"POST",Json.stringify(Map.of("enabled",false)).getBytes(java.nio.charset.StandardCharsets.UTF_8),authorized).statusCode()==400,"local-only warning confirmation required");
             check(request(http,uri,"GET",new byte[0],Map.of()).statusCode()==401,"anonymous settings access denied");
-            check(request(http,uri,"POST",off,authorized).statusCode()==200,"administrator can select local-only drafts");
+            check(request(http,uri,"POST",off,authorized).statusCode()==200,"existing controller token can select local-only drafts without another secret");
             HttpResponse<String>health=request(http,URI.create(base+"/api/safety/health"),"GET",new byte[0],worker);
             check(health.statusCode()==200&&"DISABLED_LOCAL_ONLY".equals(Json.object(Json.parse(health.body())).get("status")),"disabled health does not probe missing scanners or GPU configuration");
             check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"updated setting visible without restart");
@@ -116,6 +132,7 @@ public final class ControllerHttpRecoverySelfTest {
     public static int run()throws Exception{
         count=0;
         localDraftSettingRegression();
+        tokenlessLocalSafetySettingRegression();
         autonewsroller.safety.LocalDraftInspection.selfTest();
         Path root=Files.createTempDirectory("anr-http-recovery-");
         Files.createDirectories(root.resolve("data"));

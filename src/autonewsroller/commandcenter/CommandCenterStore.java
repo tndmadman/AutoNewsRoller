@@ -1384,10 +1384,10 @@ public final class CommandCenterStore {
     }
 
     public synchronized boolean contentSafetyScanningEnabled(){return contentSafetyScanningEnabled;}
-    public synchronized Map<String,Object> setContentSafetyScanningEnabled(boolean enabled){
+    public synchronized Map<String,Object> setContentSafetyScanningEnabled(boolean enabled,String actor){
         boolean previous=contentSafetyScanningEnabled;
         if(previous==enabled)return Map.of("contentSafetyScanningEnabled",enabled);
-        Map<String,Object>event=Map.of("at",Instant.now().toString(),"actor","authenticated administrator","previous",previous,"enabled",enabled,"event","CONTENT_SAFETY_SETTING_CHANGED");
+        Map<String,Object>event=Map.of("at",Instant.now().toString(),"actor",actor,"previous",previous,"enabled",enabled,"event","CONTENT_SAFETY_SETTING_CHANGED");
         contentSafetyScanningEnabled=enabled;safetySettingAudit.add(event);
         try{persistRequired();}catch(java.io.UncheckedIOException failure){
             contentSafetyScanningEnabled=previous;safetySettingAudit.remove(safetySettingAudit.size()-1);throw failure;

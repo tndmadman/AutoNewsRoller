@@ -818,11 +818,10 @@ $("#contentSafetyToggle").onclick=async()=>{
   const btn=$("#contentSafetyToggle");if(btn.disabled)return;
   const enabled=state.contentSafetyScanningEnabled===false;
   if(!enabled&&!confirm("Disable automatic scanning for new jobs? Only watermarked procedural drafts will be produced on the worker. They cannot be uploaded or published through AutoNewsRoller. Existing jobs retain their settings."))return;
-  const admin=prompt("Administrator token (not saved):");if(!admin)return;
   btn.disabled=true;
   try{
     const result=await api("/api/settings/content-safety",{method:"POST",
-      headers:{"Content-Type":"application/json","X-AutoNews-Admin-Token":admin},
+      headers:{"Content-Type":"application/json"},
       body:JSON.stringify({enabled,confirmLocalOnly:!enabled})});
     stateEpoch++;state.contentSafetyScanningEnabled=result.contentSafetyScanningEnabled;
     safetyHealthNext=0;render();loadState().catch(()=>{});checkSafetyDetectorHealth().catch(()=>{});

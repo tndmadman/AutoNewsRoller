@@ -48,9 +48,7 @@ public final class LocalDraftInspection {
         HttpRequest.Builder request=HttpRequest.newBuilder(URI.create(base+"/api/settings/content-safety"))
                 .GET().timeout(Duration.ofSeconds(15));
         String token=System.getenv("AUTONEWS_TOKEN");
-        String admin=System.getenv("AUTONEWS_ADMIN_TOKEN");
         if(token!=null&&!token.isBlank())request.header("X-AutoNews-Token",token);
-        else if(admin!=null&&!admin.isBlank())request.header("X-AutoNews-Admin-Token",admin);
         HttpResponse<String> response=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER).build()
                 .send(request.build(),HttpResponse.BodyHandlers.ofString());
