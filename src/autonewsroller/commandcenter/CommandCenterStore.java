@@ -1860,6 +1860,20 @@ public final class CommandCenterStore {
     private static void resetFailureRetryState(Map<String,Object>m){
         m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("lastFailedStage");m.remove("failureType");m.remove("failureRecoverable");m.remove("recommendedAction");m.remove("leaseRecoveries");m.remove("productionEpoch");
     }
+    /** Resolve only the latest completed archive record for its own story and format.
+     * Review is independent of publication approval; the HTTP handler verifies bytes.
+     */
+    public synchronized Map<String,Object> currentReviewRecord(String versionId){
+        Map<String,Object>v=videos.get(versionId);
+        if(v==null||!stories.containsKey(String.valueOf(v.get("storyId"))))return null;
+        ProductionMode mode=ProductionMode.fromPersisted(v.get("productionMode"));
+        for(Map<String,Object>other:videos.values()){
+            if(Objects.equals(v.get("storyId"),other.get("storyId"))
+                    &&mode==ProductionMode.fromPersisted(other.get("productionMode"))
+                    &&integer(other.get("version"))>integer(v.get("version")))return null;
+        }
+        return deepCopyMap(v);
+    }
     private static boolean controllerApproved(Map<String,Object>v){
         return "APPROVED_FOR_EXPORT".equals(v.get("safetyStatus"))
                 &&v.get("safetyManifest") instanceof Map<?,?> manifest
