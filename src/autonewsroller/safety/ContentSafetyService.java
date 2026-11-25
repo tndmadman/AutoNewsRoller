@@ -23,14 +23,22 @@ public final class ContentSafetyService {
     public Map<String,Object> inspectImage(Path image){
         return scan("image",image);
     }
-    /** Deferred assets are not SAFE approvals; the encoded MP4 still requires both full-frame detectors. */
+    /** A skipped image inspection is never a SAFE detector verdict. */
     public Map<String,Object> inspectImageForRender(Path image,boolean enabled)throws Exception{
+        return inspectImageForRender(image,enabled,true);
+    }
+    public Map<String,Object> inspectImageForRender(Path image,boolean enabled,boolean finalScanEnabled)throws Exception{
         if(enabled)return inspectImage(image);
         if(!Files.isRegularFile(image)||Files.size(image)==0)throw new IOException("empty or missing image");
-        return Map.of("status","DEFERRED_TO_FINAL_VIDEO","sha256",hash(image),"policyVersion",POLICY);
+        return Map.of("status",finalScanEnabled?"DEFERRED_TO_FINAL_VIDEO":"NOT_SCANNED",
+                "sha256",hash(image),"policyVersion",POLICY);
     }
     public static boolean eligibleImageForRender(Map<String,Object> result,boolean enabled){
-        return "SAFE".equals(result.get("status"))||(!enabled&&"DEFERRED_TO_FINAL_VIDEO".equals(result.get("status")));
+        return eligibleImageForRender(result,enabled,true);
+    }
+    public static boolean eligibleImageForRender(Map<String,Object> result,boolean enabled,boolean finalScanEnabled){
+        return "SAFE".equals(result.get("status"))||(!enabled
+                &&(finalScanEnabled?"DEFERRED_TO_FINAL_VIDEO":"NOT_SCANNED").equals(result.get("status")));
     }
     public Map<String,Object> inspectVideo(Path video){
         return scan("video",video);
