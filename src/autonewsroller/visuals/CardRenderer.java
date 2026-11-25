@@ -44,7 +44,11 @@ public class CardRenderer {
         Graphics2D g=prepare(canvas);
         g.scale(w/1080.0,h/1920.0);
         if("HOOK".equalsIgnoreCase(item.type()))renderHookPackage(g,item,source,1080,1920);
-        else renderStoryPackage(g,item,source,1080,1920);
+        else if(StandardVisualCoverage.illustratedInformation(item)){
+            drawCover(g,source,0,BroadcastTheme.HEADER_HEIGHT,1080,
+                    1920-BroadcastTheme.HEADER_HEIGHT-BroadcastTheme.TICKER_HEIGHT,.47);
+            renderGraphicScene(g,item,1080,1920,true);
+        }else renderStoryPackage(g,item,source,1080,1920);
         paintAiDisclosure(g,1080,1920);
         g.dispose();
         ImageIO.write(canvas,"png",out.toFile());
@@ -57,6 +61,7 @@ public class CardRenderer {
         Graphics2D g=prepareTransparent(canvas);
         g.scale(w/1080.0,h/1920.0);
         if("HOOK".equalsIgnoreCase(item.type()))paintHookOverlay(g,item,1080,1920);
+        else if(StandardVisualCoverage.illustratedInformation(item))renderGraphicScene(g,item,1080,1920,true);
         else paintStoryOverlay(g,item,1080,1920);
         paintAiDisclosure(g,1080,1920);
         g.dispose();
@@ -124,8 +129,12 @@ public class CardRenderer {
 
     /** Source-grounded typography, never a fake event photograph or generic grid. */
     private static void renderGraphicScene(Graphics2D g,VisualPlan.Item item,int w,int h){
-        g.setColor(NAVY);g.fillRect(0,0,w,h);
-        g.setColor(NAVY_2);g.fillRect(42,248,w-84,1335);
+        renderGraphicScene(g,item,w,h,false);
+    }
+    private static void renderGraphicScene(Graphics2D g,VisualPlan.Item item,int w,int h,boolean illustrated){
+        if(!illustrated){g.setColor(NAVY);g.fillRect(0,0,w,h);}
+        g.setColor(illustrated?new Color(NAVY_2.getRed(),NAVY_2.getGreen(),NAVY_2.getBlue(),175):NAVY_2);
+        g.fillRect(42,248,w-84,1335);
         g.setColor(RULE);g.drawRect(42,248,w-84,1335);
         g.setColor(BLUE);g.fillRect(42,248,12,1335);
         g.setColor(RED);g.fillRect(54,248,200,8);

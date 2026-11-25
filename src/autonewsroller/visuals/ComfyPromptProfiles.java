@@ -26,6 +26,13 @@ public final class ComfyPromptProfiles {
             suffix="HOOK".equalsIgnoreCase(item.type())
                     ?", unmistakably two-dimensional ink-and-gouache editorial illustration, never documentary-style imagery, immediate thumbnail-safe news subject, upper-middle focal subject, flat gouache color blocks, visible ink contours, subtle paper grain, restrained palette, deliberately drawn faces, clear lower quarter for the separately rendered news lower-third, vertical editorial portrait"
                     :", clearly hand-illustrated editorial news artwork, clear source-grounded focal subject, flat gouache color blocks, visible ink contours, subtle paper grain, restrained palette, deliberately drawn faces, clear lower quarter for the separately rendered news lower-third, vertical editorial portrait";
+            if(item.data().containsKey("standardVisualStrategy")){
+                String[] styles={"layered editorial gouache with dimensional lighting","textured editorial screenprint with natural color contrast","detailed painterly editorial illustration with spatial depth","colored pencil and watercolor editorial art with distinct subject separation"};
+                suffix=", unmistakably illustrated two-dimensional editorial artwork, "+styles[Math.floorMod(item.index(),styles.length)]
+                        +", concrete source-grounded focal subject, clear foreground and background, natural lighting, varied muted colors, vertical portrait composition, readable upper-middle focal subject, clear lower quarter for separately rendered factual overlays";
+                if(StandardVisualCoverage.illustratedInformation(item))
+                    suffix+=", contextual subject with uncluttered space for separately rendered factual graphic";
+            }
             if(attempt>0){
                 String[] alternatives={", source-grounded illustrated contextual object instead of a dramatic action, single safe subject, clean factual composition",", source-grounded illustrated institutional exterior or verified location, simplified non-person composition",", source-grounded illustrated document or neutral process diagram only when supported by source facts, clear subject separation",", conservative source-grounded contextual still life, nonviolent nonsexual composition"};
                 suffix+=alternatives[Math.min(attempt-1,alternatives.length-1)];

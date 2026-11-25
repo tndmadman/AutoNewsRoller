@@ -166,6 +166,7 @@ public final class NewsPipeline {
         String settingsFingerprint=Hashing.sha256(
                 Json.stringify(cand.toMap())+"|"+mode+"|"+targetSeconds+"|"+encoder+
                 "|"+useComfy+"|"+requireComfy+"|"+maxComfyImages+"|"+dryRun+
+                (mode==ProductionMode.STANDARD?"|STANDARD_VISUAL_COVERAGE_V1":"")+
                 (localDraft?"|LOCAL_DRAFT_V1":"")+(imageSafetyScanningEnabled?"":"|IMAGE_SCANS_DEFERRED_V1")+(automaticSafetyScanningEnabled?"":"|UNSCANNED_ARCHIVE_V2")+
                 "|"+Json.stringify(rawAnalysis)+"|"+
                 Json.stringify(suppliedPolitical==null?Map.of():suppliedPolitical.toMap())+
@@ -341,6 +342,8 @@ public final class NewsPipeline {
                 ?new PoliticalFramingVisualPlanner().plan(script,evidence)
                 :mode==ProductionMode.MEME_RAGEBAIT?new MemeVisualPlanner().plan(script)
                 :new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
+            if(mode==ProductionMode.STANDARD)
+                plan=StandardVisualCoverage.annotate(plan,visualPrompts.scenes(),evidenceGraphicsOnly);
             Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
             SpeechTiming.Alignment dryTiming=SpeechTiming.align(script.narration(),script.segments(),null,Math.max(1,script.estimatedDuration()));
@@ -466,6 +469,8 @@ public final class NewsPipeline {
                 ?new PoliticalFramingVisualPlanner().plan(script,evidence)
                 :mode==ProductionMode.MEME_RAGEBAIT?new MemeVisualPlanner().plan(script)
                 :new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
+        if(mode==ProductionMode.STANDARD)
+            plan=StandardVisualCoverage.annotate(plan,visualPrompts.scenes(),evidenceGraphicsOnly);
         Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
         SpeechTiming.Alignment alignment=SpeechTiming.align(script.narration(),script.segments(),
@@ -527,6 +532,16 @@ public final class NewsPipeline {
         String usedCheckpoint="";
         int comfyGenerated=0;
         List<Integer> requiredGeneratedScenes=new ArrayList<>();
+        List<Integer> standardScheduled=mode==ProductionMode.STANDARD
+                ?StandardVisualCoverage.schedule(plan,maxComfyImages):List.of();
+        if(mode==ProductionMode.STANDARD){
+            events.emit(worker,slot,PipelineStage.VISUALS,"STANDARD VISUAL PLAN: primary="+
+                    StandardVisualCoverage.primaryCount(plan)+" eligible="+StandardVisualCoverage.eligible(plan).size()+
+                    " requested="+maxComfyImages+" scheduled="+standardScheduled.size());
+            for(VisualPlan.Item item:plan.items())
+                events.emit(worker,slot,PipelineStage.VISUALS,"SCENE "+item.index()+" "+
+                        item.data().get("standardVisualStrategy")+" — "+item.data().get("standardVisualReason"));
+        }
         if(evidenceGraphicsOnly){
             // Never synthesize crime, victims, disasters, medical events or political
             // actors. Render verified evidence cards with explicit provenance.
@@ -561,7 +576,8 @@ public final class NewsPipeline {
                 int limit=Math.max(1,maxComfyImages);
                 List<Integer>secondaryEligible=new ArrayList<>();
                 List<Integer>eligible=new ArrayList<>();
-                for(int n=0;n<plan.items().size();n++){
+                if(mode==ProductionMode.STANDARD)eligible.addAll(standardScheduled);
+                else for(int n=0;n<plan.items().size();n++){
                     VisualPlan.Item item=plan.items().get(n);
                     if(mode!=ProductionMode.MEME_RAGEBAIT&&(item.type().equals("HEADLINE_CARD")
                             ||item.type().equals("SOURCE_CARD")||item.type().equals("POLITICAL_CONTEXT")
@@ -663,7 +679,7 @@ public final class NewsPipeline {
                         String prompt=next.prompt();
                         long seed=next.seed();
                         Path generated=visuals.resolve(String.format("%02d_comfy_attempt_%02d.png",replace,attempt+1));
-                        String generating="COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" attempt="+(attempt+1)+" checkpoint="+usedCheckpoint;
+                        String generating="COMFYUI GENERATING "+(comfyGenerated+1)+"/"+Math.min(limit,eligible.size())+" scene="+replace+" attempt="+(attempt+1)+" checkpoint="+usedCheckpoint;
                         events.emit(worker,slot,PipelineStage.VISUALS,generating);
                         try{
                             comfy.generate(prompt,negativePrompt,usedCheckpoint,generated,requestedWidth,requestedHeight,
@@ -807,6 +823,8 @@ public final class NewsPipeline {
         VisualAssetGate.requireReady(mode,sensitiveTopic,requiredGeneratedScenes,comfyGenerated,
                 imageSources,imgs,renderBackgrounds,renderOverlays,
                 cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),localDraft);
+        if(mode==ProductionMode.STANDARD)
+            StandardVisualCoverage.verify(plan,standardScheduled,requiredGeneratedScenes,imageSources);
         events.emit(worker,slot,PipelineStage.VISUALS,
                 "VISUAL ASSET GATE PASSED: ComfyUI "+comfyGenerated+
                 "/"+requiredGeneratedScenes.size()+" required; scenes="+imgs.size());
@@ -838,6 +856,11 @@ public final class NewsPipeline {
         Map<String,Object>audit=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).audit(render,renderAudio,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));double finalSeconds=((Number)audit.get("videoDuration")).doubleValue();Map<String,Object>visualQuality=VisualQualityReport.create(cfg.get("ffmpegCommand","ffmpeg"),render,slotDir,finalSeconds,storyboard,cfg.getBool("visualGenerateContactSheet",true),!"off".equalsIgnoreCase(cfg.get("captions","sentence")),classic);
         visualQuality.put("imageInspections",imageReviews);
         visualQuality.put("acceptedComfyImages",comfyGenerated);
+        if(mode==ProductionMode.STANDARD){
+            Map<String,Object> coverage=StandardVisualCoverage.report(plan,standardScheduled,maxComfyImages,imageSources,rr.syncReport());
+            visualQuality.put("visualCoverage",coverage);
+            events.emit(worker,slot,PipelineStage.VISUALS,"VISUAL COVERAGE: "+Json.stringify(coverage));
+        }
         visualQuality.put("visualSafetyRoute",evidenceGraphicsOnly?"EVIDENCE_GRAPHICS_NO_SYNTHETIC_EVENT":"STANDARD");
         visualQuality.put("unsafeImageRejections",unsafeImageRejections);
         Json.write(slotDir.resolve("visual_quality_report.json"),visualQuality);
