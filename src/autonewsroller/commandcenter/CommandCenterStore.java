@@ -980,8 +980,46 @@ public final class CommandCenterStore {
         return file;
     }
 
-    /** Worker-local drafts are never uploaded, archived as approved, or served by /videos. */
+    private static String titledMediaName(Map<String,Object>m,String jobId,String epoch,String sha,boolean draft){
+        String stem=autonewsroller.util.FileNames.safe(String.valueOf(m.getOrDefault("topic","news_video")));
+        if(stem.length()>48)stem=stem.substring(0,48);
+        String identity=autonewsroller.util.Hashing.sha256(jobId+"|"+epoch+"|"+sha).substring(0,32);
+        return (draft?"NOT_SCANNED_":"")+stem+"_"+identity+".mp4";
+    }
+    public synchronized String titledVideoName(String jobId,String epoch,String sha){
+        Map<String,Object>m=requireStory(jobId);
+        if(epoch.equals(m.get("uploadedEpoch"))&&sha.equals(m.get("uploadedSha256"))&&m.get("videoFilename") instanceof String name&&!name.isBlank())
+            return name;
+        return titledMediaName(m,jobId,epoch,sha,false);
+    }
+    /** Hosted drafts are isolated and never approved or served by /videos. */
+    public synchronized Map<String,Object> authorizeHostedDraft(String jobId,String worker,String claim,String epoch,String sha){
+        if(!validHash(sha))throw new IllegalArgumentException("Invalid draft SHA-256");
+        Map<String,Object>m=requireStory(jobId);
+        if(m.get("localDraft") instanceof Map<?,?> previous&&claim.equals(previous.get("claimId"))
+                &&worker.equals(previous.get("workerId"))&&epoch.equals(previous.get("productionEpoch"))
+                &&sha.equals(previous.get("videoSha256"))&&previous.get("hostPath") instanceof String path){
+            if(stateDirty)persistRequired();
+            return Map.of("completed",true,"filename",Path.of(path).getFileName().toString(),"hostPath",path);
+        }
+        requireActiveClaim(jobId,worker,claim);
+        if(!Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled"))||!epoch.equals(m.get("productionEpoch")))
+            throw new IllegalStateException("Hosted draft requires a matching local-only claim");
+        return Map.of("completed",false,"filename",titledMediaName(m,jobId,epoch,sha,true));
+    }
+    public synchronized Map<String,Object> recordHostedDraft(String jobId,String worker,String claim,String epoch,String sha,Path hostPath){
+        Map<String,Object>auth=authorizeHostedDraft(jobId,worker,claim,epoch,sha);
+        if(Boolean.TRUE.equals(auth.get("completed")))return auth;
+        if(!hostPath.getFileName().toString().equals(auth.get("filename")))throw new IllegalStateException("Draft filename identity changed");
+        completeLocalDraft(jobId,Map.of("workerId",worker,"claimId",claim,"productionEpoch",epoch,
+                "videoSha256",sha,"localPath","Worker copy retained"),hostPath);
+        return Map.of("completed",true,"filename",hostPath.getFileName().toString(),"hostPath",hostPath.toString());
+    }
+    /** Legacy worker metadata only, not an approval. */
     public synchronized boolean completeLocalDraft(String jobId,Map<String,Object>metadata){
+        return completeLocalDraft(jobId,metadata,null);
+    }
+    private boolean completeLocalDraft(String jobId,Map<String,Object>metadata,Path hostPath){
         Map<String,Object>m=requireStory(jobId);
         String worker=String.valueOf(metadata.getOrDefault("workerId",""));
         String claim=String.valueOf(metadata.getOrDefault("claimId",""));
@@ -1001,9 +1039,10 @@ public final class CommandCenterStore {
         Map<String,Object>draft=new LinkedHashMap<>(Map.of("status","NOT_SCANNED","workerId",worker,
                 "claimId",claim,"productionEpoch",epoch,"videoSha256",hash,"localPath",path,
                 "productionMode",String.valueOf(m.get("productionMode")),"completedAt",Instant.now().toString()));
+        if(hostPath!=null)draft.put("hostPath",hostPath.toString());
         m.put("localDraft",draft);m.put("status","HOLD");m.put("stage","NOT_SCANNED");
         if(!m.containsKey("currentVideoVersionId"))m.put("safetyStatus","NOT_SCANNED");
-        m.put("progress",100);m.put("decision","HOLD");m.put("detail","NOT SCANNED — LOCAL OUTPUT ONLY");
+        m.put("progress",100);m.put("decision","HOLD");m.put("detail",hostPath==null?"NOT SCANNED — LOCAL OUTPUT ONLY":"NOT SCANNED — HOST DRAFT STORAGE");
         m.remove("error");m.remove("assignedWorker");clearLease(m);
         appendProductionAttempt(m,Instant.now(),Map.of("event","LOCAL_DRAFT_COMPLETE","safetyStatus","NOT_SCANNED"));
         persistRequired();emit("story",publicStory(m));return true;

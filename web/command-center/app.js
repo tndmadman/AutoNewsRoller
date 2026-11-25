@@ -30,7 +30,7 @@ async function checkSafetyDetectorHealth(){
   safetyHealthInFlight=true;safetyHealthNext=Date.now()+60000;
   try{
     const h=await api("/api/safety/health");
-    safetyHealthStatus=h.status==="DISABLED_LOCAL_ONLY"?"DISABLED — LOCAL OUTPUT ONLY":h.status==="READY"?("READY / "+String(h.detector||"LOCAL")+" "+String(h.version||"")):"UNAVAILABLE";
+    safetyHealthStatus=h.status==="DISABLED_LOCAL_ONLY"?"DISABLED — DRAFT OUTPUT ONLY":h.status==="READY"?("READY / "+String(h.detector||"LOCAL")+" "+String(h.version||"")):"UNAVAILABLE";
   }catch(e){safetyHealthStatus="SCANNER UNAVAILABLE";}
   finally{safetyHealthInFlight=false;const el=$("#safetyHealth");if(el)el.textContent=safetyHealthStatus;}
 }
@@ -287,8 +287,8 @@ function render(){
     const enabled=state.contentSafetyScanningEnabled!==false;
     safetyToggle.classList.toggle("on",enabled);safetyToggle.classList.toggle("off",!enabled);
     safetyToggle.setAttribute("aria-pressed",String(enabled));
-    $("#contentSafetyToggleText").textContent=enabled?"CONTENT SAFETY SCANNING: ON":"CONTENT SAFETY SCANNING: OFF — LOCAL OUTPUT ONLY";
-    safetyToggle.title=enabled?"SAFETY SCANNING ENABLED":"SAFETY SCANNING DISABLED — LOCAL OUTPUT ONLY";
+    $("#contentSafetyToggleText").textContent=enabled?"CONTENT SAFETY SCANNING: ON":"CONTENT SAFETY SCANNING: OFF — DRAFT OUTPUT ONLY";
+    safetyToggle.title=enabled?"SAFETY SCANNING ENABLED":"SAFETY SCANNING DISABLED — DRAFT OUTPUT ONLY";
   }
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
@@ -617,7 +617,7 @@ function storyCard(s){
     <div class="progressWrap"><div class="progressText"><span>${esc(s.stage||status)}</span><span>${Math.round(num(s.progress))}%</span></div><div class="progress"><i style="width:${pct(s.progress)}%"></i></div></div>
     ${failurePanel}
     ${liveDetail}
-    ${s.localDraft&&s.localDraft.productionMode===(s.entryMode||s.productionMode)?'<div class="liveDetail"><strong>NOT SCANNED — LOCAL OUTPUT ONLY</strong><br>Worker: '+esc(s.localDraft.workerId)+'<br>'+esc(s.localDraft.localPath)+'</div>':""}
+    ${s.localDraft&&s.localDraft.productionMode===(s.entryMode||s.productionMode)?'<div class="liveDetail"><strong>NOT SCANNED — DRAFT OUTPUT ONLY</strong><br>Worker: '+esc(s.localDraft.workerId)+'<br>'+esc(s.localDraft.hostPath||s.localDraft.localPath)+'</div>':""}
     ${uploadState}
     ${memeCandidate?memePanelHtml(s):""}
     <div class="storyActions">
@@ -817,7 +817,7 @@ document.addEventListener("click",e=>{
 $("#contentSafetyToggle").onclick=async()=>{
   const btn=$("#contentSafetyToggle");if(btn.disabled)return;
   const enabled=state.contentSafetyScanningEnabled===false;
-  if(!enabled&&!confirm("Disable automatic scanning for new jobs? Only watermarked procedural drafts will be produced on the worker. They cannot be uploaded or published through AutoNewsRoller. Existing jobs retain their settings."))return;
+  if(!enabled&&!confirm("Disable automatic scanning for new jobs? Only watermarked procedural drafts will be produced on the worker. They are transferred to a separate controller draft folder and cannot be published through AutoNewsRoller. Existing jobs retain their settings."))return;
   btn.disabled=true;
   try{
     const result=await api("/api/settings/content-safety",{method:"POST",
@@ -825,7 +825,7 @@ $("#contentSafetyToggle").onclick=async()=>{
       body:JSON.stringify({enabled,confirmLocalOnly:!enabled})});
     stateEpoch++;state.contentSafetyScanningEnabled=result.contentSafetyScanningEnabled;
     safetyHealthNext=0;render();loadState().catch(()=>{});checkSafetyDetectorHealth().catch(()=>{});
-    toast(enabled?"Safety scanning enabled for new claims.":"Local-only draft mode enabled. Publication remains blocked for drafts.");
+    toast(enabled?"Safety scanning enabled for new claims.":"Isolated draft mode enabled. Publication remains blocked for drafts.");
   }catch(e){toast(e.message,true);loadState().catch(()=>{});}
   finally{btn.disabled=false;}
 };

@@ -209,10 +209,10 @@ public final class RemoteWorker {
                     ?pipeline.produceLocalDraft(candidate,1,1,batch.resolve("slot_001"),duration,encoder,comfyImages,political,productionMode,framingAnalysis)
                     :pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,framingAnalysis,dryRun);
             if(localDraft){
-                post("/api/jobs/"+enc(jobId)+"/local-draft-complete",Map.of("workerId",workerId,
-                        "claimId",claimId,"productionEpoch",epoch,"localPath",output.toAbsolutePath().toString(),
-                        "videoSha256",ContentSafetyService.hash(output)));
-                if(telemetry!=null){telemetry.progress("NOT_SCANNED","Worker-local draft only");telemetry.complete(true,"");}
+                stage="UPLOAD";detail="Transferring isolated procedural draft to controller";
+                if(telemetry!=null)telemetry.progress(stage,detail);
+                uploadVideo(jobId,claimId,epoch,output,true);
+                if(telemetry!=null){telemetry.progress("NOT_SCANNED","Stored in controller draft folder");telemetry.complete(true,"");}
                 event("job-finish",Map.of("jobId",jobId,"result","NOT_SCANNED","stage","NOT_SCANNED","outputPath",output.toString()));
                 return;
             }
@@ -318,8 +318,11 @@ public final class RemoteWorker {
         event("job-finish",Map.of("jobId",String.valueOf(job.get("jobId")),"result","COMPLETE","stage","POLITICAL_ANALYSIS"));
     }
     private Map<String,Object> uploadVideo(String jobId,String claimId,String epoch,Path file)throws Exception{
+        return uploadVideo(jobId,claimId,epoch,file,false);
+    }
+    private Map<String,Object> uploadVideo(String jobId,String claimId,String epoch,Path file,boolean draft)throws Exception{
         String sha=autonewsroller.safety.ContentSafetyService.hash(file);
-        HttpRequest.Builder b=request("/api/jobs/"+enc(jobId)+"/video").timeout(Duration.ofMinutes(30))
+        HttpRequest.Builder b=request("/api/jobs/"+enc(jobId)+(draft?"/local-draft-video":"/video")).timeout(Duration.ofMinutes(30))
                 .header("Content-Type","video/mp4").header("X-Filename",file.getFileName().toString())
                 .header("X-Worker-Id",workerId).header("X-Claim-Id",claimId)
                 .header("X-Production-Epoch",epoch).header("X-Media-Sha256",sha);

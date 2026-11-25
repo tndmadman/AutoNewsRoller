@@ -96,13 +96,23 @@ public final class ControllerHttpRecoverySelfTest {
             uploadHeaders.put("X-Worker-Id","updated-worker");
             uploadHeaders.put("X-Claim-Id",String.valueOf(job.get("claimId")));
             uploadHeaders.put("X-Production-Epoch",String.valueOf(job.get("productionEpoch")));
-            uploadHeaders.put("X-Media-Sha256","a".repeat(64));
+            uploadHeaders.put("X-Media-Sha256","4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a");
             check(request(http,URI.create(base+"/api/jobs/"+id+"/video"),"PUT",new byte[]{1},uploadHeaders).statusCode()==409,"local-only claim cannot upload even after scanning is restored");
             Map<String,Object>forged=new LinkedHashMap<>(Json.object(Json.parse(new String(done,java.nio.charset.StandardCharsets.UTF_8))));
             forged.put("dryRun",true);
             check(request(http,URI.create(base+"/api/jobs/"+id+"/complete"),"POST",Json.stringify(forged).getBytes(java.nio.charset.StandardCharsets.UTF_8),worker).statusCode()==409,"local-only claim cannot masquerade as normal completion");
-            check(request(http,local,"POST",done,worker).statusCode()==200,"local draft completion recorded under claim snapshot");
-            check(request(http,local,"POST",done,worker).statusCode()==200,"local completion replay idempotent");
+            URI draftUpload=URI.create(base+"/api/jobs/"+id+"/local-draft-video");
+            check(request(http,draftUpload,"PUT",new byte[]{2},uploadHeaders).statusCode()==409,"draft hash mismatch rejected");
+            HttpResponse<String>stored=request(http,draftUpload,"PUT",new byte[]{1},uploadHeaders);
+            check(stored.statusCode()==200,"isolated draft uploaded under claim snapshot");
+            Map<String,Object>draft=Json.object(Json.parse(stored.body()));
+            String filename=String.valueOf(draft.get("filename"));
+            check(filename.startsWith("NOT_SCANNED_synthetic_fixture_"),"draft includes sanitized title");
+            Path hostPath=Path.of(String.valueOf(draft.get("hostPath")));
+            check(hostPath.getParent().equals(root.resolve("output/command_center/unscanned_drafts").toAbsolutePath().normalize())
+                &&Files.isRegularFile(hostPath),"draft stored in separate host directory");
+            check(request(http,draftUpload,"PUT",new byte[]{1},uploadHeaders).statusCode()==200,"draft upload replay idempotent");
+            check(request(http,local,"POST",done,worker).statusCode()==409,"metadata-only replay cannot replace hosted completion");
             check(mediaCount(root)==0,"local draft does not enter controller media archive");
             check(request(http,uri,"POST",off,authorized).statusCode()==200,"local-only policy can be restored for restart test");
         }finally{server.stop();}

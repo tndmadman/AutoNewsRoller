@@ -416,19 +416,27 @@ public final class CommandCenterServer {
                     store.progress(id,new autonewsroller.orchestration.WorkerState(1,1,stage,String.valueOf(b.getOrDefault("detail","")),Instant.now()),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")));
                     json(x,200,Map.of("ok",true));
                 }
-                case "video"->{
+                case "video","local-draft-video"->{
+                    boolean draft="local-draft-video".equals(op);
+                    synchronized(completionLocks[Math.floorMod(id.hashCode(),completionLocks.length)]){
                     if(!"PUT".equalsIgnoreCase(x.getRequestMethod())&&!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
                     String workerId=String.valueOf(x.getRequestHeaders().getFirst("X-Worker-Id"));
                     String claimId=String.valueOf(x.getRequestHeaders().getFirst("X-Claim-Id"));
                     String epoch=String.valueOf(x.getRequestHeaders().getFirst("X-Production-Epoch"));
                     String sha=String.valueOf(x.getRequestHeaders().getFirst("X-Media-Sha256")).toLowerCase(Locale.ROOT);
-                    store.authorizeVideoTransfer(id,workerId,claimId,epoch,sha);
-                    Path dir=root.resolve("output/command_center/videos");Files.createDirectories(dir);
-                    // Stable media name: repeat requests never allocate another version/file.
-                    String name="job-"+autonewsroller.util.Hashing.sha256(id).substring(0,20)+"_"+
-                            epoch.replaceAll("[^A-Za-z0-9_-]","")+"_"+
-                            sha+".mp4";
+                    Map<String,Object>initial=draft?store.authorizeHostedDraft(id,workerId,claimId,epoch,sha):
+                            store.authorizeVideoTransfer(id,workerId,claimId,epoch,sha);
+                    Path dir=root.resolve(draft?"output/command_center/unscanned_drafts":"output/command_center/videos");
+                    if(draft)dir=dir.toAbsolutePath().normalize();
+                    Files.createDirectories(dir);
+                    if(draft&&(Files.isSymbolicLink(dir)||!dir.toRealPath().equals(dir)))throw new IllegalStateException("Draft storage path is linked");
+                    String legacy="job-"+autonewsroller.util.Hashing.sha256(id).substring(0,20)+"_"+
+                            epoch.replaceAll("[^A-Za-z0-9_-]","")+"_"+sha+".mp4";
+                    String name=draft?String.valueOf(initial.get("filename")):
+                            Boolean.TRUE.equals(initial.get("completed"))?String.valueOf(initial.get("filename")):
+                            Files.exists(dir.resolve(legacy))?legacy:store.titledVideoName(id,epoch,sha);
                     Path out=dir.resolve(name);
+                    if(!dir.normalize().equals(out.normalize().getParent()))throw new IllegalStateException("Invalid media destination");
                     Path staging=Files.createTempFile(dir,".incoming-",".part");
                     try{
                         long bytes=0;
@@ -442,8 +450,12 @@ public final class CommandCenterServer {
                         }
                         if(bytes<=0||!sha.equals(ContentSafetyService.hash(staging)))
                             throw new IllegalStateException("Uploaded bytes do not match approved media SHA-256");
-                        Map<String,Object>authorized=store.authorizeVideoTransfer(id,workerId,claimId,epoch,sha);
+                        Map<String,Object>authorized=draft?store.authorizeHostedDraft(id,workerId,claimId,epoch,sha):
+                                store.authorizeVideoTransfer(id,workerId,claimId,epoch,sha);
                         if(Boolean.TRUE.equals(authorized.get("completed"))){
+                            if(draft&&(!Files.isRegularFile(out)||Files.isSymbolicLink(out)
+                                    ||!out.toString().equals(authorized.get("hostPath"))||!sha.equals(ContentSafetyService.hash(out))))
+                                throw new IllegalStateException("Previously received draft missing or changed");
                             Map<String,Object>result=new LinkedHashMap<>(authorized);
                             result.put("ok",true);json(x,200,result);break;
                         }
@@ -461,9 +473,11 @@ public final class CommandCenterServer {
                         try(java.nio.channels.FileChannel durable=java.nio.channels.FileChannel.open(
                                 out,StandardOpenOption.WRITE)){durable.force(true);}
                         Map<String,Object>result=new LinkedHashMap<>(
+                                draft?store.recordHostedDraft(id,workerId,claimId,epoch,sha,out):
                                 store.recordVideoTransfer(id,out,workerId,claimId,epoch,sha,bytes));
                         result.put("ok",true);json(x,200,result);
                     }finally{Files.deleteIfExists(staging);}
+                    }
                 }
                 case "local-draft-complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}

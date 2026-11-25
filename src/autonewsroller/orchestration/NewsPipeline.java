@@ -846,7 +846,7 @@ public final class NewsPipeline {
         audit.put("minimumDurationRequired",minimumFinalSeconds);audit.put("sceneCount",imgs.size());audit.put("sourceCount",fp.sourceCount());audit.put("independentSources",fp.independentSourceCount());audit.put("verifiedFacts",fp.facts().size());audit.put("contestedFacts",fp.disputedClaims().size());audit.put("ttsEngine",nr.engine());audit.put("encoder",rr.encoder());audit.put("duplicateStoryFingerprint",false);audit.put("hook",script.hook());audit.put("openingVisualType",plan.items().isEmpty()?"":plan.items().get(0).type());audit.put("openingSceneWeight",plan.items().isEmpty()?0:plan.items().get(0).duration());audit.put("visualPackage",BroadcastTheme.PACKAGE_ID);audit.put("postLayout","tiktok-footer-220");audit.put("thumbnailStrategy","hook-frame-zero");putVisualPromptAudit(audit,visualPrompts);putPoliticalAudit(audit,political,plan);Json.write(slotDir.resolve("audit.json"),audit);
         if(localDraft){
             Path drafts=slotDir.resolve("local_drafts");Files.createDirectories(drafts);
-            Path draft=drafts.resolve("NOT_SCANNED_"+UUID.randomUUID()+".mp4");
+            Path draft=drafts.resolve("NOT_SCANNED_"+FileNames.safe(c.topic)+"_"+UUID.randomUUID()+".mp4");
             Path sidecar=draft.resolveSibling(draft.getFileName()+".json");
             Map<String,Object>metadata=Map.of("safetyStatus","NOT_SCANNED","publicationAllowed",false,
                     "productionMode",mode.name(),"videoSha256",ContentSafetyService.hash(render),
@@ -855,7 +855,7 @@ public final class NewsPipeline {
             Json.write(sidecar,metadata);
             try{Files.copy(render,draft);}
             catch(Exception failure){Files.deleteIfExists(draft);Files.deleteIfExists(sidecar);throw failure;}
-            events.emit(worker,slot,PipelineStage.AUDIT,"NOT SCANNED — LOCAL OUTPUT ONLY");
+            events.emit(worker,slot,PipelineStage.AUDIT,"NOT SCANNED — ISOLATED DRAFT OUTPUT");
             return draft;
         }
         List<Path>safetyAssets=new ArrayList<>(renderBackgrounds);
