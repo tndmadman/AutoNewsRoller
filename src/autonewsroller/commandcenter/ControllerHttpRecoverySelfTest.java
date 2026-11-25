@@ -56,10 +56,17 @@ public final class ControllerHttpRecoverySelfTest {
             URI uri=URI.create(base+"/api/settings/content-safety");
             check(Boolean.TRUE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"scanning defaults on");
             check(request(http,uri,"POST",off,worker).statusCode()==403,"worker token cannot disable scanning");
+            check(request(http,uri,"POST",Json.stringify(Map.of("enabled",false)).getBytes(java.nio.charset.StandardCharsets.UTF_8),authorized).statusCode()==400,"local-only warning confirmation required");
+            check(request(http,uri,"GET",new byte[0],Map.of()).statusCode()==401,"anonymous settings access denied");
             check(request(http,uri,"POST",off,authorized).statusCode()==200,"administrator can select local-only drafts");
+            HttpResponse<String>health=request(http,URI.create(base+"/api/safety/health"),"GET",new byte[0],worker);
+            check(health.statusCode()==200&&"DISABLED_LOCAL_ONLY".equals(Json.object(Json.parse(health.body())).get("status")),"disabled health does not probe missing scanners or GPU configuration");
             check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"updated setting visible without restart");
             byte[]heartbeat=Json.stringify(Map.of("id","updated-worker","capabilities",List.of("local_draft_v1"))).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            check(request(http,URI.create(base+"/api/workers/heartbeat"),"POST",heartbeat,worker).statusCode()==200,"updated worker registers");
+            HttpResponse<String>heartbeatResult=request(http,URI.create(base+"/api/workers/heartbeat"),"POST",heartbeat,worker);
+            check(heartbeatResult.statusCode()==200,"updated worker registers");
+            check(Boolean.FALSE.equals(Json.object(Json.parse(heartbeatResult.body())).get("contentSafetyScanningEnabled")),"heartbeat reports current policy");
+            check(request(http,URI.create(base+"/api/jobs/claim?worker=old-worker"),"GET",new byte[0],worker).statusCode()==204,"old worker cannot claim a local-only job");
             HttpResponse<String>claimed=request(http,URI.create(base+"/api/jobs/claim?worker=updated-worker"),"GET",new byte[0],worker);
             check(claimed.statusCode()==200,"updated worker can claim local draft");
             Map<String,Object>job=Json.object(Json.parse(claimed.body()));
@@ -67,22 +74,49 @@ public final class ControllerHttpRecoverySelfTest {
             byte[]done=Json.stringify(Map.of("workerId","updated-worker","claimId",job.get("claimId"),"productionEpoch",job.get("productionEpoch"),
                 "localPath","fixture.mp4","videoSha256","a".repeat(64))).getBytes(java.nio.charset.StandardCharsets.UTF_8);
             URI local=URI.create(base+"/api/jobs/"+id+"/local-draft-complete");
-            check(request(http,local,"POST",done,worker).statusCode()==200,"local draft completion recorded");
+            byte[]on=Json.stringify(Map.of("enabled",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            check(request(http,uri,"POST",on,authorized).statusCode()==200,"administrator can restore scanning while draft is active");
+            Map<String,String>uploadHeaders=new LinkedHashMap<>(worker);
+            uploadHeaders.put("X-Worker-Id","updated-worker");
+            uploadHeaders.put("X-Claim-Id",String.valueOf(job.get("claimId")));
+            uploadHeaders.put("X-Production-Epoch",String.valueOf(job.get("productionEpoch")));
+            uploadHeaders.put("X-Media-Sha256","a".repeat(64));
+            check(request(http,URI.create(base+"/api/jobs/"+id+"/video"),"PUT",new byte[]{1},uploadHeaders).statusCode()==409,"local-only claim cannot upload even after scanning is restored");
+            Map<String,Object>forged=new LinkedHashMap<>(Json.object(Json.parse(new String(done,java.nio.charset.StandardCharsets.UTF_8))));
+            forged.put("dryRun",true);
+            check(request(http,URI.create(base+"/api/jobs/"+id+"/complete"),"POST",Json.stringify(forged).getBytes(java.nio.charset.StandardCharsets.UTF_8),worker).statusCode()==409,"local-only claim cannot masquerade as normal completion");
+            check(request(http,local,"POST",done,worker).statusCode()==200,"local draft completion recorded under claim snapshot");
             check(request(http,local,"POST",done,worker).statusCode()==200,"local completion replay idempotent");
             check(mediaCount(root)==0,"local draft does not enter controller media archive");
+            check(request(http,uri,"POST",off,authorized).statusCode()==200,"local-only policy can be restored for restart test");
         }finally{server.stop();}
         CommandCenterServer restarted=new CommandCenterServer(root,cfg,"127.0.0.1",0,600,false,0.68,5,"worker-token",false);
         try{
             URI uri=URI.create("http://127.0.0.1:"+restarted.start()+"/api/settings/content-safety");
             check(Boolean.FALSE.equals(Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled")),"local-only selection persists");
+            Map<String,Object>state=Json.object(Json.read(root.resolve("data/command_center_state.json")));
+            check(state.get("safetySettingAudit") instanceof List<?> audit&&audit.size()>=3,"durable settings audit retained");
+            Map<String,Object>saved=Json.object(Json.object(state.get("stories")).get(id));
+            check("NOT_SCANNED".equals(Json.object(saved.get("localDraft")).get("status")),"local draft classification survives restart");
             byte[]on=Json.stringify(Map.of("enabled",true)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
             check(request(http,uri,"POST",on,authorized).statusCode()==200,"administrator can restore mandatory scanning");
+            ExecutorService settingsRacers=Executors.newFixedThreadPool(2);
+            try{
+                Future<HttpResponse<String>>first=settingsRacers.submit(()->request(http,uri,"POST",off,authorized));
+                Future<HttpResponse<String>>second=settingsRacers.submit(()->request(http,uri,"POST",on,authorized));
+                check(first.get(15,TimeUnit.SECONDS).statusCode()==200&&second.get(15,TimeUnit.SECONDS).statusCode()==200,"concurrent setting updates serialized");
+                Object live=Json.object(Json.parse(request(http,uri,"GET",new byte[0],worker).body())).get("contentSafetyScanningEnabled");
+                Object disk=Json.object(Json.read(root.resolve("data/command_center_state.json"))).get("contentSafetyScanningEnabled");
+                check(Objects.equals(live,disk),"concurrent final state matches durable state");
+                check(request(http,uri,"POST",on,authorized).statusCode()==200,"scanning restored after concurrency test");
+            }finally{settingsRacers.shutdownNow();}
         }finally{restarted.stop();}
     }
 
     public static int run()throws Exception{
         count=0;
         localDraftSettingRegression();
+        autonewsroller.safety.LocalDraftInspection.selfTest();
         Path root=Files.createTempDirectory("anr-http-recovery-");
         Files.createDirectories(root.resolve("data"));
         String id="http-fixture";

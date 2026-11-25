@@ -288,6 +288,7 @@ function render(){
     safetyToggle.classList.toggle("on",enabled);safetyToggle.classList.toggle("off",!enabled);
     safetyToggle.setAttribute("aria-pressed",String(enabled));
     $("#contentSafetyToggleText").textContent=enabled?"CONTENT SAFETY SCANNING: ON":"CONTENT SAFETY SCANNING: OFF — LOCAL OUTPUT ONLY";
+    safetyToggle.title=enabled?"SAFETY SCANNING ENABLED":"SAFETY SCANNING DISABLED — LOCAL OUTPUT ONLY";
   }
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";

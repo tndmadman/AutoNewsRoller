@@ -275,16 +275,20 @@ public final class CommandCenterServer {
 
     private void contentSafetySetting(HttpExchange x)throws IOException{
         if(!api(x))return;
-        if("GET".equalsIgnoreCase(x.getRequestMethod())){
-            json(x,200,Map.of("contentSafetyScanningEnabled",store.contentSafetyScanningEnabled()));return;
-        }
-        if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         String admin=cfg.get("commandCenterAdminToken","");
         String env=System.getenv("AUTONEWS_ADMIN_TOKEN");
         if(env!=null&&!env.isBlank())admin=env;
         String supplied=x.getRequestHeaders().getFirst("X-AutoNews-Admin-Token");
-        if(admin.isBlank()||admin.equals(token)||supplied==null||!java.security.MessageDigest.isEqual(
-                admin.getBytes(StandardCharsets.UTF_8),supplied.getBytes(StandardCharsets.UTF_8))){
+        boolean authenticatedAdmin=!admin.isBlank()&&!admin.equals(token)&&supplied!=null&&
+                java.security.MessageDigest.isEqual(admin.getBytes(StandardCharsets.UTF_8),supplied.getBytes(StandardCharsets.UTF_8));
+        if("GET".equalsIgnoreCase(x.getRequestMethod())){
+            if(token.isBlank()&&!authenticatedAdmin){
+                json(x,401,Map.of("error","Administrator or configured API token required"));return;
+            }
+            json(x,200,Map.of("contentSafetyScanningEnabled",store.contentSafetyScanningEnabled()));return;
+        }
+        if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        if(!authenticatedAdmin){
             json(x,403,Map.of("error","Distinct administrator token required"));return;
         }
         Map<String,Object>body=bodyObject(x);

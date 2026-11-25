@@ -57,6 +57,13 @@ public final class VisualAssetGateSelfTest {
                         List.of(generated),List.of(composed),List.of(background),
                         Arrays.asList(overlay),w,h));
             }
+            // Diagnostic local drafts can use procedural cards, never unchecked generated visuals.
+            for(ProductionMode mode:ProductionMode.values()){
+                VisualAssetGate.requireReady(mode,false,List.of(),0,List.of(graphic),
+                        List.of(card),List.of(card),Arrays.asList((Path)null),w,h,true);
+                rejected(()->VisualAssetGate.requireReady(mode,false,List.of(0),1,
+                        sources,frames,backs,overlays,w,h,true));
+            }
             Path corrupt=dir.resolve("corrupt.png");
             Files.writeString(corrupt,"This is not a PNG even though it has a PNG filename");
             rejected(()->VisualAssetGate.requireReady(ProductionMode.FRAMING_EXPOSURE,false,List.of(),0,

@@ -470,7 +470,7 @@ public final class CommandCenterStore {
             m.put("claimId",UUID.randomUUID().toString());m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
             m.put("claimContentSafetyScanningEnabled",contentSafetyScanningEnabled);
             int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
-            appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY"));
+            appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY","contentSafetyScanningEnabled",contentSafetyScanningEnabled));
             renewLease(m);
             persistRequired();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
@@ -1002,6 +1002,7 @@ public final class CommandCenterStore {
                 "claimId",claim,"productionEpoch",epoch,"videoSha256",hash,"localPath",path,
                 "productionMode",String.valueOf(m.get("productionMode")),"completedAt",Instant.now().toString()));
         m.put("localDraft",draft);m.put("status","HOLD");m.put("stage","NOT_SCANNED");
+        if(!m.containsKey("currentVideoVersionId"))m.put("safetyStatus","NOT_SCANNED");
         m.put("progress",100);m.put("decision","HOLD");m.put("detail","NOT SCANNED — LOCAL OUTPUT ONLY");
         m.remove("error");m.remove("assignedWorker");clearLease(m);
         appendProductionAttempt(m,Instant.now(),Map.of("event","LOCAL_DRAFT_COMPLETE","safetyStatus","NOT_SCANNED"));
@@ -1131,6 +1132,7 @@ public final class CommandCenterStore {
         v.put("safetyStatus",dryRun?"NOT_PUBLISHABLE_DRY_RUN":"APPROVED_FOR_EXPORT");
         v.put("safetyPolicyVersion",ContentSafetyService.POLICY);
         v.put("safetyManifest",manifest);
+        v.put("contentSafetyScanningEnabled",!Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled")));
         v.put("bytes",m.getOrDefault("videoBytes",0));
         copyPublicationState(m,v);videos.put(versionId,v);
         // Keep the last committed output separate from the current temporary claim.

@@ -353,7 +353,7 @@ public final class RemoteWorker {
             if(cfg.getBool("memePipelineEnabled",true))capabilities.add("meme_ragebait_v1");
             if(cfg.getBool("memeWorthinessEnabled",true))capabilities.add("meme_analysis_v1");
             capabilities.add("local_draft_v1");
-            m.put("capabilities",capabilities);
+            m.put("capabilities",capabilities);m.put("contentSafetyScanningEnabled",controllerSafetyScanningEnabled);
             m.put("metrics",metrics.get());m.put("timestamp",Instant.now().toString());
             Map<String,Object>response=post("/api/workers/heartbeat",m);
             controllerSafetyScanningEnabled=!Boolean.FALSE.equals(response.get("contentSafetyScanningEnabled"));lastHeartbeat=Instant.now();
