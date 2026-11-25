@@ -139,9 +139,40 @@ public final class ControllerHttpRecoverySelfTest {
         }finally{restarted.stop();}
     }
 
+    private static void imageOnlySettingRegression()throws Exception{
+        Path root=Files.createTempDirectory("anr-image-only-setting-");
+        String id="image-scan-fixture";
+        Json.write(root.resolve("data/command_center_state.json"),Map.of("contentSafetyScanningEnabled",false,
+                "stories",Map.of(id,Map.of("id",id,"status","QUEUED","stage","QUEUED","topic","Image fixture","productionMode","STANDARD","score",0.95)),"videos",Map.of()));
+        NewsConfig cfg=NewsConfig.load(root);
+        CommandCenterServer server=new CommandCenterServer(root,cfg,"127.0.0.1",0,600,false,0.68,5,"",false);
+        HttpClient http=HttpClient.newHttpClient();
+        String base="http://127.0.0.1:"+server.start();
+        URI uri=URI.create(base+"/api/settings/image-safety");
+        Map<String,String>json=Map.of("Content-Type","application/json");
+        try{
+            Map<String,Object> migrated=Json.object(Json.parse(request(http,uri,"GET",new byte[0],Map.of()).body()));
+            check(Boolean.FALSE.equals(migrated.get("imageSafetyScanningEnabled"))&&Boolean.TRUE.equals(migrated.get("contentSafetyScanningEnabled")),"old OFF migrates to image-only OFF; final scan remains on");
+            byte[]off=Json.stringify(Map.of("enabled",false)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            check(request(http,uri,"POST",off,json).statusCode()==200,"image-only OFF accepted without draft warning");
+            HttpResponse<String>claim=request(http,URI.create(base+"/api/jobs/claim?worker=image-worker"),"GET",new byte[0],Map.of());
+            check(claim.statusCode()==200,"image-only OFF permits normal video claim");
+            Map<String,Object>job=Json.object(Json.parse(claim.body()));Map<String,Object>settings=Json.object(job.get("settings"));
+            check(Boolean.FALSE.equals(settings.get("imageSafetyScanningEnabled"))&&Boolean.TRUE.equals(settings.get("contentSafetyScanningEnabled")),"claim defers only image scans");
+            Map<String,String>headers=new LinkedHashMap<>();headers.put("X-Worker-Id","image-worker");headers.put("X-Claim-Id",String.valueOf(job.get("claimId")));headers.put("X-Production-Epoch",String.valueOf(job.get("productionEpoch")));headers.put("X-Media-Sha256","4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a");
+            check(request(http,URI.create(base+"/api/jobs/"+id+"/local-draft-video"),"PUT",new byte[]{1},headers).statusCode()==409,"image-only claim cannot use isolated draft upload");
+            check(request(http,URI.create(base+"/api/jobs/"+id+"/video"),"PUT",new byte[]{1},headers).statusCode()==200,"image-only claim uses normal upload staging");
+            Path image=root.resolve("fixture.png");Files.write(image,new byte[]{1});
+            Map<String,Object>deferred=new ContentSafetyService(root,cfg).inspectImageForRender(image,false);
+            check("DEFERRED_TO_FINAL_VIDEO".equals(deferred.get("status"))&&ContentSafetyService.eligibleImageForRender(deferred,false)&&!ContentSafetyService.eligibleImageForRender(deferred,true),"deferred image never represented as SAFE");
+            check(!ContentSafetyService.eligibleImageForRender(Map.of("status","UNSAFE"),false),"known unsafe verdict never accepted");
+        }finally{server.stop();}
+    }
+
     public static int run()throws Exception{
         count=0;
         localDraftSettingRegression();
+        imageOnlySettingRegression();
         tokenlessLocalSafetySettingRegression();
         autonewsroller.safety.LocalDraftInspection.selfTest();
         Path root=Files.createTempDirectory("anr-http-recovery-");

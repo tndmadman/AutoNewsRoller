@@ -23,6 +23,15 @@ public final class ContentSafetyService {
     public Map<String,Object> inspectImage(Path image){
         return scan("image",image);
     }
+    /** Deferred assets are not SAFE approvals; the encoded MP4 still requires both full-frame detectors. */
+    public Map<String,Object> inspectImageForRender(Path image,boolean enabled)throws Exception{
+        if(enabled)return inspectImage(image);
+        if(!Files.isRegularFile(image)||Files.size(image)==0)throw new IOException("empty or missing image");
+        return Map.of("status","DEFERRED_TO_FINAL_VIDEO","sha256",hash(image),"policyVersion",POLICY);
+    }
+    public static boolean eligibleImageForRender(Map<String,Object> result,boolean enabled){
+        return "SAFE".equals(result.get("status"))||(!enabled&&"DEFERRED_TO_FINAL_VIDEO".equals(result.get("status")));
+    }
     public Map<String,Object> inspectVideo(Path video){
         return scan("video",video);
     }

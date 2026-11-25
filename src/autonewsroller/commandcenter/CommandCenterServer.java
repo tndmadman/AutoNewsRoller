@@ -77,6 +77,7 @@ public final class CommandCenterServer {
         server.createContext("/api/scan",this::scanNow);
         server.createContext("/api/settings/auto-video",this::autoVideoSetting);
         server.createContext("/api/settings/content-safety",this::contentSafetySetting);
+        server.createContext("/api/settings/image-safety",this::contentSafetySetting);
         server.createContext("/api/stories/",this::stories);
         server.createContext("/api/workers/heartbeat",this::heartbeat);
         server.createContext("/api/jobs/claim",this::claim);
@@ -275,8 +276,9 @@ public final class CommandCenterServer {
 
     private void contentSafetySetting(HttpExchange x)throws IOException{
         if(!api(x))return;
+        boolean imageOnly="/api/settings/image-safety".equals(x.getRequestURI().getPath());
         if("GET".equalsIgnoreCase(x.getRequestMethod())){
-            json(x,200,Map.of("contentSafetyScanningEnabled",store.contentSafetyScanningEnabled()));return;
+            json(x,200,Map.of("contentSafetyScanningEnabled",store.contentSafetyScanningEnabled(),"imageSafetyScanningEnabled",store.imageSafetyScanningEnabled()));return;
         }
         if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         // No separate administrator secret. A tokenless controller may change
@@ -291,10 +293,13 @@ public final class CommandCenterServer {
         }
         Map<String,Object>body=bodyObject(x);
         if(!(body.get("enabled") instanceof Boolean enabled)){json(x,400,Map.of("error","enabled boolean required"));return;}
-        if(!enabled&&!Boolean.TRUE.equals(body.get("confirmLocalOnly"))){
+        if(!imageOnly&&!enabled&&!Boolean.TRUE.equals(body.get("confirmLocalOnly"))){
             json(x,400,Map.of("error","Local-only warning must be acknowledged"));return;
         }
-        try{json(x,200,store.setContentSafetyScanningEnabled(enabled,token.isBlank()?"local controller operator":"authenticated controller operator"));}
+        try{
+            String actor=token.isBlank()?"local controller operator":"authenticated controller operator";
+            json(x,200,imageOnly?store.setImageSafetyScanningEnabled(enabled,actor):store.setContentSafetyScanningEnabled(enabled,actor));
+        }
         catch(UncheckedIOException e){json(x,500,Map.of("error","Unable to save content safety setting"));}
     }
     private static boolean localSafetySettingRequest(HttpExchange x){
@@ -380,7 +385,7 @@ public final class CommandCenterServer {
         if(!api(x))return;if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         Map<String,Object>body=bodyObject(x);String id=String.valueOf(body.getOrDefault("id","")).trim();
         if(id.isBlank()){json(x,400,Map.of("error","worker id required"));return;}
-        store.heartbeat(id,body);json(x,200,Map.of("ok",true,"contentSafetyScanningEnabled",store.contentSafetyScanningEnabled()));
+        store.heartbeat(id,body);json(x,200,Map.of("ok",true,"contentSafetyScanningEnabled",store.contentSafetyScanningEnabled(),"imageSafetyScanningEnabled",store.imageSafetyScanningEnabled()));
     }
 
     private void claim(HttpExchange x)throws IOException{

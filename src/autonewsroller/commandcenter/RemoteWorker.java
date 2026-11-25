@@ -168,6 +168,7 @@ public final class RemoteWorker {
             }
             Map<String,Object> settings=job.get("settings") instanceof Map<?,?>?Json.object(job.get("settings")):Map.of();
             boolean localDraft=Boolean.FALSE.equals(settings.get("contentSafetyScanningEnabled"));
+            boolean imageSafetyScanningEnabled=!Boolean.FALSE.equals(settings.get("imageSafetyScanningEnabled"));
             int requestedDuration=settings.get("duration") instanceof Number n?n.intValue():cfg.duration();
             int duration=Math.max(cfg.getInt("commandCenterMinimumTargetSeconds",70),requestedDuration);
             if(productionMode==ProductionMode.FRAMING_EXPOSURE)
@@ -189,7 +190,7 @@ public final class RemoteWorker {
                 comfyImages=Math.max(1,cfg.getInt("memeComfyImages",3));
             }
             event("progress",Map.of("stage","CLAIMED","detail","mode="+productionMode.name()+
-                    "; durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy));
+                    "; durationTarget="+duration+"s; encoder="+encoder+"; comfy="+useComfy+"; imageScans="+imageSafetyScanningEnabled));
             // The epoch changes on a new manual production request, not on retry.
             // Each retry resumes the same workspace after a worker restart.
             String epoch=String.valueOf(job.getOrDefault("productionEpoch",currentClaimId));
@@ -207,7 +208,7 @@ public final class RemoteWorker {
             Map<String,Object>framingAnalysis=job.get("framingAnalysis") instanceof Map<?,?>?Json.object(job.get("framingAnalysis")):Map.of();
             Path output=localDraft
                     ?pipeline.produceLocalDraft(candidate,1,1,batch.resolve("slot_001"),duration,encoder,comfyImages,political,productionMode,framingAnalysis)
-                    :pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,framingAnalysis,dryRun);
+                    :pipeline.produce(candidate,1,1,batch.resolve("slot_001"),duration,encoder,useComfy,requireComfy,comfyImages,political,productionMode,framingAnalysis,dryRun,imageSafetyScanningEnabled);
             if(localDraft){
                 stage="UPLOAD";detail="Transferring isolated procedural draft to controller";
                 if(telemetry!=null)telemetry.progress(stage,detail);
@@ -355,7 +356,7 @@ public final class RemoteWorker {
             if(cfg.getBool("politicalExposureEnabled",true))capabilities.add("framing_exposure_v1");
             if(cfg.getBool("memePipelineEnabled",true))capabilities.add("meme_ragebait_v1");
             if(cfg.getBool("memeWorthinessEnabled",true))capabilities.add("meme_analysis_v1");
-            capabilities.add("local_draft_v1");
+            capabilities.add("local_draft_v1");capabilities.add("image_safety_setting_v1");
             m.put("capabilities",capabilities);m.put("contentSafetyScanningEnabled",controllerSafetyScanningEnabled);
             m.put("metrics",metrics.get());m.put("timestamp",Instant.now().toString());
             Map<String,Object>response=post("/api/workers/heartbeat",m);

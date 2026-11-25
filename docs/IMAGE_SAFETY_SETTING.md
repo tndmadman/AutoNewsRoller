@@ -1,0 +1,7 @@
+# Image-only safety setting
+
+The dashboard toggle now controls pre-render still-image detector calls only. OFF preserves normal generation, ComfyUI, editorial evidence routing, image quality and semantic checks, captions, disclosure, audio/video sync, and normal upload/completion. Both worker final-video detectors and the controller's independent final-video verification remain mandatory. Deferred still-image evidence is explicitly DEFERRED_TO_FINAL_VIDEO, not SAFE.
+
+New controller API: GET/POST /api/settings/image-safety, JSON { "enabled": false }. Existing controller authentication and loopback rules apply. New claims carry imageSafetyScanningEnabled separately from contentSafetyScanningEnabled (the latter remains true for new claims after using the new toggle). Old UI OFF state migrates on first controller startup to image-only OFF and normal production. Older clients using the legacy diagnostic API retain its isolated-draft semantics; older workers ignore the new image-only setting and still scan images. Update both controller and worker to use the new setting. Existing active claims retain their original snapshot and existing unscanned draft files stay isolated; requeue or MAKE those stories after updating if a normal video is needed.
+
+Final MP4 scanner availability is still required even if still-image scanning is OFF. No scanner threshold, disclosure, manifest, publication, or independent controller check is disabled. The original draft-mode API remains for compatibility; it is not exposed by the updated dashboard toggle.

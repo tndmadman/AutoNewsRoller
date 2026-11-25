@@ -284,11 +284,11 @@ function render(){
   }
   const safetyToggle=$("#contentSafetyToggle");
   if(safetyToggle){
-    const enabled=state.contentSafetyScanningEnabled!==false;
+    const enabled=state.imageSafetyScanningEnabled!==false;
     safetyToggle.classList.toggle("on",enabled);safetyToggle.classList.toggle("off",!enabled);
     safetyToggle.setAttribute("aria-pressed",String(enabled));
-    $("#contentSafetyToggleText").textContent=enabled?"CONTENT SAFETY SCANNING: ON":"CONTENT SAFETY SCANNING: OFF — DRAFT OUTPUT ONLY";
-    safetyToggle.title=enabled?"SAFETY SCANNING ENABLED":"SAFETY SCANNING DISABLED — DRAFT OUTPUT ONLY";
+    $("#contentSafetyToggleText").textContent=enabled?"IMAGE SAFETY SCANS: ON":"IMAGE SAFETY SCANS: OFF — FINAL VIDEO SCANS ON";
+    safetyToggle.title=enabled?"Still images and final video are scanned":"Still-image scans deferred; final video scans remain mandatory";
   }
   $("#scanState").textContent=state.scanning?"SCANNING":"STANDBY";
   $("#feedSummary").textContent=(state.feeds||[]).length+" FEEDS";
@@ -816,16 +816,16 @@ document.addEventListener("click",e=>{
 // Toolbar actions also acknowledge the initial click and lock while the request runs.
 $("#contentSafetyToggle").onclick=async()=>{
   const btn=$("#contentSafetyToggle");if(btn.disabled)return;
-  const enabled=state.contentSafetyScanningEnabled===false;
-  if(!enabled&&!confirm("Disable automatic scanning for new jobs? Only watermarked procedural drafts will be produced on the worker. They are transferred to a separate controller draft folder and cannot be published through AutoNewsRoller. Existing jobs retain their settings."))return;
+  const enabled=state.imageSafetyScanningEnabled===false;
+  if(!enabled&&!confirm("Turn off still-image scans for new jobs? Normal ComfyUI rendering and completed-video storage continue. Worker and controller final MP4 checks remain mandatory. Existing claims retain their settings."))return;
   btn.disabled=true;
   try{
-    const result=await api("/api/settings/content-safety",{method:"POST",
+    const result=await api("/api/settings/image-safety",{method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({enabled,confirmLocalOnly:!enabled})});
-    stateEpoch++;state.contentSafetyScanningEnabled=result.contentSafetyScanningEnabled;
+      body:JSON.stringify({enabled})});
+    stateEpoch++;state.imageSafetyScanningEnabled=result.imageSafetyScanningEnabled;state.contentSafetyScanningEnabled=result.contentSafetyScanningEnabled;
     safetyHealthNext=0;render();loadState().catch(()=>{});checkSafetyDetectorHealth().catch(()=>{});
-    toast(enabled?"Safety scanning enabled for new claims.":"Isolated draft mode enabled. Publication remains blocked for drafts.");
+    toast(enabled?"Still-image scans enabled.":"Still-image scans off. Normal video production and final video scans remain active.");
   }catch(e){toast(e.message,true);loadState().catch(()=>{});}
   finally{btn.disabled=false;}
 };
