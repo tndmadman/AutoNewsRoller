@@ -23,8 +23,8 @@ public final class CommandCenterStore {
     private final Path statePath;
     private final BiasRegistry bias;
     private boolean autoQueue;
-    private boolean contentSafetyScanningEnabled=true;
-    private boolean imageSafetyScanningEnabled=true;
+    // One mutable automatic detector setting. Legacy claim routing is immutable.
+    private boolean automaticSafetyScanningEnabled=true;
     private final List<Map<String,Object>> safetySettingAudit=new ArrayList<>();
     private final double autoThreshold;
     private final int maxQueued;
@@ -469,15 +469,15 @@ public final class CommandCenterStore {
                 m.put("pairedVideoState","FRAMING_PRODUCING");
             m.putIfAbsent("productionEpoch",UUID.randomUUID().toString());
             m.put("claimId",UUID.randomUUID().toString());m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
-            m.put("claimContentSafetyScanningEnabled",contentSafetyScanningEnabled);
-            m.put("claimImageSafetyScanningEnabled",imageSafetyScanningEnabled);
-            m.put("claimAutomaticSafetyScanningEnabled",imageSafetyScanningEnabled);
+            m.put("claimContentSafetyScanningEnabled",true); // compatibility: normal production route
+            m.put("claimImageSafetyScanningEnabled",automaticSafetyScanningEnabled);
+            m.put("claimAutomaticSafetyScanningEnabled",automaticSafetyScanningEnabled);
             int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
-            appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY","contentSafetyScanningEnabled",contentSafetyScanningEnabled));
+            appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY","automaticSafetyScanningEnabled",automaticSafetyScanningEnabled));
             renewLease(m);
             persistRequired();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
-            job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));Map<String,Object>claimSettings=new LinkedHashMap<>(settings);claimSettings.put("contentSafetyScanningEnabled",contentSafetyScanningEnabled);claimSettings.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);claimSettings.put("automaticSafetyScanningEnabled",imageSafetyScanningEnabled);job.put("settings",claimSettings);job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
+            job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));Map<String,Object>claimSettings=new LinkedHashMap<>(settings);claimSettings.put("contentSafetyScanningEnabled",true);claimSettings.put("imageSafetyScanningEnabled",automaticSafetyScanningEnabled);claimSettings.put("automaticSafetyScanningEnabled",automaticSafetyScanningEnabled);job.put("settings",claimSettings);job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
             job.put("claimId",m.get("claimId"));job.put("productionEpoch",m.get("productionEpoch"));job.put("attemptNumber",claimCount);job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
             Map<String,Object>sourceMix=m.get("sourceMix") instanceof Map<?,?>?Json.object(m.get("sourceMix")):Map.of();
             Map<String,Object>framing=m.get("framingAnalysis") instanceof Map<?,?>?Json.object(m.get("framingAnalysis")):Map.of();
@@ -1428,31 +1428,26 @@ public final class CommandCenterStore {
         Map<String,Object>m=stories.get(id);return m==null?null:deepCopyMap(m);
     }
 
-    public synchronized boolean imageSafetyScanningEnabled(){return imageSafetyScanningEnabled;}
-    public synchronized boolean automaticSafetyScanningEnabled(){return imageSafetyScanningEnabled;}
+    public synchronized boolean imageSafetyScanningEnabled(){return automaticSafetyScanningEnabled;}
+    public synchronized boolean automaticSafetyScanningEnabled(){return automaticSafetyScanningEnabled;}
     public synchronized boolean claimAutomaticSafetyScanningEnabled(String id){return !Boolean.FALSE.equals(requireStory(id).get("claimAutomaticSafetyScanningEnabled"));}
-    /** Master automatic scanner setting; unverified completions are never export approved. */
+    /** The compatibility field means normal production routing, not detector execution. */
+    public synchronized boolean contentSafetyScanningEnabled(){return true;}
+    public synchronized Map<String,Object> setContentSafetyScanningEnabled(boolean enabled,String actor){
+        return setAutomaticSafetyScanningEnabled(enabled,actor);
+    }
     public synchronized Map<String,Object> setImageSafetyScanningEnabled(boolean enabled,String actor){
-        boolean previous=imageSafetyScanningEnabled,previousLegacy=contentSafetyScanningEnabled;
-        if(previous==enabled&&previousLegacy)return Map.of("automaticSafetyScanningEnabled",enabled,"imageSafetyScanningEnabled",enabled,"contentSafetyScanningEnabled",true);
+        return setAutomaticSafetyScanningEnabled(enabled,actor);
+    }
+    public synchronized Map<String,Object> setAutomaticSafetyScanningEnabled(boolean enabled,String actor){
+        boolean previous=automaticSafetyScanningEnabled;
+        if(previous==enabled)return Map.of("automaticSafetyScanningEnabled",enabled,"imageSafetyScanningEnabled",enabled,"contentSafetyScanningEnabled",true);
         Map<String,Object>event=Map.of("at",Instant.now().toString(),"actor",actor,"previous",previous,"enabled",enabled,"event","AUTOMATIC_SAFETY_SETTING_CHANGED");
-        imageSafetyScanningEnabled=enabled;contentSafetyScanningEnabled=true;safetySettingAudit.add(event);
+        automaticSafetyScanningEnabled=enabled;safetySettingAudit.add(event);
         try{persistRequired();}catch(java.io.UncheckedIOException failure){
-            imageSafetyScanningEnabled=previous;contentSafetyScanningEnabled=previousLegacy;safetySettingAudit.remove(safetySettingAudit.size()-1);throw failure;
+            automaticSafetyScanningEnabled=previous;safetySettingAudit.remove(safetySettingAudit.size()-1);throw failure;
         }
         Map<String,Object>payload=Map.of("automaticSafetyScanningEnabled",enabled,"imageSafetyScanningEnabled",enabled,"contentSafetyScanningEnabled",true,"audit",event);
-        emit("settings",payload);return payload;
-    }
-    public synchronized boolean contentSafetyScanningEnabled(){return contentSafetyScanningEnabled;}
-    public synchronized Map<String,Object> setContentSafetyScanningEnabled(boolean enabled,String actor){
-        boolean previous=contentSafetyScanningEnabled;
-        if(previous==enabled)return Map.of("contentSafetyScanningEnabled",enabled);
-        Map<String,Object>event=Map.of("at",Instant.now().toString(),"actor",actor,"previous",previous,"enabled",enabled,"event","CONTENT_SAFETY_SETTING_CHANGED");
-        contentSafetyScanningEnabled=enabled;safetySettingAudit.add(event);
-        try{persistRequired();}catch(java.io.UncheckedIOException failure){
-            contentSafetyScanningEnabled=previous;safetySettingAudit.remove(safetySettingAudit.size()-1);throw failure;
-        }
-        Map<String,Object>payload=Map.of("contentSafetyScanningEnabled",enabled,"audit",event);
         emit("settings",payload);return payload;
     }
     public synchronized Map<String,Object> setAutoQueue(boolean enabled){
@@ -1509,7 +1504,7 @@ public final class CommandCenterStore {
         for(String status:List.of("QUEUED","ANALYZING","COMPLETE","FAILED"))
             counts.put("meme"+status.charAt(0)+status.substring(1).toLowerCase(Locale.ROOT),
                     stories.values().stream().filter(x->status.equals(x.get("memeAnalysisStatus"))).count());
-        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeRecentLookbackHours",memeRecentLookbackHours);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("contentSafetyScanningEnabled",contentSafetyScanningEnabled);out.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);out.put("automaticSafetyScanningEnabled",imageSafetyScanningEnabled);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
+        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeRecentLookbackHours",memeRecentLookbackHours);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("contentSafetyScanningEnabled",true);out.put("imageSafetyScanningEnabled",automaticSafetyScanningEnabled);out.put("automaticSafetyScanningEnabled",automaticSafetyScanningEnabled);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
     }
 
 
@@ -1817,17 +1812,10 @@ public final class CommandCenterStore {
     private static double number(Object x){return x instanceof Number n?n.doubleValue():0;}
     private static int integer(Object x){return x instanceof Number n?n.intValue():0;}
     private boolean claimEligible(Map<String,Object>m,String workerId){
-        if(contentSafetyScanningEnabled&&!imageSafetyScanningEnabled){
+        if(!automaticSafetyScanningEnabled){
             Map<String,Object> worker=workers.get(workerId);
             if(worker==null||!(worker.get("capabilities") instanceof List<?> capabilities)||!capabilities.contains("automatic_safety_setting_v2")){
                 m.put("stage","WAITING_FOR_COMPATIBLE_WORKER");m.put("detail","Update worker for master scanner toggle");return false;
-            }
-        }
-        if(!contentSafetyScanningEnabled){
-            Map<String,Object>worker=workers.get(workerId);
-            if(worker==null||!(worker.get("capabilities") instanceof List<?> capabilities)||!capabilities.contains("local_draft_v1")){
-                m.put("stage","WAITING_FOR_COMPATIBLE_WORKER");
-                m.put("detail","Local-only mode requires an updated worker");return false;
             }
         }
         ProductionMode mode=ProductionMode.fromPersisted(m.get("productionMode"));
@@ -2124,16 +2112,18 @@ public final class CommandCenterStore {
             Map<String,Object>root=Json.object(Json.read(statePath));copyMap(root.get("stories"),stories);copyMap(root.get("feeds"),feeds);copyMap(root.get("videos"),videos);
             if(root.get("operations") instanceof Map<?,?>op)for(var entry:op.entrySet())processedOperations.put(String.valueOf(entry.getKey()),String.valueOf(entry.getValue()));
             if(root.get("autoQueue") instanceof Boolean b)autoQueue=b;
-            if(root.get("contentSafetyScanningEnabled") instanceof Boolean b)contentSafetyScanningEnabled=b;
             if(root.get("safetySettingAudit") instanceof List<?> audit)
                 for(Object entry:audit)if(entry instanceof Map<?,?>)safetySettingAudit.add(new LinkedHashMap<>(Json.object(entry)));
             Object scan=root.get("lastScan");if(scan instanceof Map<?,?>)lastScan=new LinkedHashMap<>(Json.object(scan));
-            // Upgrade old UI OFF to image-only OFF; preserve existing claim snapshots and archived drafts.
-            boolean safetyMigrated=!(root.get("imageSafetyScanningEnabled") instanceof Boolean);
-            if(!safetyMigrated)imageSafetyScanningEnabled=Boolean.TRUE.equals(root.get("imageSafetyScanningEnabled"));
-            else if(!contentSafetyScanningEnabled){
-                imageSafetyScanningEnabled=false;contentSafetyScanningEnabled=true;
-                safetySettingAudit.add(Map.of("at",Instant.now().toString(),"actor","settings migration","event","LEGACY_DRAFT_MODE_MIGRATED_TO_IMAGE_ONLY","enabled",false));
+            // Migrate global settings only. Never rewrite in-progress claim snapshots.
+            boolean safetyMigrated=!(root.get("automaticSafetyScanningEnabled") instanceof Boolean);
+            if(root.get("automaticSafetyScanningEnabled") instanceof Boolean master)
+                automaticSafetyScanningEnabled=master;
+            else{
+                automaticSafetyScanningEnabled=!Boolean.FALSE.equals(root.get("contentSafetyScanningEnabled"))
+                        &&!Boolean.FALSE.equals(root.get("imageSafetyScanningEnabled"));
+                safetySettingAudit.add(Map.of("at",Instant.now().toString(),"actor","settings migration",
+                        "event","LEGACY_SCANNER_SETTINGS_MIGRATED","enabled",automaticSafetyScanningEnabled));
             }
             boolean migrated=migrateVideoArchive()||safetyMigrated;
             if(!pairFramingAfterStandard){
@@ -2219,7 +2209,7 @@ public final class CommandCenterStore {
         Map<String,Object>root=new LinkedHashMap<>();
         root.put("stories",stories);root.put("feeds",feeds);root.put("videos",videos);
         root.put("lastScan",lastScan);root.put("autoQueue",autoQueue);root.put("operations",processedOperations);
-        root.put("contentSafetyScanningEnabled",contentSafetyScanningEnabled);root.put("imageSafetyScanningEnabled",imageSafetyScanningEnabled);root.put("safetySettingAudit",safetySettingAudit);
+        root.put("automaticSafetyScanningEnabled",automaticSafetyScanningEnabled);root.put("contentSafetyScanningEnabled",true);root.put("imageSafetyScanningEnabled",automaticSafetyScanningEnabled);root.put("safetySettingAudit",safetySettingAudit);
         return root;
     }
     private void persistRequired(){
