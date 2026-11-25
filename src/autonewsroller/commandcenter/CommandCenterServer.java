@@ -83,6 +83,7 @@ public final class CommandCenterServer {
         server.createContext("/api/workers/heartbeat",this::heartbeat);
         server.createContext("/api/jobs/claim",this::claim);
         server.createContext("/api/jobs/",this::jobs);
+        server.createContext("/api/review-video",this::reviewVideo);
         server.createContext("/videos/",this::videos);
         server.createContext("/",this::staticFiles);
         server.start();
@@ -617,6 +618,50 @@ public final class CommandCenterServer {
         ContentSafetyService.verify(media,approved,false);
         SafetyScanProgress.finished(SafetyScanProgress.current(),true);
         return approved;
+    }
+
+    /** Private review of a completed, unscanned, controller-audited archive.
+     * Never changes approval state and never shares the publishable route.
+     */
+    private void reviewVideo(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        if(!"/api/review-video".equals(x.getRequestURI().getPath())){
+            json(x,404,Map.of("error","review video not found"));return;
+        }
+        if(token.isBlank()&&!localSafetySettingRequest(x)){
+            json(x,403,Map.of("error","Private review requires local access or controller authentication"));return;
+        }
+        Map<String,Object>record=store.currentReviewRecord(query(x.getRequestURI()).getOrDefault("versionId",""));
+        if(record==null||!"NOT_SCANNED".equals(record.get("safetyStatus"))){
+            json(x,404,Map.of("error","current unscanned archive not found"));return;
+        }
+        Path file;
+        try{
+            String name=String.valueOf(record.getOrDefault("filename",""));
+            if(name.isBlank()||!name.equals(sanitizeFilename(name))||!name.toLowerCase(Locale.ROOT).endsWith(".mp4"))
+                throw new IllegalStateException("Invalid archive filename");
+            Path dir=root.resolve("output/command_center/videos").toAbsolutePath().normalize();
+            file=dir.resolve(name);
+            if(!file.equals(Path.of(String.valueOf(record.get("path"))).toAbsolutePath().normalize())
+                    ||!Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)
+                    ||!dir.equals(dir.toRealPath())||!file.equals(file.toRealPath()))
+                throw new IllegalStateException("Invalid archive path");
+            Map<String,Object>manifest=Json.object(record.get("safetyManifest"));
+            if(!(manifest.get("controllerEncodedAudit") instanceof Map<?,?> encoded)
+                    ||!"approved".equals(encoded.get("status")))
+                throw new IllegalStateException("Missing controller media integrity audit");
+            ContentSafetyService.verifyUnscanned(file,manifest,"CONTROLLER_UNSCANNED_ARCHIVE");
+        }catch(Exception invalid){
+            json(x,409,Map.of("error","Review media missing, changed or not controller-audited"));return;
+        }
+        x.getResponseHeaders().set("Content-Type","video/mp4");
+        x.getResponseHeaders().set("Cache-Control","no-store");
+        x.getResponseHeaders().set("X-Content-Type-Options","nosniff");
+        x.getResponseHeaders().set("Referrer-Policy","no-referrer");
+        x.getResponseHeaders().set("X-AutoNews-Safety-Status","NOT_SCANNED");
+        x.sendResponseHeaders(200,Files.size(file));
+        try(OutputStream out=x.getResponseBody()){Files.copy(file,out);}
     }
 
     private void videos(HttpExchange x)throws IOException{
