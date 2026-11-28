@@ -1,6 +1,7 @@
 package autonewsroller.visuals;
 
 import autonewsroller.orchestration.ProductionMode;
+import autonewsroller.model.VisualPlan;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.*;
@@ -24,6 +25,19 @@ public final class VisualAssetGate {
 
     public static boolean sensitiveTopic(String headline, String summary) {
         return SENSITIVE.matcher(String.valueOf(headline) + " " + String.valueOf(summary)).find();
+    }
+
+    /** Full STANDARD coverage, including tightly constrained non-depictive artwork for sensitive stories. */
+    public static void requireStandardReady(VisualPlan plan,boolean sensitiveTopic,List<Integer> scheduled,
+            List<Integer> required,int accepted,List<Map<String,Object>> sources,List<Path> composed,
+            List<Path> backgrounds,List<Path> overlays,int width,int height){
+        StandardVisualCoverage.verify(plan,scheduled,required,sources);
+        if(scheduled.size()!=StandardVisualCoverage.primaryCount(plan)||scheduled.isEmpty())
+            throw new IllegalStateException("VISUAL_IMAGE_REQUIRED: STANDARD requires all primary narration scenes");
+        if(sensitiveTopic)for(int scene:scheduled)
+            NeutralEditorialArtwork.requireSource(plan.items().get(scene),sources.get(scene));
+        // All legacy asset, geometry, disclosure and provenance checks still apply.
+        requireReady(ProductionMode.STANDARD,false,required,accepted,sources,composed,backgrounds,overlays,width,height,false);
     }
 
     public static void requireReady(ProductionMode mode, boolean sensitiveTopic,

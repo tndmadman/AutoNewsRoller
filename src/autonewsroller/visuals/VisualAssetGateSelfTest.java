@@ -97,7 +97,7 @@ public final class VisualAssetGateSelfTest {
         VisualPlan base=new VisualPlan("coverage-test",items);
         VisualPlan plan=StandardVisualCoverage.annotate(base,prompts,false);
         List<Integer> scheduled=StandardVisualCoverage.schedule(plan,6);
-        if(StandardVisualCoverage.eligible(plan).size()!=8||scheduled.size()!=6||scheduled.get(0)!=0||scheduled.contains(8))
+        if(StandardVisualCoverage.eligible(plan).size()!=8||scheduled.size()!=8||scheduled.get(0)!=0||scheduled.contains(8))
             throw new AssertionError("STANDARD target or source attribution failed");
         if(!StandardVisualCoverage.illustratedInformation(plan.items().get(1)))
             throw new AssertionError("Statistic lost illustrated graphic strategy");
@@ -105,16 +105,58 @@ public final class VisualAssetGateSelfTest {
             throw new AssertionError("Existing evidence-only route changed");
         List<VisualPromptPlan> invalid=new ArrayList<>(prompts);
         invalid.set(1,prompts.get(1).withValidation(0,false,List.of("unsupported")));
-        if(StandardVisualCoverage.eligible(StandardVisualCoverage.annotate(base,invalid,false)).contains(1))
-            throw new AssertionError("Unvalidated visual became eligible");
+        VisualPlan fallback=StandardVisualCoverage.annotate(base,invalid,false);
+        if(!StandardVisualCoverage.eligible(fallback).contains(1)
+                ||!Boolean.TRUE.equals(fallback.items().get(1).data().get("standardNeutralArtwork")))
+            throw new AssertionError("Invalid prompt must use neutral artwork, not raw prompt");
+        VisualPlan sensitive=StandardVisualCoverage.annotate(base,prompts,false,true);
+        if(StandardVisualCoverage.schedule(sensitive,1).size()!=8)
+            throw new AssertionError("Sensitive STANDARD lost required neutral images");
+        for(int scene:StandardVisualCoverage.eligible(sensitive)){
+            VisualPlan.Item item=sensitive.items().get(scene);
+            if(!Boolean.TRUE.equals(item.data().get("standardNeutralArtwork")))
+                throw new AssertionError("Sensitive scene has non-neutral art");
+            for(int attempt=0;attempt<=4;attempt++){
+                String positive=ComfyPromptProfiles.positive(item,false,attempt);
+                if(positive.contains("semiconductor")||positive.contains(item.body()))
+                    throw new AssertionError("Restricted conditioning contains report text");
+                NeutralEditorialArtwork.requireSource(item,Map.of("visualStrategy","NEUTRAL_EDITORIAL_BACKGROUND",
+                        "attempt",attempt+1,"prompt",positive));
+            }
+            rejected(()->NeutralEditorialArtwork.requireSource(item,Map.of("visualStrategy","NEUTRAL_EDITORIAL_BACKGROUND",
+                    "attempt",1,"prompt","Unapproved event depiction")));
+        }
+        rejected(()->StandardVisualCoverage.verify(sensitive,scheduled,scheduled,
+                Collections.nCopies(9,Map.of("type","procedural-card"))));
         List<Map<String,Object>> sources=new ArrayList<>();
         for(int i=0;i<items.size();i++)sources.add(scheduled.contains(i)
                 ?Map.of("type","comfyui-generated-ai-illustration","generatedPath","synthetic-"+i)
                 :Map.of("type","procedural-card"));
         var report=StandardVisualCoverage.report(plan,scheduled,6,sources,
                 Map.of("sceneFrames",Collections.nCopies(9,100),"videoFramesAfterRepair",900));
-        if(!Objects.equals(report.get("renderTimelineGeneratedFrames"),600L))throw new AssertionError("Frame coverage incorrect");
+        if(!Objects.equals(report.get("renderTimelineGeneratedFrames"),800L))throw new AssertionError("Frame coverage incorrect");
         rejected(()->StandardVisualCoverage.verify(plan,scheduled,List.of(),sources));
+        // Real synthetic PNG fixtures exercise the new sensitive gate, not only the schedule.
+        List<Path> composed=new ArrayList<>(),backgrounds=new ArrayList<>(),overlays=new ArrayList<>();
+        List<Map<String,Object>> neutralSources=new ArrayList<>();
+        for(int i=0;i<9;i++){
+            Path c=image(dir.resolve("neutral-composed-"+i+".png"),w,h,Color.GREEN);
+            Path b=image(dir.resolve("neutral-bg-"+i+".png"),w,h,Color.GREEN);
+            Path o=image(dir.resolve("neutral-overlay-"+i+".png"),w,h,Color.RED);
+            Path g=image(dir.resolve("neutral-original-"+i+".png"),w,h,Color.BLUE);
+            composed.add(c);backgrounds.add(b);overlays.add(o);
+            if(i==8)neutralSources.add(Map.of("type","procedural-card","path",c.toString()));
+            else neutralSources.add(Map.of("type","comfyui-generated-ai-illustration","path",c.toString(),
+                    "backgroundPath",b.toString(),"overlayPath",o.toString(),"generatedPath",g.toString(),
+                    "aiIllustrationDisclosure",true,"visualStrategy","NEUTRAL_EDITORIAL_BACKGROUND",
+                    "attempt",1,"prompt",NeutralEditorialArtwork.positive(i,0)));
+        }
+        VisualAssetGate.requireStandardReady(sensitive,true,scheduled,scheduled,8,neutralSources,
+                composed,backgrounds,overlays,w,h);
+        Map<String,Object> forged=new LinkedHashMap<>(neutralSources.get(0));forged.put("prompt","Unapproved event depiction");
+        List<Map<String,Object>> altered=new ArrayList<>(neutralSources);altered.set(0,forged);
+        rejected(()->VisualAssetGate.requireStandardReady(sensitive,true,scheduled,scheduled,8,altered,
+                composed,backgrounds,overlays,w,h));
         Path ov=dir.resolve("illustrated-overlay.png"),preview=dir.resolve("illustrated-preview.png");
         CardRenderer renderer=new CardRenderer();
         renderer.renderOverlay(plan.items().get(1),ov,w,h);

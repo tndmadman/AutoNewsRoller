@@ -16,6 +16,8 @@ public final class ComfyPromptProfiles {
 
     public static String positive(VisualPlan.Item item,boolean meme,int attempt){
         if(attempt<0)throw new IllegalArgumentException("Negative image attempt");
+        if(!meme&&Boolean.TRUE.equals(item.data().get("standardNeutralArtwork")))
+            return NeutralEditorialArtwork.positive(item.index(),attempt);
         String base=item.prompt()==null||item.prompt().isBlank()
                 ?item.title()+". "+item.body():item.prompt();
         String suffix;
@@ -60,6 +62,7 @@ public final class ComfyPromptProfiles {
                          "blue wash","cyan cast","teal cast","electric blue lighting",
                          "cinematic teal-orange grade","neon lighting","sci-fi colors","glowing edges"));
         if(!meme){
+            if(Boolean.TRUE.equals(item.data().get("standardNeutralArtwork")))terms.addAll(NeutralEditorialArtwork.exclusions());
             Object raw=item.data().get("mustNotShow");
             if(raw instanceof Collection<?>xs)for(Object x:xs){
                 String term=Text.clean(String.valueOf(x));

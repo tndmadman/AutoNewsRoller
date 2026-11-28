@@ -18,11 +18,13 @@ public final class ProductionSensitiveVisualRouteSelfTest {
             FactPackage violent=facts("Police investigate fatal shooting");
             FactPackage benign=facts("Public library opens new study room");
             for(FactPackage f:List.of(political,violent)){
-                if(!ProductionPreflight.requiresEvidenceGraphics(f,ProductionMode.STANDARD))
-                    throw new AssertionError("risk did not select evidence cards");
+                if(ProductionPreflight.requiresEvidenceGraphics(f,ProductionMode.STANDARD))
+                    throw new AssertionError("STANDARD should use neutral editorial artwork");
+                if(!ProductionPreflight.requiresEvidenceGraphics(f,ProductionMode.MEME_RAGEBAIT))
+                    throw new AssertionError("Sensitive MEME evidence route changed");
                 if(!ProductionPreflight.checkPolicy(f,ProductionMode.STANDARD).eligible())
                     throw new AssertionError("safe evidence route was rejected");
-                if(!"EVIDENCE_GRAPHICS_REQUIRED".equals(
+                if(!"CONTEXT_ILLUSTRATIONS_REQUIRED".equals(
                         ProductionPreflight.checkPolicy(f,ProductionMode.STANDARD).code()))
                     throw new AssertionError("missing explicit safety route");
             }

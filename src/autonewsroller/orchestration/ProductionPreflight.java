@@ -82,14 +82,12 @@ public final class ProductionPreflight {
         return allow();
     }
 
-    /**
-     * Safety-sensitive sources are not rejected merely because normal videos
-     * request AI illustrations. They must instead use the already supported
-     * source-grounded, non-generative evidence-card renderer and still undergo
-     * mandatory full-video scans and independent controller approval.
+    /** Sensitive MEME stories retain their existing procedural-only route.
+     * STANDARD uses neutral, non-event AI backgrounds with existing factual overlays.
+     * Neither route changes scanning or publication approval.
      */
     public static boolean requiresEvidenceGraphics(FactPackage fp,ProductionMode mode){
-        return fp!=null&&mode!=null&&mode!=ProductionMode.FRAMING_EXPOSURE
+        return fp!=null&&mode==ProductionMode.MEME_RAGEBAIT
                 &&ContentSafetyPolicy.sensitive(fp.headline()+" "+fp.summary());
     }
 
@@ -100,6 +98,10 @@ public final class ProductionPreflight {
             return new Result(true,"EVIDENCE_GRAPHICS_REQUIRED",
                     "Safety-sensitive reporting must use factual evidence graphics; no AI event depictions",
                     false,"Use validated source graphics and retain both mandatory scanners.",Instant.now());
+        if(mode==ProductionMode.STANDARD&&ContentSafetyPolicy.sensitive(fp.headline()+" "+fp.summary()))
+            return new Result(true,"CONTEXT_ILLUSTRATIONS_REQUIRED",
+                    "Sensitive reporting uses neutral illustrated backgrounds; no AI event depictions",
+                    false,"Retain factual overlays and existing safety checks.",Instant.now());
         return allow();
     }
 }
