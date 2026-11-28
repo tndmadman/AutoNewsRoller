@@ -161,9 +161,9 @@ public final class VisualAssetGateSelfTest {
         CardRenderer renderer=new CardRenderer();
         renderer.renderOverlay(plan.items().get(1),ov,w,h);
         renderer.renderWithImage(plan.items().get(1),raw,preview,w,h);
-        BufferedImage overlay=ImageIO.read(ov.toFile()),composed=ImageIO.read(preview.toFile());
+        BufferedImage overlay=ImageIO.read(ov.toFile()),composedPreview=ImageIO.read(preview.toFile());
         int alpha=overlay.getRGB(w/2,(int)(h*.23))>>>24;
-        if(alpha>=255||composed.getWidth()!=w||composed.getHeight()!=h)
+        if(alpha>=255||composedPreview.getWidth()!=w||composedPreview.getHeight()!=h)
             throw new AssertionError("Illustration obscured by opaque graphic");
     }
     private static Path image(Path file,int w,int h,Color color)throws Exception{
