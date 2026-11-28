@@ -1,6 +1,7 @@
 package autonewsroller.visuals;
 
 import autonewsroller.model.VisualPlan;
+import autonewsroller.model.FactPackage;
 import autonewsroller.model.VisualPromptPlan;
 import autonewsroller.safety.ContentSafetyPolicy;
 import java.util.*;
@@ -18,6 +19,11 @@ public final class StandardVisualCoverage {
         return annotate(plan,prompts,evidenceOnly,false);
     }
     public static VisualPlan annotate(VisualPlan plan,List<VisualPromptPlan> prompts,boolean evidenceOnly,boolean sensitiveStory){
+        return annotate(plan,prompts,evidenceOnly,sensitiveStory,null);
+    }
+    public static VisualPlan annotate(VisualPlan plan,List<VisualPromptPlan> prompts,boolean evidenceOnly,boolean sensitiveStory,FactPackage facts){
+        String verified=facts==null?"":facts.headline()+" "+facts.summary()+" "+
+                facts.facts().stream().map(f->f.statement()).reduce("",(a,b)->a+" "+b);
         Map<Integer,VisualPromptPlan> bySegment=new HashMap<>();
         for(VisualPromptPlan prompt:prompts)bySegment.put(prompt.segmentIndex(),prompt);
         List<VisualPlan.Item> items=new ArrayList<>();
@@ -32,7 +38,7 @@ public final class StandardVisualCoverage {
             }else if(!primary(item))reason="Supplemental or reserved evidence graphic";
             else if(evidenceOnly)reason="Existing story-level evidence-only policy";
             else if(sensitiveStory||ContentSafetyPolicy.sensitive(item.body()+" "+item.prompt()))
-                reason="Sensitive reporting: non-depictive editorial artwork only";
+                reason="Sensitive reporting: generic contextual illustration, never event depiction";
             else if(grounded==null||!grounded.valid()||grounded.factIds().isEmpty()||grounded.prompt().isBlank())
                 reason="No validated source-grounded visual prompt";
             else{
@@ -51,11 +57,13 @@ public final class StandardVisualCoverage {
                 strategy=INFORMATION.contains(item.type())?"ILLUSTRATED_INFORMATION_GRAPHIC":"CONTEXTUAL_ILLUSTRATION";
                 data.put("standardNeutralArtwork",true);
                 data.put("visualStrategy","NEUTRAL_EDITORIAL_BACKGROUND");
-                // No event names, article wording, people, or unverified objects enter diffusion conditioning.
-                scenePrompt=NeutralEditorialArtwork.base(item.index());
+                // Source wording selects a safe subject category but is never interpolated into the prompt.
+                String category=NeutralEditorialArtwork.category(item.body(),verified);
+                data.put("standardArtworkCategory",category);
+                scenePrompt=NeutralEditorialArtwork.base(category,item.index());
                 data.put("anchorEntities",List.of());
                 data.put("mustNotShow",NeutralEditorialArtwork.exclusions());
-                data.put("neutralArtworkGrounding","generic non-depictive design; factual content remains in Java overlays");
+                data.put("neutralArtworkGrounding","generic contextual illustration, not event evidence; factual content remains in Java overlays");
             }
             data.put("standardVisualStrategy",strategy);
             data.put("standardVisualReason",reason);
@@ -128,7 +136,7 @@ public final class StandardVisualCoverage {
         result.put("renderTimelineGeneratedFrames",generated);result.put("renderTimelineTotalFrames",total);
         result.put("renderTimelineGeneratedRuntimePercent",100.0*generated/total);
         result.put("proceduralScenes",sources.size()-scheduled.size());
-        result.put("neutralArtworkScenes",plan.items().stream().filter(i->Boolean.TRUE.equals(i.data().get("standardNeutralArtwork"))).count());
+        result.put("contextualFallbackScenes",plan.items().stream().filter(i->Boolean.TRUE.equals(i.data().get("standardNeutralArtwork"))).count());
         result.put("sceneDecisions",plan.items().stream().map(i->Map.of("scene",i.index(),
                 "strategy",String.valueOf(i.data().get("standardVisualStrategy")),
                 "reason",String.valueOf(i.data().get("standardVisualReason")),

@@ -166,7 +166,7 @@ public final class NewsPipeline {
         String settingsFingerprint=Hashing.sha256(
                 Json.stringify(cand.toMap())+"|"+mode+"|"+targetSeconds+"|"+encoder+
                 "|"+useComfy+"|"+requireComfy+"|"+maxComfyImages+"|"+dryRun+
-                (mode==ProductionMode.STANDARD?"|STANDARD_VISUAL_COVERAGE_V2":"")+
+                (mode==ProductionMode.STANDARD?"|STANDARD_VISUAL_COVERAGE_V3":"")+
                 (localDraft?"|LOCAL_DRAFT_V1":"")+(imageSafetyScanningEnabled?"":"|IMAGE_SCANS_DEFERRED_V1")+(automaticSafetyScanningEnabled?"":"|UNSCANNED_ARCHIVE_V2")+
                 "|"+Json.stringify(rawAnalysis)+"|"+
                 Json.stringify(suppliedPolitical==null?Map.of():suppliedPolitical.toMap())+
@@ -244,7 +244,7 @@ public final class NewsPipeline {
             events.emit(worker,slot,PipelineStage.VERIFY,
                     "SAFETY ROUTE: evidence graphics; no synthesized people or events");
         if(standardSensitive&&!localDraft)events.emit(worker,slot,PipelineStage.VERIFY,
-                "STANDARD CONTEXT ROUTE: neutral generated backgrounds; no synthesized event depictions");
+                "STANDARD CONTEXT ROUTE: ComfyUI contextual illustrations; no synthesized event depictions");
         logs.worker(worker,"slot="+slot+" story="+c.topic+" started facts="+fp.facts().size()+" enrichedBodies="+c.articles.stream().filter(a->a.bodyText()!=null&&!a.bodyText().isBlank()).count());
         events.emit(worker,slot,PipelineStage.VERIFY,fp.independentSourceCount()+" independent sources; "+fp.facts().size()+" narration facts");
 
@@ -346,7 +346,7 @@ public final class NewsPipeline {
                 :mode==ProductionMode.MEME_RAGEBAIT?new MemeVisualPlanner().plan(script)
                 :new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
             if(mode==ProductionMode.STANDARD)
-                plan=StandardVisualCoverage.annotate(plan,visualPrompts.scenes(),evidenceGraphicsOnly,standardSensitive);
+                plan=StandardVisualCoverage.annotate(plan,visualPrompts.scenes(),evidenceGraphicsOnly,standardSensitive,fp);
             Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
             SpeechTiming.Alignment dryTiming=SpeechTiming.align(script.narration(),script.segments(),null,Math.max(1,script.estimatedDuration()));
@@ -473,7 +473,7 @@ public final class NewsPipeline {
                 :mode==ProductionMode.MEME_RAGEBAIT?new MemeVisualPlanner().plan(script)
                 :new VisualPlanner().plan(script,fp,visualPrompts.scenes(),political,cfg.getDouble("politicalGraphicsMinimumRelevance",0.60),cfg.getBool("politicalGraphicsShowOnUncertain",true),cfg.getDouble("politicalGraphicsSceneSeconds",5.0),cfg.getBool("politicalGraphicsShowConfidence",true),cfg.getBool("politicalGraphicsShowSourceMix",true));
         if(mode==ProductionMode.STANDARD)
-            plan=StandardVisualCoverage.annotate(plan,visualPrompts.scenes(),evidenceGraphicsOnly,standardSensitive);
+            plan=StandardVisualCoverage.annotate(plan,visualPrompts.scenes(),evidenceGraphicsOnly,standardSensitive,fp);
         Json.write(slotDir.resolve("visual_plan.json"),plan.toMap());
 
         SpeechTiming.Alignment alignment=SpeechTiming.align(script.narration(),script.segments(),

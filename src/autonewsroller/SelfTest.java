@@ -3132,9 +3132,11 @@ public final class SelfTest {
         FactPackage ordinary=new FactPackage("story-2","City opens a new public library",
                 "New local library services are available.",List.of(),List.of(),List.of(),1,1,.8,false);
         ok(ProductionPreflight.checkPolicy(sensitive,ProductionMode.STANDARD).eligible()
-                &&ProductionPreflight.requiresEvidenceGraphics(sensitive,ProductionMode.STANDARD)
+                &&!ProductionPreflight.requiresEvidenceGraphics(sensitive,ProductionMode.STANDARD)
+                &&"CONTEXT_ILLUSTRATIONS_REQUIRED".equals(ProductionPreflight.checkPolicy(sensitive,ProductionMode.STANDARD).code())
+                &&ProductionPreflight.requiresEvidenceGraphics(sensitive,ProductionMode.MEME_RAGEBAIT)
                 &&ProductionPreflight.checkPolicy(sensitive,ProductionMode.FRAMING_EXPOSURE).eligible(),
-                "sensitive stories select evidence-only graphics instead of failing or generating event imagery");
+                "sensitive STANDARD uses contextual illustrations; MEME retains evidence-only routing");
         ok(ProductionPreflight.checkPolicy(ordinary,ProductionMode.STANDARD).eligible(),
                 "ordinary news is not rejected by policy preflight");
         ok(!FailurePolicy.classify("VISUALS","VISUAL_IMAGE_REQUIRED: 5/6 illustrations").automaticRetry(),

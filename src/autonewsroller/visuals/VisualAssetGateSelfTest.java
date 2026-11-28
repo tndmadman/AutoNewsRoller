@@ -2,6 +2,7 @@ package autonewsroller.visuals;
 
 import autonewsroller.orchestration.ProductionMode;
 import autonewsroller.model.VisualPlan;
+import autonewsroller.model.FactPackage;
 import autonewsroller.model.VisualPromptPlan;
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -109,7 +110,9 @@ public final class VisualAssetGateSelfTest {
         if(!StandardVisualCoverage.eligible(fallback).contains(1)
                 ||!Boolean.TRUE.equals(fallback.items().get(1).data().get("standardNeutralArtwork")))
             throw new AssertionError("Invalid prompt must use neutral artwork, not raw prompt");
-        VisualPlan sensitive=StandardVisualCoverage.annotate(base,prompts,false,true);
+        FactPackage technology=new FactPackage("coverage-test","Semiconductor equipment demand",
+                "Manufacturing equipment and computer chips",List.of(),List.of(),List.of(),1,1,.9,false);
+        VisualPlan sensitive=StandardVisualCoverage.annotate(base,prompts,false,true,technology);
         if(StandardVisualCoverage.schedule(sensitive,1).size()!=8)
             throw new AssertionError("Sensitive STANDARD lost required neutral images");
         for(int scene:StandardVisualCoverage.eligible(sensitive)){
@@ -118,8 +121,11 @@ public final class VisualAssetGateSelfTest {
                 throw new AssertionError("Sensitive scene has non-neutral art");
             for(int attempt=0;attempt<=4;attempt++){
                 String positive=ComfyPromptProfiles.positive(item,false,attempt);
-                if(positive.contains("semiconductor")||positive.contains(item.body()))
-                    throw new AssertionError("Restricted conditioning contains report text");
+                if(!"technology".equals(NeutralEditorialArtwork.category(item))
+                        ||positive.contains(item.body())||positive.contains("abstract"))
+                    throw new AssertionError("Contextual artwork must use concrete safe subjects, not raw reporting");
+                if(!positive.equals(NeutralEditorialArtwork.positive("technology",scene,attempt)))
+                    throw new AssertionError("Unexpected contextual prompt");
                 NeutralEditorialArtwork.requireSource(item,Map.of("visualStrategy","NEUTRAL_EDITORIAL_BACKGROUND",
                         "attempt",attempt+1,"prompt",positive));
             }
@@ -128,6 +134,9 @@ public final class VisualAssetGateSelfTest {
         }
         rejected(()->StandardVisualCoverage.verify(sensitive,scheduled,scheduled,
                 Collections.nCopies(9,Map.of("type","procedural-card"))));
+        if(!"reporting".equals(NeutralEditorialArtwork.category("unverified computer claim","unrelated verified facts"))
+                ||NeutralEditorialArtwork.positive(0,0).contains("abstract"))
+            throw new AssertionError("Unsupported topics must use a concrete generic reporting subject");
         List<Map<String,Object>> sources=new ArrayList<>();
         for(int i=0;i<items.size();i++)sources.add(scheduled.contains(i)
                 ?Map.of("type","comfyui-generated-ai-illustration","generatedPath","synthetic-"+i)
@@ -149,7 +158,7 @@ public final class VisualAssetGateSelfTest {
             else neutralSources.add(Map.of("type","comfyui-generated-ai-illustration","path",c.toString(),
                     "backgroundPath",b.toString(),"overlayPath",o.toString(),"generatedPath",g.toString(),
                     "aiIllustrationDisclosure",true,"visualStrategy","NEUTRAL_EDITORIAL_BACKGROUND",
-                    "attempt",1,"prompt",NeutralEditorialArtwork.positive(i,0)));
+                    "attempt",1,"prompt",NeutralEditorialArtwork.positive("technology",i,0)));
         }
         VisualAssetGate.requireStandardReady(sensitive,true,scheduled,scheduled,8,neutralSources,
                 composed,backgrounds,overlays,w,h);
