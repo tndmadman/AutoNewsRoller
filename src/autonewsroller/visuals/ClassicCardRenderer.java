@@ -36,6 +36,7 @@ public final class ClassicCardRenderer extends CardRenderer {
     }
 
     public Path renderWithImage(VisualPlan.Item item,Path imagePath,Path out,int w,int h)throws Exception{
+        if(StandardVisualCoverage.illustratedInformation(item))return super.renderWithImage(item,imagePath,out,w,h);
         Files.createDirectories(out.getParent());
         BufferedImage source=ImageIO.read(imagePath.toFile());
         if(source==null)throw new IllegalArgumentException("Unsupported image: "+imagePath);
@@ -51,6 +52,7 @@ public final class ClassicCardRenderer extends CardRenderer {
     }
 
     public Path renderOverlay(VisualPlan.Item item,Path out,int w,int h)throws Exception{
+        if(StandardVisualCoverage.illustratedInformation(item))return super.renderOverlay(item,out,w,h);
         Files.createDirectories(out.getParent());
         BufferedImage canvas=new BufferedImage(w,h,BufferedImage.TYPE_INT_ARGB);
         Graphics2D g=prepareTransparent(canvas);

@@ -7,6 +7,8 @@ import autonewsroller.model.Article;
 import autonewsroller.model.StoryCluster;
 import autonewsroller.model.PoliticalVisualData;
 import autonewsroller.orchestration.NewsPipeline;
+import autonewsroller.orchestration.FailurePolicy;
+import autonewsroller.safety.ContentSafetyService;
 import autonewsroller.orchestration.ProductionMode;
 import autonewsroller.orchestration.WorkerState;
 import autonewsroller.util.Json;
@@ -21,6 +23,9 @@ public final class CommandCenterStore {
     private final Path statePath;
     private final BiasRegistry bias;
     private boolean autoQueue;
+    // One mutable automatic detector setting. Legacy claim routing is immutable.
+    private boolean automaticSafetyScanningEnabled=true;
+    private final List<Map<String,Object>> safetySettingAudit=new ArrayList<>();
     private final double autoThreshold;
     private final int maxQueued;
     private final int leaseSeconds;
@@ -271,9 +276,31 @@ public final class CommandCenterStore {
             remember(operationId,identity);persistRequired();Map<String,Object>pub=publicStory(m);
             emit("story",pub);return pub;
         }
-        if("PRODUCING".equals(status))
+        if("PRODUCING".equals(status)&&!("CANCEL".equals(a)||"CANCELLED".equals(a)))
             throw new IllegalStateException("Job is being produced. Wait for completion before changing its decision.");
         switch(a){
+            case "CANCEL","CANCELLED"->{
+                if(!("QUEUED".equals(status)||"PRODUCING".equals(status)))
+                    throw new IllegalStateException("Only queued or producing work can be cancelled.");
+                // Fencing must precede acknowledgement. The old worker no
+                // longer owns this job even if its last heartbeat was recent.
+                m.put("status","CANCELLED");m.put("stage","CANCELLED");
+                m.put("decision","CANCEL");m.put("progress",0);
+                m.put("detail","Job cancelled by operator; former worker claim revoked");
+                m.put("cancelledAt",Instant.now().toString());
+                m.put("manualWorth",false);m.put("worthy",false);
+                m.remove("assignedWorker");m.remove("claimId");clearLease(m);
+                // Deliberately queued work always starts a new epoch; do not
+                // recycle the cancelled checkpoint or delete historical video.
+                m.remove("productionEpoch");
+                m.remove("pendingMemeRequest");m.remove("pendingMemeKind");m.remove("pendingMemeAt");
+                if("STANDARD_PRODUCING".equals(m.get("pairedVideoState"))
+                        ||"STANDARD_QUEUED".equals(m.get("pairedVideoState")))
+                    m.put("pairedVideoState","STANDARD_CANCELLED");
+                if("FRAMING_PRODUCING".equals(m.get("pairedVideoState"))
+                        ||"FRAMING_QUEUED".equals(m.get("pairedVideoState")))
+                    m.put("pairedVideoState","FRAMING_CANCELLED");
+            }
             case "MAKE","QUEUE"->{
                 boolean verified=Boolean.TRUE.equals(m.get("verified"));
                 m.put("manualWorth",true);m.put("worthy",true);m.put("decision","MAKE");m.put("status","QUEUED");m.put("productionMode","STANDARD");m.put("queuedAt",Instant.now().toString());m.put("stage","QUEUED");m.put("progress",15);m.remove("error");clearLease(m);resetFailureRetryState(m);markStandardPairQueued(m);
@@ -322,7 +349,9 @@ public final class CommandCenterStore {
                     throw new IllegalStateException("Existing version missing; cannot archive.");
                 m.put("manualWorth",true);m.put("worthy",true);m.put("decision",a);
                 m.put("manualFramingRequested",true);m.put("politicalCandidate",true);
-                if("FRAMING_FAILED".equals(m.get("pairedVideoState")))
+                // A manual review is independent of any historical automatic pair.
+                if(!pairFramingAfterStandard)m.remove("pairedVideoState");
+                else if("FRAMING_FAILED".equals(m.get("pairedVideoState")))
                     m.put("pairedVideoState","FRAMING_QUEUED");
                 m.put("productionMode",ProductionMode.FRAMING_EXPOSURE.name());
                 m.put("status","QUEUED");m.put("queuedAt",Instant.now().toString());m.put("progress",15);
@@ -438,14 +467,18 @@ public final class CommandCenterStore {
             if("FRAMING_QUEUED".equals(m.get("pairedVideoState"))
                     &&ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE)
                 m.put("pairedVideoState","FRAMING_PRODUCING");
+            m.putIfAbsent("productionEpoch",UUID.randomUUID().toString());
             m.put("claimId",UUID.randomUUID().toString());m.put("status","PRODUCING");m.put("assignedWorker",workerId);m.put("jobStartedAt",claimedAt.toString());m.put("stage","VERIFY");m.put("progress",18);m.put("detail","Claimed by "+workerId);m.remove("error");m.remove("retryNotBefore");
+            m.put("claimContentSafetyScanningEnabled",true); // compatibility: normal production route
+            m.put("claimImageSafetyScanningEnabled",automaticSafetyScanningEnabled);
+            m.put("claimAutomaticSafetyScanningEnabled",automaticSafetyScanningEnabled);
             int claimCount=integer(m.get("claimCount"))+1;m.put("claimCount",claimCount);m.remove("failureType");
-            appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY"));
+            appendProductionAttempt(m,claimedAt,Map.of("event","CLAIMED","attempt",claimCount,"worker",workerId,"stage","VERIFY","automaticSafetyScanningEnabled",automaticSafetyScanningEnabled));
             renewLease(m);
-            persistQuiet();emit("story",publicStory(m));
+            persistRequired();emit("story",publicStory(m));
             Map<String,Object>job=new LinkedHashMap<>();
-            job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("settings",new LinkedHashMap<>(settings));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
-            job.put("claimId",m.get("claimId"));job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
+            job.put("jobType","VIDEO");job.put("productionMode",ProductionMode.fromPersisted(m.get("productionMode")).name());job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));Map<String,Object>claimSettings=new LinkedHashMap<>(settings);claimSettings.put("contentSafetyScanningEnabled",true);claimSettings.put("imageSafetyScanningEnabled",automaticSafetyScanningEnabled);claimSettings.put("automaticSafetyScanningEnabled",automaticSafetyScanningEnabled);job.put("settings",claimSettings);job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
+            job.put("claimId",m.get("claimId"));job.put("productionEpoch",m.get("productionEpoch"));job.put("attemptNumber",claimCount);job.put("manualVerificationOverride",Boolean.TRUE.equals(m.get("manualVerificationOverride")));job.put("softVerificationOverride",Boolean.TRUE.equals(m.get("softVerificationOverride")));job.put("worthy",Boolean.TRUE.equals(m.get("worthy")));
             Map<String,Object>sourceMix=m.get("sourceMix") instanceof Map<?,?>?Json.object(m.get("sourceMix")):Map.of();
             Map<String,Object>framing=m.get("framingAnalysis") instanceof Map<?,?>?Json.object(m.get("framingAnalysis")):Map.of();
             PoliticalVisualData political=PoliticalVisualData.from(
@@ -480,7 +513,7 @@ public final class CommandCenterStore {
         m.put("biasClaimInputHash",m.getOrDefault("biasAnalysisInputHash",""));
         m.put("biasAnalysisStartedAt",Instant.now().toString());
         m.put("biasAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());m.remove("biasAnalysisError");
-        persistQuiet();emit("story",publicStory(m));
+        persistRequired();emit("story",publicStory(m));
         Map<String,Object>job=new LinkedHashMap<>();
         job.put("jobType","POLITICAL_ANALYSIS");job.put("jobId",m.get("id"));job.put("candidate",m.get("candidate"));job.put("topic",m.get("topic"));job.put("leaseSeconds",leaseSeconds);
         job.put("analysisInputFingerprint",m.get("biasClaimInputHash"));
@@ -508,7 +541,7 @@ public final class CommandCenterStore {
         if(!currentJob.isBlank()){
             Map<String,Object>story=stories.get(currentJob);
             if(story!=null&&"PRODUCING".equals(String.valueOf(story.get("status")))&&workerId.equals(String.valueOf(story.get("assignedWorker")))
-                    &&claimMatches(story,String.valueOf(payload.getOrDefault("claimId","")))){
+                    &&activeLease(story,workerId,String.valueOf(payload.getOrDefault("claimId","")))){
                 renewLease(story);
             }else if(story!=null&&"ANALYZING".equals(String.valueOf(story.get("memeAnalysisStatus")))
                     &&workerId.equals(String.valueOf(story.get("memeAssignedWorker")))
@@ -518,7 +551,7 @@ public final class CommandCenterStore {
                 story.put("biasAnalysisLeaseUntil",Instant.now().plusSeconds(leaseSeconds).toString());
             }
         }
-        if(System.currentTimeMillis()-lastHeartbeatSave>=5000){persistQuiet();lastHeartbeatSave=System.currentTimeMillis();}
+        if(System.currentTimeMillis()-lastHeartbeatSave>=5000){persistRequired();lastHeartbeatSave=System.currentTimeMillis();}
         emit("worker",publicCopy(m));
     }
 
@@ -750,7 +783,7 @@ public final class CommandCenterStore {
         m.put("memeAnalysisStartedAt",now.toString());
         m.put("memeAnalysisLeaseUntil",now.plusSeconds(leaseSeconds).toString());
         m.remove("memeRetryNotBefore");m.remove("memeAnalysisError");
-        persistQuiet();emit("story",publicStory(m));
+        persistRequired();emit("story",publicStory(m));
         Map<String,Object>job=new LinkedHashMap<>();
         job.put("jobType","MEME_ANALYSIS");job.put("jobId",m.get("id"));
         job.put("candidate",m.get("candidate"));job.put("topic",m.get("topic"));
@@ -815,7 +848,7 @@ public final class CommandCenterStore {
         m.put("memeAnalysisStatus",retry?"QUEUED":"FAILED");
         if(retry)m.put("memeRetryNotBefore",Instant.now()
                 .plusSeconds(20L*integer(m.get("memeAnalysisAttempts"))).toString());
-        clearMemeClaim(m);persistQuiet();emit("story",publicStory(m));
+        clearMemeClaim(m);persistRequired();emit("story",publicStory(m));
     }
     private int recoverExpiredMemeLeases(boolean announce){
         int count=0;
@@ -837,7 +870,231 @@ public final class CommandCenterStore {
 
     public synchronized void maintenance(){
         int recovered=recoverExpiredLeases(true)+recoverExpiredBiasLeases(true)+recoverExpiredMemeLeases(true);
-        if(recovered>0)persistQuiet();
+        if(recovered>0)persistRequired();
+    }
+
+
+    /**
+     * Strict network fencing. Legacy local overloads remain for existing in-process
+     * fixtures, but every HTTP callback must use this exact worker and claim.
+     */
+    public synchronized void requireActiveClaim(String jobId,String workerId,String claimId){
+        Map<String,Object>m=requireStory(jobId);
+        if(!activeLease(m,workerId,claimId))
+            throw new IllegalStateException("WORKER_LEASE_EXPIRED: inactive, expired or superseded claim");
+    }
+    private static boolean activeLease(Map<String,Object>m,String workerId,String claimId){
+        if(workerId==null||workerId.isBlank()||claimId==null||claimId.isBlank()
+                ||!"PRODUCING".equals(m.get("status"))
+                ||!workerId.equals(m.get("assignedWorker"))||!claimId.equals(m.get("claimId")))
+            return false;
+        try{return Instant.parse(String.valueOf(m.get("leaseUntil"))).isAfter(Instant.now());}
+        catch(Exception invalid){return false;}
+    }
+    private static boolean completedIdentity(Map<String,Object>m,String workerId,String claimId,
+            String epoch,String sha){
+        return workerId!=null&&!workerId.isBlank()&&claimId!=null&&!claimId.isBlank()
+                &&epoch!=null&&!epoch.isBlank()&&sha!=null&&!sha.isBlank()
+                &&workerId.equals(m.get("lastCompletedWorkerId"))
+                &&claimId.equals(m.get("lastCompletedClaimId"))
+                &&epoch.equals(m.get("lastCompletedEpoch"))
+                &&epoch.equals(m.get("productionEpoch"))
+                &&sha.equals(m.get("lastCompletedSha256"))
+                &&("COMPLETE".equals(m.get("status"))
+                    ||("QUEUED".equals(m.get("status"))
+                        &&"FRAMING_QUEUED".equals(m.get("pairedVideoState"))));
+    }
+    private static boolean validHash(String sha){return sha!=null&&sha.matches("[0-9a-f]{64}");}
+    public synchronized Map<String,Object> authorizeVideoTransfer(String jobId,String workerId,
+            String claimId,String epoch,String sha){
+        if(!validHash(sha))throw new IllegalArgumentException("Invalid approved media SHA-256");
+        Map<String,Object>m=requireStory(jobId);
+        if(completedIdentity(m,workerId,claimId,epoch,sha)){
+            String versionId=String.valueOf(m.getOrDefault("lastCompletedVersionId",""));
+            Map<String,Object>v=videos.get(versionId);
+            if(v==null)throw new IllegalStateException("Completed upload archive is missing");
+            if(stateDirty)persistRequired();
+            try{
+                Path existing=Path.of(String.valueOf(v.get("path")));
+                if(!Files.isRegularFile(existing)||!sha.equals(ContentSafetyService.hash(existing)))
+                    throw new IllegalStateException("Previously approved media is missing or has changed");
+            }catch(Exception invalid){throw new IllegalStateException("Approved upload cannot be replayed",invalid);}
+            return Map.of("completed",true,"filename",String.valueOf(v.getOrDefault("filename","")),
+                    "bytes",integer(v.get("bytes")));
+        }
+        requireActiveClaim(jobId,workerId,claimId);
+        if(Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled")))throw new IllegalStateException("CONTENT_SAFETY: local draft cannot be uploaded");
+        if(!epoch.equals(String.valueOf(m.getOrDefault("productionEpoch",""))))
+            throw new IllegalStateException("WORKER_LEASE_EXPIRED: production epoch mismatch");
+        if(claimId.equals(m.get("uploadedClaimId"))
+                &&epoch.equals(m.get("uploadedEpoch"))
+                &&m.get("uploadedSha256")!=null&&!sha.equals(m.get("uploadedSha256")))
+            throw new IllegalStateException("An active claim cannot change its uploaded media identity");
+        return Map.of("completed",false);
+    }
+    /** Persist the approved-media identity before acknowledging a transfer. */
+    public synchronized Map<String,Object> recordVideoTransfer(String jobId,Path path,
+            String workerId,String claimId,String epoch,String sha,long bytes){
+        Map<String,Object>authorization=authorizeVideoTransfer(jobId,workerId,claimId,epoch,sha);
+        if(Boolean.TRUE.equals(authorization.get("completed")))return authorization;
+        Map<String,Object>m=requireStory(jobId);
+        if(m.get("uploadedSha256")!=null&&claimId.equals(m.get("uploadedClaimId"))
+                &&epoch.equals(m.get("uploadedEpoch"))&&sha.equals(m.get("uploadedSha256"))){
+            Path previous=Path.of(String.valueOf(m.get("serverVideo")));
+            if(!previous.equals(path)||!Files.isRegularFile(previous))
+                throw new IllegalStateException("Upload identity points to a missing or different file");
+            return Map.of("completed",false,"filename",String.valueOf(m.get("videoFilename")),
+                    "bytes",integer(m.get("videoBytes")));
+        }
+        m.put("uploadedSha256",sha);m.put("uploadedEpoch",epoch);m.put("uploadedClaimId",claimId);
+        videoUploaded(jobId,path,path.getFileName().toString(),bytes,workerId,claimId);
+        persistRequired();
+        return Map.of("completed",false,"filename",path.getFileName().toString(),"bytes",bytes);
+    }
+    /**
+     * Read-only preflight for controller-owned approval. Returns null only for an
+     * already committed, identical completion acknowledgement. A scanner must
+     * never be run against worker-supplied paths.
+     */
+    public synchronized Path pendingMediaForControllerApproval(String jobId,Map<String,Object>metadata){
+        Map<String,Object>m=requireStory(jobId);
+        if(!(metadata.get("sidecar") instanceof Map<?,?>sidecar)
+                ||!(Json.object(sidecar).get("contentSafety") instanceof Map<?,?>raw))
+            throw new IllegalStateException("CONTENT_SAFETY: missing worker media identity");
+        String sha=String.valueOf(Json.object(raw).getOrDefault("videoSha256",""));
+        String worker=String.valueOf(metadata.getOrDefault("workerId",""));
+        String claim=String.valueOf(metadata.getOrDefault("claimId",""));
+        String epoch=String.valueOf(metadata.getOrDefault("productionEpoch",""));
+        if(!validHash(sha))
+            throw new IllegalStateException("CONTENT_SAFETY: invalid media identity");
+        if(completedIdentity(m,worker,claim,epoch,sha))return null;
+        requireActiveClaim(jobId,worker,claim);
+        if(Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled")))throw new IllegalStateException("CONTENT_SAFETY: local draft cannot be approved via completion");
+        if(!epoch.equals(String.valueOf(m.getOrDefault("productionEpoch","")))
+                ||!sha.equals(m.get("uploadedSha256"))
+                ||!claim.equals(m.get("uploadedClaimId"))
+                ||!epoch.equals(m.get("uploadedEpoch")))
+            throw new IllegalStateException("CONTENT_SAFETY: upload and active claim differ");
+        Object saved=m.get("serverVideo");
+        if(saved==null)throw new IllegalStateException("CONTENT_SAFETY: uploaded media missing");
+        Path file=Path.of(String.valueOf(saved));
+        if(Files.isSymbolicLink(file)||!Files.isRegularFile(file))
+            throw new IllegalStateException("CONTENT_SAFETY: uploaded media missing or linked");
+        return file;
+    }
+
+    private static String titledMediaName(Map<String,Object>m,String jobId,String epoch,String sha,boolean draft){
+        String stem=autonewsroller.util.FileNames.safe(String.valueOf(m.getOrDefault("topic","news_video")));
+        if(stem.length()>48)stem=stem.substring(0,48);
+        String identity=autonewsroller.util.Hashing.sha256(jobId+"|"+epoch+"|"+sha).substring(0,32);
+        return (draft?"NOT_SCANNED_":"")+stem+"_"+identity+".mp4";
+    }
+    public synchronized String titledVideoName(String jobId,String epoch,String sha){
+        Map<String,Object>m=requireStory(jobId);
+        if(epoch.equals(m.get("uploadedEpoch"))&&sha.equals(m.get("uploadedSha256"))&&m.get("videoFilename") instanceof String name&&!name.isBlank())
+            return name;
+        return titledMediaName(m,jobId,epoch,sha,false);
+    }
+    /** Hosted drafts are isolated and never approved or served by /videos. */
+    public synchronized Map<String,Object> authorizeHostedDraft(String jobId,String worker,String claim,String epoch,String sha){
+        if(!validHash(sha))throw new IllegalArgumentException("Invalid draft SHA-256");
+        Map<String,Object>m=requireStory(jobId);
+        if(m.get("localDraft") instanceof Map<?,?> previous&&claim.equals(previous.get("claimId"))
+                &&worker.equals(previous.get("workerId"))&&epoch.equals(previous.get("productionEpoch"))
+                &&sha.equals(previous.get("videoSha256"))&&previous.get("hostPath") instanceof String path){
+            if(stateDirty)persistRequired();
+            return Map.of("completed",true,"filename",Path.of(path).getFileName().toString(),"hostPath",path);
+        }
+        requireActiveClaim(jobId,worker,claim);
+        if(!Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled"))||!epoch.equals(m.get("productionEpoch")))
+            throw new IllegalStateException("Hosted draft requires a matching local-only claim");
+        return Map.of("completed",false,"filename",titledMediaName(m,jobId,epoch,sha,true));
+    }
+    public synchronized Map<String,Object> recordHostedDraft(String jobId,String worker,String claim,String epoch,String sha,Path hostPath){
+        Map<String,Object>auth=authorizeHostedDraft(jobId,worker,claim,epoch,sha);
+        if(Boolean.TRUE.equals(auth.get("completed")))return auth;
+        if(!hostPath.getFileName().toString().equals(auth.get("filename")))throw new IllegalStateException("Draft filename identity changed");
+        completeLocalDraft(jobId,Map.of("workerId",worker,"claimId",claim,"productionEpoch",epoch,
+                "videoSha256",sha,"localPath","Worker copy retained"),hostPath);
+        return Map.of("completed",true,"filename",hostPath.getFileName().toString(),"hostPath",hostPath.toString());
+    }
+    /** Legacy worker metadata only, not an approval. */
+    public synchronized boolean completeLocalDraft(String jobId,Map<String,Object>metadata){
+        return completeLocalDraft(jobId,metadata,null);
+    }
+    private boolean completeLocalDraft(String jobId,Map<String,Object>metadata,Path hostPath){
+        Map<String,Object>m=requireStory(jobId);
+        String worker=String.valueOf(metadata.getOrDefault("workerId",""));
+        String claim=String.valueOf(metadata.getOrDefault("claimId",""));
+        String epoch=String.valueOf(metadata.getOrDefault("productionEpoch",""));
+        String hash=String.valueOf(metadata.getOrDefault("videoSha256",""));
+        String path=String.valueOf(metadata.getOrDefault("localPath",""));
+        if(path.isBlank()||!validHash(hash))throw new IllegalArgumentException("Local draft path and SHA-256 required");
+        if(m.get("localDraft") instanceof Map<?,?> previous
+                &&!claim.isBlank()&&claim.equals(previous.get("claimId"))&&worker.equals(previous.get("workerId"))
+                &&epoch.equals(previous.get("productionEpoch"))&&hash.equals(previous.get("videoSha256"))
+                &&path.equals(previous.get("localPath"))){
+            if(stateDirty)persistRequired();return false;
+        }
+        requireActiveClaim(jobId,worker,claim);
+        if(!Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled"))||!epoch.equals(m.get("productionEpoch")))
+            throw new IllegalStateException("Local draft completion requires a matching local-only claim");
+        Map<String,Object>draft=new LinkedHashMap<>(Map.of("status","NOT_SCANNED","workerId",worker,
+                "claimId",claim,"productionEpoch",epoch,"videoSha256",hash,"localPath",path,
+                "productionMode",String.valueOf(m.get("productionMode")),"completedAt",Instant.now().toString()));
+        if(hostPath!=null)draft.put("hostPath",hostPath.toString());
+        m.put("localDraft",draft);m.put("status","HOLD");m.put("stage","NOT_SCANNED");
+        if(!m.containsKey("currentVideoVersionId"))m.put("safetyStatus","NOT_SCANNED");
+        m.put("progress",100);m.put("decision","HOLD");m.put("detail",hostPath==null?"NOT SCANNED — LOCAL OUTPUT ONLY":"NOT SCANNED — HOST DRAFT STORAGE");
+        m.remove("error");m.remove("assignedWorker");clearLease(m);
+        appendProductionAttempt(m,Instant.now(),Map.of("event","LOCAL_DRAFT_COMPLETE","safetyStatus","NOT_SCANNED"));
+        persistRequired();emit("story",publicStory(m));return true;
+    }
+    public synchronized boolean completeAuthorized(String jobId,Map<String,Object>metadata){
+        Map<String,Object>m=requireStory(jobId);
+        String workerId=String.valueOf(metadata.getOrDefault("workerId",""));
+        String claimId=String.valueOf(metadata.getOrDefault("claimId",""));
+        String epoch=String.valueOf(metadata.getOrDefault("productionEpoch",""));
+        boolean dry=Boolean.TRUE.equals(metadata.get("dryRun"));
+        String sha="";
+        if(!dry&&metadata.get("sidecar") instanceof Map<?,?>sidecar){
+            Object audit=Json.object(sidecar).get("contentSafety");
+            if(audit instanceof Map<?,?>manifest)
+                sha=String.valueOf(Json.object(manifest).getOrDefault("videoSha256",""));
+        }
+        if(completedIdentity(m,workerId,claimId,epoch,sha)){
+            if(stateDirty)persistRequired();
+            return false;
+        }
+        requireActiveClaim(jobId,workerId,claimId);
+        if(Boolean.FALSE.equals(m.get("claimContentSafetyScanningEnabled")))throw new IllegalStateException("CONTENT_SAFETY: local draft cannot complete as an export");
+        if(!epoch.equals(String.valueOf(m.getOrDefault("productionEpoch",""))))
+            throw new IllegalStateException("WORKER_LEASE_EXPIRED: production epoch mismatch");
+        if(!dry&&(!validHash(sha)||!sha.equals(m.get("uploadedSha256"))
+                ||!epoch.equals(m.get("uploadedEpoch"))||!claimId.equals(m.get("uploadedClaimId"))))
+            throw new IllegalStateException("CONTENT_SAFETY: completion does not match the durable approved upload");
+        complete(jobId,metadata);
+        return true;
+    }
+    /** Get only the provenance stored by a previously committed completion. */
+    public synchronized Map<String,Object> committedOutput(String jobId,Map<String,Object>metadata){
+        Map<String,Object>m=requireStory(jobId);
+        String sha="";
+        if(metadata.get("sidecar") instanceof Map<?,?>sidecar
+                &&Json.object(sidecar).get("contentSafety") instanceof Map<?,?>audit)
+            sha=String.valueOf(Json.object(audit).getOrDefault("videoSha256",""));
+        if(!completedIdentity(m,String.valueOf(metadata.getOrDefault("workerId","")),
+                String.valueOf(metadata.getOrDefault("claimId","")),
+                String.valueOf(metadata.getOrDefault("productionEpoch","")),sha))
+            throw new IllegalStateException("Completed output identity mismatch");
+        Map<String,Object>v=videos.get(String.valueOf(m.get("lastCompletedVersionId")));
+        if(v==null||!(v.get("metadata") instanceof Map<?,?>saved))
+            throw new IllegalStateException("Completed video archive is missing");
+        Object sidecar=Json.object(saved).get("sidecar");
+        if(!(sidecar instanceof Map<?,?>))
+            throw new IllegalStateException("Completed video provenance is missing");
+        return Map.of("filename",String.valueOf(v.get("filename")),
+                "path",String.valueOf(v.get("path")),"sidecar",Json.object(sidecar));
     }
 
     public synchronized void videoUploaded(String jobId,Path path,String filename,long bytes){videoUploaded(jobId,path,filename,bytes,"","");}
@@ -851,6 +1108,14 @@ public final class CommandCenterStore {
 
     public synchronized void complete(String jobId,Map<String,Object>metadata){
         Map<String,Object>m=requireStory(jobId);
+        // An acknowledged completion is immutable, including after a controller restart.
+        if(metadata.get("sidecar") instanceof Map<?,?> sc
+                &&Json.object(sc).get("contentSafety") instanceof Map<?,?> audit
+                &&completedIdentity(m,String.valueOf(metadata.getOrDefault("workerId","")),
+                    String.valueOf(metadata.getOrDefault("claimId","")),
+                    String.valueOf(metadata.getOrDefault("productionEpoch","")),
+                    String.valueOf(Json.object(audit).getOrDefault("videoSha256",""))))
+            return;
         if(!workerOwnsActiveJob(m,String.valueOf(metadata.getOrDefault("workerId","")),
                 String.valueOf(metadata.getOrDefault("claimId",""))))
             throw new IllegalStateException("Completion rejected: inactive or superseded worker claim.");
@@ -860,10 +1125,31 @@ public final class CommandCenterStore {
             if(!completedMode.name().equals(declared))throw new IllegalStateException("Completion mode mismatch: "+declared);
         }else if(completedMode!=ProductionMode.STANDARD)
             throw new IllegalStateException("Experimental video requires a provenance sidecar.");
+        boolean dryRun=Boolean.TRUE.equals(metadata.get("dryRun"));
+        boolean scanEnabled=!Boolean.FALSE.equals(m.get("claimAutomaticSafetyScanningEnabled"));
+        Map<String,Object>manifest=Map.of();
+        if(!dryRun){
+            if(!(metadata.get("sidecar") instanceof Map<?,?>))
+                throw new IllegalStateException("CONTENT_SAFETY: worker completion lacks a provenance sidecar");
+            Map<String,Object>sidecar=Json.object(metadata.get("sidecar"));
+            if(!(sidecar.get("contentSafety") instanceof Map<?,?>))
+                throw new IllegalStateException("CONTENT_SAFETY: missing approval manifest (old worker or unverified output)");
+            manifest=Json.object(sidecar.get("contentSafety"));
+            try{
+                Object serverVideo=m.get("serverVideo");
+                if(serverVideo==null)throw new IllegalStateException("Video upload missing");
+                if(scanEnabled)ContentSafetyService.verify(Path.of(String.valueOf(serverVideo)),manifest,false);
+                else ContentSafetyService.verifyUnscanned(Path.of(String.valueOf(serverVideo)),manifest,"CONTROLLER_UNSCANNED_ARCHIVE");
+            }catch(Exception invalid){
+                throw new IllegalStateException("CONTENT_SAFETY: uploaded video not approved: "+invalid.getMessage(),invalid);
+            }
+        }
         int version=nextVideoVersion(jobId);
         String versionId=videoVersionId(jobId,version);
         m.put("status","COMPLETE");m.put("stage","COMPLETE");m.put("progress",100);clearLease(m);m.put("completedAt",Instant.now().toString());m.put("result",new LinkedHashMap<>(metadata));m.remove("error");
         m.put("videoVersion",version);m.put("currentVideoVersionId",versionId);
+        m.put("safetyStatus",dryRun?"NOT_PUBLISHABLE_DRY_RUN":scanEnabled?"APPROVED_FOR_EXPORT":"NOT_SCANNED");
+        m.put("safetyPolicyVersion",ContentSafetyService.POLICY);
         clearCurrentPublicationState(m);m.put("uploaded",false);m.put("scrapped",false);
         Object sidecarObj=metadata.get("sidecar");
         if(sidecarObj instanceof Map<?,?>){
@@ -886,7 +1172,23 @@ public final class CommandCenterStore {
             m.put("visualMode",comfyImages>0?"ComfyUI + procedural cards":"Procedural cards");
         }
         for(Map<String,Object>existing:videos.values())if(jobId.equals(String.valueOf(existing.get("storyId"))))existing.put("current",false);
-        Map<String,Object>v=new LinkedHashMap<>();v.put("versionId",versionId);v.put("productionMode",completedMode.name());v.put("storyId",jobId);v.put("jobId",jobId);v.put("version",version);v.put("current",true);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));copyPublicationState(m,v);videos.put(versionId,v);
+        Map<String,Object>v=new LinkedHashMap<>();v.put("versionId",versionId);v.put("productionMode",completedMode.name());v.put("storyId",jobId);v.put("jobId",jobId);v.put("version",version);v.put("current",true);v.put("topic",m.get("topic"));v.put("filename",m.getOrDefault("videoFilename",""));v.put("path",m.getOrDefault("serverVideo",""));v.put("completedAt",m.get("completedAt"));v.put("ttsEngine",m.getOrDefault("ttsEngine","unknown"));v.put("ttsVoice",m.getOrDefault("ttsVoice",""));v.put("visualMode",m.getOrDefault("visualMode","unknown"));v.put("comfyCheckpoint",m.getOrDefault("comfyCheckpoint",""));v.put("comfyImages",m.getOrDefault("comfyImages",0));v.put("metadata",new LinkedHashMap<>(metadata));
+        v.put("safetyStatus",dryRun?"NOT_PUBLISHABLE_DRY_RUN":scanEnabled?"APPROVED_FOR_EXPORT":"NOT_SCANNED");
+        v.put("safetyPolicyVersion",ContentSafetyService.POLICY);
+        v.put("safetyManifest",manifest);
+        v.put("contentSafetyScanningEnabled",scanEnabled);
+        v.put("imageSafetyScanningEnabled",!Boolean.FALSE.equals(m.get("claimImageSafetyScanningEnabled")));
+        v.put("bytes",m.getOrDefault("videoBytes",0));
+        copyPublicationState(m,v);videos.put(versionId,v);
+        // Keep the last committed output separate from the current temporary claim.
+        // This survives both restart and optional STANDARD/FRAMING handoff.
+        if(!String.valueOf(metadata.getOrDefault("claimId","")).isBlank()){
+            m.put("lastCompletedWorkerId",String.valueOf(metadata.getOrDefault("workerId","")));
+            m.put("lastCompletedClaimId",String.valueOf(metadata.get("claimId")));
+            m.put("lastCompletedEpoch",String.valueOf(m.getOrDefault("productionEpoch","")));
+            m.put("lastCompletedSha256",String.valueOf(manifest.getOrDefault("videoSha256","")));
+            m.put("lastCompletedVersionId",versionId);
+        }
         // Create the second job only AFTER the normal video has been fully recorded.
         // The standard version keeps its own id, path, metadata and uploaded flag.
         if(completedMode==ProductionMode.STANDARD&&pairFramingAfterStandard){
@@ -899,7 +1201,8 @@ public final class CommandCenterStore {
             m.put("detail","Both videos complete: original report and political framing review");
         }
         activatePendingMeme(m);
-        persistQuiet();emit("story",publicStory(m));emit("video",publicCopy(v));
+        // A completion must never be acknowledged before its archive is durable.
+        persistRequired();emit("story",publicStory(m));emit("video",publicCopy(v));
     }
 
     /**
@@ -950,7 +1253,13 @@ public final class CommandCenterStore {
     }
 
     private void markStandardPairQueued(Map<String,Object>m){
-        if(!pairFramingAfterStandard)return;
+        if(!pairFramingAfterStandard){
+            // Preserve archived versions, but do not carry a previous pair request
+            // into a newly requested STANDARD render.
+            m.remove("pairedVideoState");
+            m.remove("manualFramingRequested");
+            return;
+        }
         m.put("pairedVideoState","STANDARD_QUEUED");
         m.remove("pairedStandardVersionId");
         m.remove("pairedFramingVersionId");
@@ -964,11 +1273,40 @@ public final class CommandCenterStore {
         return setUploadStatus(storyId,versionId,uploaded,platform,note,"");
     }
     public synchronized Map<String,Object> setUploadStatus(String storyId,String versionId,boolean uploaded,String platform,String note,String operationId){
+        return updateUploadRecord(storyId,versionId,uploaded,platform,note,operationId,false);
+    }
+    /** Record an upload that the operator already made outside this application.
+     * This is not controller publication approval and cannot authorize export.
+     */
+    public synchronized Map<String,Object> recordExternalUpload(String storyId,String versionId,String platform,String note,String operationId){
+        if(versionId==null||versionId.isBlank())throw new IllegalArgumentException("Exact video version required");
+        return updateUploadRecord(storyId,versionId,true,platform,note,operationId,true);
+    }
+    private Map<String,Object> updateUploadRecord(String storyId,String versionId,boolean uploaded,String platform,String note,String operationId,boolean external){
         Map<String,Object>m=requireStory(storyId);
-        String identity="upload:"+storyId+":"+versionId+":"+uploaded+":"+safeText(platform,80)+":"+safeText(note,500);
+        String identity=(external?"external-upload:":"upload:")+storyId+":"+versionId+":"+uploaded+":"+safeText(platform,80)+":"+safeText(note,500);
         if(alreadyHandled(operationId,identity))return publicStory(m);
         Map<String,Object>v=resolveVideo(storyId,versionId);
         if(v==null)throw new IllegalStateException("No completed local video version is available.");
+        if(external){
+            if(!isUnscannedArchive(v)||currentReviewRecord(versionId)==null)
+                throw new IllegalStateException("Only a current completed unscanned archive can be recorded as externally uploaded");
+            try{ContentSafetyService.verifyUnscanned(Path.of(String.valueOf(v.get("path"))),Json.object(v.get("safetyManifest")),"CONTROLLER_UNSCANNED_ARCHIVE");}
+            catch(Exception e){throw new IllegalStateException("Unscanned archive changed or missing",e);}
+        }else if(uploaded){
+            if(!"APPROVED_FOR_EXPORT".equals(v.getOrDefault("safetyStatus","NOT_SCANNED")))
+                throw new IllegalStateException("CONTENT_SAFETY: historical or dry-run videos cannot be marked publishable");
+            // Preserve historical versions, but do not treat legacy worker-only
+            // evidence as an independent controller publication approval.
+            if(!(v.get("safetyManifest") instanceof Map<?,?> approval)
+                    ||!"CONTROLLER_INDEPENDENT_RESCAN".equals(
+                            Json.object(approval).get("approvalOrigin")))
+                throw new IllegalStateException("CONTENT_SAFETY: controller approval required before publication");
+            try{
+                ContentSafetyService.verify(Path.of(String.valueOf(v.get("path"))),
+                        Json.object(v.get("safetyManifest")),false);
+            }catch(Exception e){throw new IllegalStateException("CONTENT_SAFETY: video changed or approval invalid: "+e.getMessage(),e);}
+        }
         if(uploaded&&Boolean.TRUE.equals(v.get("scrapped")))
             throw new IllegalStateException("A scrapped video cannot be marked uploaded until it is restored.");
         if(uploaded==Boolean.TRUE.equals(v.get("uploaded"))
@@ -983,7 +1321,8 @@ public final class CommandCenterStore {
         appendStateHistory(v,"uploadHistory",now,Map.of(
                 "uploaded",uploaded,
                 "platform",cleanPlatform,
-                "note",cleanNote
+                "note",cleanNote,
+                "externalUploadRecord",external
         ));
 
         v.put("uploaded",uploaded);
@@ -1040,6 +1379,9 @@ public final class CommandCenterStore {
     public synchronized void fail(String jobId,String error){fail(jobId,error,"","");}
     public synchronized void fail(String jobId,String error,String workerId){fail(jobId,error,workerId,"");}
     public synchronized void fail(String jobId,String error,String workerId,String claimId){
+        fail(jobId,error,workerId,claimId,"");
+    }
+    public synchronized void fail(String jobId,String error,String workerId,String claimId,String reportedCode){
         Map<String,Object>m=stories.get(jobId);
         if(m==null||!workerOwnsActiveJob(m,workerId,claimId))return;
         Instant now=Instant.now();
@@ -1047,11 +1389,15 @@ public final class CommandCenterStore {
         String message=safe(error);
         String failedStage=String.valueOf(m.getOrDefault("stage","UNKNOWN"));
         String worker=String.valueOf(m.getOrDefault("assignedWorker","unknown"));
-        String failureType=failureTypeForStage(failedStage,message);
+        FailurePolicy.Decision failure=FailurePolicy.fromCode(reportedCode,failedStage,message);
+        String failureType=failure.code().name();
         m.put("failureCount",failures);
         m.put("lastFailure",message);
         m.put("lastFailedAt",now.toString());
+        m.put("lastFailedStage",failedStage);
         m.put("failureType",failureType);
+        m.put("failureRecoverable",failure.automaticRetry());
+        m.put("recommendedAction",failure.action());
         m.put("lastAssignedWorker",worker);
         m.put("error",message);
         m.put("updatedAt",now.toString());
@@ -1067,18 +1413,21 @@ public final class CommandCenterStore {
 
         // Deterministic evidence, JSON/validation exhaustion and stale snapshots cannot
         // be repaired by starting the entire video job repeatedly. Manual retry remains available.
-        boolean nonTransient=nonTransientFailure(message);
+        boolean nonTransient=!failure.automaticRetry()||nonTransientFailure(message);
         if(!nonTransient&&failures<=failureMaxRetries){
-            Instant retryAt=now.plusSeconds(failureRetryDelaySeconds);
+            // Bounded exponential backoff; a controller restart retains the deadline.
+            long delay=Math.min(900L,(long)failureRetryDelaySeconds*(1L<<Math.min(10,Math.max(0,failures-1))));
+            Instant retryAt=now.plusSeconds(delay);
             m.put("status","QUEUED");m.put("stage","QUEUED");m.put("progress",15);m.put("queuedAt",now.toString());
             m.put("retryNotBefore",retryAt.toString());
             // Do not show a prior failure as the error on a newly queued attempt.
             m.remove("error");
-            m.put("detail","Production failed; automatic retry "+failures+"/"+failureMaxRetries+" queued"+(failureRetryDelaySeconds>0?" in "+failureRetryDelaySeconds+"s":""));
+            m.put("detail","Production failed ("+failureType+"); automatic retry "+
+                    failures+"/"+failureMaxRetries+" queued"+(delay>0?" in "+delay+"s":""));
         }else{
             m.put("status","FAILED");m.put("stage","FAILED");m.put("progress",0);m.remove("retryNotBefore");
             m.put("detail",nonTransient
-                    ?"Non-transient production error; manual retry or new source evidence required"
+                    ?"Automatic retry blocked ("+failureType+"): "+failure.action()
                     :"Production failed after "+failureMaxRetries+" automatic retries; manual action required");
             if(ProductionMode.fromPersisted(m.get("productionMode"))==ProductionMode.FRAMING_EXPOSURE&&
                     String.valueOf(m.getOrDefault("pairedVideoState","")).startsWith("FRAMING_"))
@@ -1088,13 +1437,35 @@ public final class CommandCenterStore {
                 m.put("pairedVideoState","STANDARD_FAILED");
             activatePendingMeme(m);
         }
-        persistQuiet();emit("story",publicStory(m));
+        persistRequired();emit("story",publicStory(m));
     }
 
     public synchronized Map<String,Object> storyDetail(String id){
         Map<String,Object>m=stories.get(id);return m==null?null:deepCopyMap(m);
     }
 
+    public synchronized boolean imageSafetyScanningEnabled(){return automaticSafetyScanningEnabled;}
+    public synchronized boolean automaticSafetyScanningEnabled(){return automaticSafetyScanningEnabled;}
+    public synchronized boolean claimAutomaticSafetyScanningEnabled(String id){return !Boolean.FALSE.equals(requireStory(id).get("claimAutomaticSafetyScanningEnabled"));}
+    /** The compatibility field means normal production routing, not detector execution. */
+    public synchronized boolean contentSafetyScanningEnabled(){return true;}
+    public synchronized Map<String,Object> setContentSafetyScanningEnabled(boolean enabled,String actor){
+        return setAutomaticSafetyScanningEnabled(enabled,actor);
+    }
+    public synchronized Map<String,Object> setImageSafetyScanningEnabled(boolean enabled,String actor){
+        return setAutomaticSafetyScanningEnabled(enabled,actor);
+    }
+    public synchronized Map<String,Object> setAutomaticSafetyScanningEnabled(boolean enabled,String actor){
+        boolean previous=automaticSafetyScanningEnabled;
+        if(previous==enabled)return Map.of("automaticSafetyScanningEnabled",enabled,"imageSafetyScanningEnabled",enabled,"contentSafetyScanningEnabled",true);
+        Map<String,Object>event=Map.of("at",Instant.now().toString(),"actor",actor,"previous",previous,"enabled",enabled,"event","AUTOMATIC_SAFETY_SETTING_CHANGED");
+        automaticSafetyScanningEnabled=enabled;safetySettingAudit.add(event);
+        try{persistRequired();}catch(java.io.UncheckedIOException failure){
+            automaticSafetyScanningEnabled=previous;safetySettingAudit.remove(safetySettingAudit.size()-1);throw failure;
+        }
+        Map<String,Object>payload=Map.of("automaticSafetyScanningEnabled",enabled,"imageSafetyScanningEnabled",enabled,"contentSafetyScanningEnabled",true,"audit",event);
+        emit("settings",payload);return payload;
+    }
     public synchronized Map<String,Object> setAutoQueue(boolean enabled){
         autoQueue=enabled;
         persistRequired();
@@ -1119,7 +1490,10 @@ public final class CommandCenterStore {
         counts.put("verified",stories.values().stream().filter(x->Boolean.TRUE.equals(x.get("verified"))).count());
         counts.put("worthy",stories.values().stream().filter(CommandCenterStore::isActionableWorthy).count());
         counts.put("queued",countStatus("QUEUED"));counts.put("producing",countStatus("PRODUCING"));counts.put("complete",countStatus("COMPLETE")+countStatus("COMPLETE_HISTORY"));counts.put("hold",countStatus("HOLD"));counts.put("skipped",countStatus("SKIPPED"));counts.put("failed",countStatus("FAILED"));
-        counts.put("toPost",videos.values().stream().filter(v->!Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
+        counts.put("toPost",videos.values().stream().filter(v->controllerApproved(v)&&!Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
+        counts.put("safetyApproved",videos.values().stream().filter(CommandCenterStore::controllerApproved).count());
+        counts.put("safetyUnverified",videos.values().stream().filter(v->!controllerApproved(v)).count());
+        counts.put("safetyFailures",stories.values().stream().filter(v->String.valueOf(v.getOrDefault("error","")).contains("CONTENT_SAFETY")).count());
         counts.put("uploaded",videos.values().stream().filter(v->Boolean.TRUE.equals(v.get("uploaded"))&&!Boolean.TRUE.equals(v.get("scrapped"))).count());
         counts.put("scrapped",videos.values().stream().filter(v->Boolean.TRUE.equals(v.get("scrapped"))).count());
         counts.put("videoVersions",videos.size());
@@ -1146,13 +1520,13 @@ public final class CommandCenterStore {
         for(String status:List.of("QUEUED","ANALYZING","COMPLETE","FAILED"))
             counts.put("meme"+status.charAt(0)+status.substring(1).toLowerCase(Locale.ROOT),
                     stories.values().stream().filter(x->status.equals(x.get("memeAnalysisStatus"))).count());
-        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeRecentLookbackHours",memeRecentLookbackHours);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
+        Map<String,Object>out=new LinkedHashMap<>();out.put("memeThreshold",memeThreshold);out.put("memeRecentLookbackHours",memeRecentLookbackHours);out.put("memeWorthinessEnabled",memeEnabled);out.put("serverTime",Instant.now().toString());out.put("scanning",scanning);out.put("autoQueue",autoQueue);out.put("contentSafetyScanningEnabled",true);out.put("imageSafetyScanningEnabled",automaticSafetyScanningEnabled);out.put("automaticSafetyScanningEnabled",automaticSafetyScanningEnabled);out.put("autoThreshold",autoThreshold);out.put("softWorthThreshold",softWorthThreshold);out.put("singleSourceAutoQueueThreshold",singleSourceAutoQueueThreshold);out.put("maxQueued",maxQueued);out.put("failureMaxRetries",failureMaxRetries);out.put("leaseRecoveryMaxRetries",leaseRecoveryMaxRetries);out.put("jobLeaseSeconds",leaseSeconds);out.put("counts",counts);out.put("lastScan",new LinkedHashMap<>(lastScan));out.put("feeds",ff);out.put("stories",ss);out.put("workers",ww);out.put("videos",vv);return out;
     }
 
 
     private static final Set<String> BOARD_STATUSES=Set.of(
             "ALL","DISCOVERED","WORTHY","MEME_WORTHY","MEME_DISCOVERY","VERIFIED","QUEUED","PRODUCING",
-            "HOLD","FAILED","COMPLETE","TO_POST","UPLOADED","SCRAPPED","SKIPPED");
+            "HOLD","FAILED","COMPLETE","TO_POST","UNSCANNED","UPLOADED","SCRAPPED","SKIPPED");
     private static final Set<String> MEME_DISCOVERY_FILTERS=Set.of(
             "ALL_ANALYZED","EXCELLENT","WORTHY","POSSIBLE","LOW","INSUFFICIENT_EVIDENCE","PENDING","FAILED");
 
@@ -1247,9 +1621,11 @@ public final class CommandCenterStore {
         for(Map<String,Object>story:stories.values()){
             String id=String.valueOf(story.get("id"));
             Map<ProductionMode,Map<String,Object>>modes=latest.getOrDefault(id,Map.of());
-            boolean paired=story.containsKey("pairedVideoState")
+            // Historical paired versions are shown from the archive. In manual-only
+            // mode, legacy pairing flags must not invent a new waiting review.
+            boolean paired=pairFramingAfterStandard&&(story.containsKey("pairedVideoState")
                     ||story.containsKey("pairedStandardVersionId")
-                    ||story.containsKey("pairedFramingVersionId");
+                    ||story.containsKey("pairedFramingVersionId"));
             ProductionMode active=ProductionMode.fromPersisted(story.get("productionMode"));
             // Untouched RSS discovery entries are still one normal story card.
             boolean standard=paired||modes.containsKey(ProductionMode.STANDARD)
@@ -1296,6 +1672,8 @@ public final class CommandCenterStore {
                 String.valueOf(story.getOrDefault("status","")));
         row.put("entryActive",live);
         row.put("entryHasVideo",completed!=null&&!live);
+        row.put("publicationApproved",false);
+        row.put("unscannedArchive",false);
         row.put("entryMayRemake","COMPLETE".equals(String.valueOf(story.get("status")))
                 &&completed!=null);
         if(mode==ProductionMode.MEME_RAGEBAIT&&Boolean.TRUE.equals(story.get("pendingMemeRequest"))&&!active){
@@ -1312,6 +1690,12 @@ public final class CommandCenterStore {
             row.put("videoFilename",completed.getOrDefault("filename",""));
             row.put("serverVideo",completed.getOrDefault("path",""));
             row.put("completedAt",completed.getOrDefault("completedAt",""));
+            row.put("safetyStatus",completed.getOrDefault("safetyStatus","NOT_SCANNED"));
+            row.put("publicationApproved",controllerApproved(completed));
+            row.put("unscannedArchive",isUnscannedArchive(completed));
+            // The archived version is authoritative for this format; keep legacy
+            // draft records in persisted history, not on the current board card.
+            row.remove("localDraft");
             for(String key:List.of("ttsEngine","ttsVoice","visualMode","comfyCheckpoint","comfyImages"))
                 if(completed.containsKey(key))row.put(key,completed.get(key));else row.remove(key);
             copyPublicationState(completed,row);
@@ -1365,6 +1749,7 @@ public final class CommandCenterStore {
             case "ALL"->true;
             case "COMPLETE"->rawStatus.startsWith("COMPLETE");
             case "TO_POST"->isToPost(m);
+            case "UNSCANNED"->isUnscannedReview(m);
             case "QUEUED"->"QUEUED".equals(rawStatus)||"WAITING".equals(rawStatus);
             case "UPLOADED"->Boolean.TRUE.equals(m.get("uploaded"))&&!Boolean.TRUE.equals(m.get("scrapped"));
             case "SCRAPPED"->Boolean.TRUE.equals(m.get("scrapped"));
@@ -1446,6 +1831,12 @@ public final class CommandCenterStore {
     private static double number(Object x){return x instanceof Number n?n.doubleValue():0;}
     private static int integer(Object x){return x instanceof Number n?n.intValue():0;}
     private boolean claimEligible(Map<String,Object>m,String workerId){
+        if(!automaticSafetyScanningEnabled){
+            Map<String,Object> worker=workers.get(workerId);
+            if(worker==null||!(worker.get("capabilities") instanceof List<?> capabilities)||!capabilities.contains("automatic_safety_setting_v2")){
+                m.put("stage","WAITING_FOR_COMPATIBLE_WORKER");m.put("detail","Update worker for master scanner toggle");return false;
+            }
+        }
         ProductionMode mode=ProductionMode.fromPersisted(m.get("productionMode"));
         if(mode==ProductionMode.STANDARD)return true;
         Map<String,Object>worker=workers.get(workerId);
@@ -1474,10 +1865,46 @@ public final class CommandCenterStore {
         catch(Exception ignored){return true;}
     }
     private static void resetFailureRetryState(Map<String,Object>m){
-        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("failureType");m.remove("leaseRecoveries");
+        m.remove("failureCount");m.remove("retryNotBefore");m.remove("lastFailure");m.remove("lastFailedAt");m.remove("lastFailedStage");m.remove("failureType");m.remove("failureRecoverable");m.remove("recommendedAction");m.remove("leaseRecoveries");m.remove("productionEpoch");
     }
-    private static boolean isToPost(Map<String,Object>m){
+    /** Resolve only the latest completed archive record for its own story and format.
+     * Review is independent of publication approval; the HTTP handler verifies bytes.
+     */
+    public synchronized Map<String,Object> currentReviewRecord(String versionId){
+        Map<String,Object>v=videos.get(versionId);
+        if(v==null||!stories.containsKey(String.valueOf(v.get("storyId"))))return null;
+        ProductionMode mode=ProductionMode.fromPersisted(v.get("productionMode"));
+        for(Map<String,Object>other:videos.values()){
+            if(Objects.equals(v.get("storyId"),other.get("storyId"))
+                    &&mode==ProductionMode.fromPersisted(other.get("productionMode"))
+                    &&integer(other.get("version"))>integer(v.get("version")))return null;
+        }
+        return deepCopyMap(v);
+    }
+    private static boolean controllerApproved(Map<String,Object>v){
+        return "APPROVED_FOR_EXPORT".equals(v.get("safetyStatus"))
+                &&v.get("safetyManifest") instanceof Map<?,?> manifest
+                &&"CONTROLLER_INDEPENDENT_RESCAN".equals(
+                        Json.object(manifest).get("approvalOrigin"));
+    }
+    private boolean isUnscannedReview(Map<String,Object>m){
+        if(!"COMPLETE".equals(m.get("status"))||!Boolean.TRUE.equals(m.get("entryHasVideo"))
+                ||Boolean.TRUE.equals(m.get("uploaded"))||Boolean.TRUE.equals(m.get("scrapped")))return false;
+        Map<String,Object>v=videos.get(String.valueOf(m.getOrDefault("currentVideoVersionId","")));
+        return isUnscannedArchive(v);
+    }
+    private static boolean isUnscannedArchive(Map<String,Object>v){
+        return v!=null&&"NOT_SCANNED".equals(v.get("safetyStatus"))
+                &&v.get("safetyManifest") instanceof Map<?,?> manifest
+                &&"CONTROLLER_UNSCANNED_ARCHIVE".equals(manifest.get("approvalOrigin"))
+                &&Boolean.FALSE.equals(manifest.get("publicationAllowed"))
+                &&manifest.get("controllerEncodedAudit") instanceof Map<?,?> encoded
+                &&"approved".equals(encoded.get("status"));
+    }
+    private boolean isToPost(Map<String,Object>m){
+        Map<String,Object>v=currentVideo(m);
         return "COMPLETE".equals(String.valueOf(m.get("status")))
+                &&v!=null&&controllerApproved(v)
                 &&Boolean.TRUE.equals(m.getOrDefault("entryHasVideo",true))
                 &&!Boolean.TRUE.equals(m.get("uploaded"))
                 &&!Boolean.TRUE.equals(m.get("scrapped"));
@@ -1585,10 +2012,12 @@ public final class CommandCenterStore {
                 ||lower.contains("framing_ollama_output_limit")
                 ||lower.contains("insufficient_framing_evidence")
                 ||lower.contains("stale_framing_evidence")
-                ||lower.contains("locked political framing opening changed");
+                ||lower.contains("locked political framing opening changed")
+                ||lower.contains("content_safety");
     }
     private static String failureTypeForStage(String stage,String message){
         String lower=message==null?"":message.toLowerCase(Locale.ROOT);
+        if(lower.contains("content_safety"))return "CONTENT_SAFETY_BLOCKED";
         if(lower.contains("meme_script_validation_failed"))return "MEME_SCRIPT_VALIDATION_FAILURE";
         if(lower.contains("meme_hook_failure"))return "MEME_HOOK_FAILURE";
         if(lower.contains("meme_editorial_review_required"))return "MEME_EDITORIAL_REVIEW_REQUIRED";
@@ -1697,7 +2126,7 @@ public final class CommandCenterStore {
             &&claimMatches(m,claimId);
     }
     private static boolean isOnline(Map<String,Object>x){try{return Duration.between(Instant.parse(String.valueOf(x.get("lastSeen"))),Instant.now()).toSeconds()<45;}catch(Exception e){return false;}}
-    private Map<String,Object>publicStory(Map<String,Object>m){Map<String,Object>x=new LinkedHashMap<>(m);x.remove("candidate");x=deepCopyMap(x);x.put("actionableWorthy",isActionableWorthy(m));return x;}
+    private Map<String,Object>publicStory(Map<String,Object>m){Map<String,Object>x=new LinkedHashMap<>(m);x.remove("candidate");x=deepCopyMap(x);x.put("actionableWorthy",isActionableWorthy(m));Map<String,Object>v=videos.get(String.valueOf(m.getOrDefault("currentVideoVersionId","")));x.put("publicationApproved",v!=null&&controllerApproved(v));return x;}
     private static boolean isActionableWorthy(Map<String,Object>m){
         if(!Boolean.TRUE.equals(m.get("worthy")))return false;
         String status=String.valueOf(m.getOrDefault("status",""));
@@ -1716,8 +2145,31 @@ public final class CommandCenterStore {
             Map<String,Object>root=Json.object(Json.read(statePath));copyMap(root.get("stories"),stories);copyMap(root.get("feeds"),feeds);copyMap(root.get("videos"),videos);
             if(root.get("operations") instanceof Map<?,?>op)for(var entry:op.entrySet())processedOperations.put(String.valueOf(entry.getKey()),String.valueOf(entry.getValue()));
             if(root.get("autoQueue") instanceof Boolean b)autoQueue=b;
+            if(root.get("safetySettingAudit") instanceof List<?> audit)
+                for(Object entry:audit)if(entry instanceof Map<?,?>)safetySettingAudit.add(new LinkedHashMap<>(Json.object(entry)));
             Object scan=root.get("lastScan");if(scan instanceof Map<?,?>)lastScan=new LinkedHashMap<>(Json.object(scan));
-            boolean migrated=migrateVideoArchive();
+            // Migrate global settings only. Never rewrite in-progress claim snapshots.
+            boolean safetyMigrated=!(root.get("automaticSafetyScanningEnabled") instanceof Boolean);
+            if(root.get("automaticSafetyScanningEnabled") instanceof Boolean master)
+                automaticSafetyScanningEnabled=master;
+            else{
+                automaticSafetyScanningEnabled=!Boolean.FALSE.equals(root.get("contentSafetyScanningEnabled"))
+                        &&!Boolean.FALSE.equals(root.get("imageSafetyScanningEnabled"));
+                safetySettingAudit.add(Map.of("at",Instant.now().toString(),"actor","settings migration",
+                        "event","LEGACY_SCANNER_SETTINGS_MIGRATED","enabled",automaticSafetyScanningEnabled));
+            }
+            boolean migrated=migrateVideoArchive()||safetyMigrated;
+            if(!pairFramingAfterStandard){
+                for(Map<String,Object>story:stories.values()){
+                    // Legacy STANDARD jobs remain queued or in flight. Only the
+                    // not-yet-created follow-up is disabled by the new setting.
+                    if(ProductionMode.fromPersisted(story.get("productionMode"))==ProductionMode.STANDARD
+                            &&String.valueOf(story.getOrDefault("pairedVideoState","")).startsWith("STANDARD_")){
+                        story.remove("pairedVideoState");
+                        migrated=true;
+                    }
+                }
+            }
             if(migrated||recoverExpiredLeases(false)+recoverExpiredBiasLeases(false)+recoverExpiredMemeLeases(false)>0)persistQuiet();
         }catch(Exception e){System.err.println("Command center state load failed: "+e.getMessage());}
     }
@@ -1738,6 +2190,7 @@ public final class CommandCenterStore {
             if(!v.containsKey("storyId")||!v.containsKey("versionId")||!v.containsKey("version"))changed=true;
             v.put("storyId",storyId);v.put("jobId",storyId);v.put("version",version);v.put("versionId",versionId);
             v.putIfAbsent("scrapped",false);v.putIfAbsent("uploaded",false);
+            v.putIfAbsent("safetyStatus","NOT_SCANNED");
             rebuilt.put(versionId,v);
         }
         if(!rebuilt.keySet().equals(videos.keySet()))changed=true;
@@ -1789,10 +2242,18 @@ public final class CommandCenterStore {
         Map<String,Object>root=new LinkedHashMap<>();
         root.put("stories",stories);root.put("feeds",feeds);root.put("videos",videos);
         root.put("lastScan",lastScan);root.put("autoQueue",autoQueue);root.put("operations",processedOperations);
+        root.put("automaticSafetyScanningEnabled",automaticSafetyScanningEnabled);root.put("contentSafetyScanningEnabled",true);root.put("imageSafetyScanningEnabled",automaticSafetyScanningEnabled);root.put("safetySettingAudit",safetySettingAudit);
         return root;
     }
     private void persistRequired(){
-        try{Json.write(statePath,persistenceState());stateDirty=false;}
+        try{
+            Json.write(statePath,persistenceState());
+            // A successful HTTP claim/completion acknowledgement must not
+            // outrun persistence of the controller's authoritative state.
+            try(java.nio.channels.FileChannel channel=java.nio.channels.FileChannel.open(
+                    statePath,StandardOpenOption.WRITE)){channel.force(true);}
+            stateDirty=false;
+        }
         catch(java.io.IOException e){stateDirty=true;throw new java.io.UncheckedIOException("Command Center state could not be saved",e);}
     }
     private void persistQuiet(){

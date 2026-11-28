@@ -3,6 +3,11 @@ package autonewsroller.commandcenter;
 import autonewsroller.config.NewsConfig;
 import autonewsroller.config.SourceConfig;
 import autonewsroller.orchestration.NewsPipeline;
+import autonewsroller.audit.VideoAudit;
+import autonewsroller.safety.ContentSafetyService;
+import autonewsroller.safety.SafetyPython;
+import autonewsroller.safety.SafetyScanProgress;
+import autonewsroller.safety.PersistentSafetyScanner;
 import autonewsroller.util.Json;
 import com.sun.net.httpserver.*;
 
@@ -25,9 +30,16 @@ public final class CommandCenterServer {
     private final CommandCenterStore store;
     private final CommandCenterAssistant assistant;
     private final ScheduledExecutorService scheduler=Executors.newScheduledThreadPool(2);
+    private final ExecutorService requestExecutor=Executors.newCachedThreadPool();
     private final CopyOnWriteArrayList<BlockingQueue<String>>subscribers=new CopyOnWriteArrayList<>();
     private final AtomicBoolean scanInFlight=new AtomicBoolean();
+    // Fixed stripes avoid duplicate expensive controller scans on concurrent
+    // completion retries without creating unbounded per-job lock state.
+    private final Object[] completionLocks=java.util.stream.IntStream.range(0,64)
+            .mapToObj(i->new Object()).toArray();
     private HttpServer server;
+    private volatile Map<String,Object> cachedSafetyHealth=Map.of();
+    private volatile long safetyHealthCheckedAt=0;
 
     public CommandCenterServer(Path root,NewsConfig cfg,String host,int port,int scanMinutes,boolean autoQueue,double autoThreshold,int maxQueued,String token,boolean scanOnStart){
         this.root=root;this.cfg=cfg;this.host=host;this.requestedPort=port;this.scanMinutes=Math.max(1,scanMinutes);this.token=token==null?"":token.trim();this.scanOnStart=scanOnStart;
@@ -45,7 +57,7 @@ public final class CommandCenterServer {
                 cfg.getInt("commandCenterFailureMaxRetries",3),
                 cfg.getInt("commandCenterFailureRetryDelaySeconds",20),
                 cfg.getInt("commandCenterLeaseRecoveryMaxRetries",3),
-                cfg.getBool("commandCenterPairFramingVideos",true)
+                cfg.getBool("commandCenterPairFramingVideos",false)
         );
         this.store.configureMeme(cfg);
         try{this.assistant=new CommandCenterAssistant(root,cfg,this.store);}
@@ -54,18 +66,24 @@ public final class CommandCenterServer {
 
     public int start() throws Exception {
         server=HttpServer.create(new InetSocketAddress(host,requestedPort),0);
-        server.setExecutor(Executors.newCachedThreadPool());
+        server.setExecutor(requestExecutor);
         server.createContext("/api/health",this::health);
+        server.createContext("/api/safety/health",this::safetyHealth);
+        server.createContext("/api/safety/progress",this::safetyProgress);
         server.createContext("/api/state",this::state);
         server.createContext("/api/board/stories",this::boardStories);
         server.createContext("/api/assistant",this::assistant);
         server.createContext("/api/events",this::events);
         server.createContext("/api/scan",this::scanNow);
         server.createContext("/api/settings/auto-video",this::autoVideoSetting);
+        server.createContext("/api/settings/content-safety",this::contentSafetySetting);
+        server.createContext("/api/settings/image-safety",this::contentSafetySetting);
+        server.createContext("/api/settings/automatic-safety",this::contentSafetySetting);
         server.createContext("/api/stories/",this::stories);
         server.createContext("/api/workers/heartbeat",this::heartbeat);
         server.createContext("/api/jobs/claim",this::claim);
         server.createContext("/api/jobs/",this::jobs);
+        server.createContext("/api/review-video",this::reviewVideo);
         server.createContext("/videos/",this::videos);
         server.createContext("/",this::staticFiles);
         server.start();
@@ -80,7 +98,7 @@ public final class CommandCenterServer {
     public void block() throws InterruptedException {new CountDownLatch(1).await();}
 
     public void stop(){
-        scheduler.shutdownNow();if(server!=null)server.stop(1);
+        scheduler.shutdownNow();if(server!=null)server.stop(1);requestExecutor.shutdownNow();
     }
 
     private void scanSafe(){
@@ -104,6 +122,74 @@ public final class CommandCenterServer {
 
     private void health(HttpExchange x)throws IOException{
         json(x,200,Map.of("ok",true,"service","AutoNewsRoller Command Center","time",Instant.now().toString()));
+    }
+
+    private void safetyProgress(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        json(x,200,SafetyScanProgress.snapshot());
+    }
+
+    private void safetyHealth(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        if(!store.contentSafetyScanningEnabled()){
+            json(x,200,Map.of("status","DISABLED_LOCAL_ONLY"));return;
+        }
+        if(!store.automaticSafetyScanningEnabled()){
+            json(x,200,Map.of("status","DISABLED_AUTOMATIC_SCANS"));return;
+        }
+        try{
+            Map<String,Object> health;
+            synchronized(this){
+                if(System.currentTimeMillis()-safetyHealthCheckedAt>300000||cachedSafetyHealth.isEmpty()){
+                    Map<String,Object> anatomy=probeSafetyModel("tools/content_safety_scan.py","NudeNet","3.4.2");
+                    Map<String,Object> context=probeSafetyModel("tools/content_context_scan.py","OpenNSFW2","0.19.0");
+                    cachedSafetyHealth=Map.of("status","READY","detector","NudeNet + OpenNSFW2",
+                            "version","3.4.2 + 0.19.0","policyVersion",ContentSafetyService.POLICY,
+                            "models",List.of(anatomy,context));
+                    safetyHealthCheckedAt=System.currentTimeMillis();
+                }
+                health=cachedSafetyHealth;
+            }
+            json(x,200,health);
+        }catch(Exception e){
+            json(x,503,Map.of("error","Mandatory safety model unavailable: "+safe(e.getMessage())));
+        }
+    }
+
+    private Map<String,Object> probeSafetyModel(String script,String detector,String version)throws Exception{
+        if(cfg.getBool("contentSafetyScannerPersistent",true)){
+            Map<String,Object>live=PersistentSafetyScanner.health(root,cfg,script);
+            if(!"READY".equals(live.get("status"))||!detector.equals(live.get("detector"))
+                    ||!version.equals(live.get("version"))
+                    ||!ContentSafetyService.POLICY.equals(live.get("policyVersion")))
+                throw new IOException(detector+" resident model health mismatch");
+            return live;
+        }
+        String python=SafetyPython.resolve(root,cfg);
+        Path scanner=root.resolve(script).toAbsolutePath();
+        if(!Files.isRegularFile(scanner))throw new IOException("Missing "+detector+" scanner");
+        Path stderr=Files.createTempFile("anr-safety-health-", ".log");
+        try{
+            ProcessBuilder builder=new ProcessBuilder(python,scanner.toString(),"--health");
+            builder.directory(root.toFile());
+            builder.environment().put("TF_CPP_MIN_LOG_LEVEL","2");
+            builder.redirectError(stderr.toFile());
+            Process process=builder.start();
+            if(!process.waitFor(150,TimeUnit.SECONDS)){
+                process.destroyForcibly();
+                throw new IOException(detector+" health timeout");
+            }
+            if(process.exitValue()!=0)throw new IOException(detector+" health failed");
+            Map<String,Object> result=Json.object(Json.parse(
+                    new String(process.getInputStream().readAllBytes(),StandardCharsets.UTF_8)));
+            if(!"READY".equals(result.get("status"))||!detector.equals(result.get("detector"))
+                    ||!version.equals(result.get("version"))
+                    ||!ContentSafetyService.POLICY.equals(result.get("policyVersion")))
+                throw new IOException(detector+" did not validate the current safety policy");
+            return result;
+        }finally{Files.deleteIfExists(stderr);}
     }
 
     private void state(HttpExchange x)throws IOException{
@@ -193,6 +279,45 @@ public final class CommandCenterServer {
         scheduler.submit(this::scanSafe);json(x,202,Map.of("ok",true,"status","scan-started"));
     }
 
+    private void contentSafetySetting(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        // All three historical endpoint names address the same persisted setting.
+        if("GET".equalsIgnoreCase(x.getRequestMethod())){
+            json(x,200,Map.of("contentSafetyScanningEnabled",store.contentSafetyScanningEnabled(),"imageSafetyScanningEnabled",store.imageSafetyScanningEnabled(),"automaticSafetyScanningEnabled",store.automaticSafetyScanningEnabled()));return;
+        }
+        if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        // No separate administrator secret. A tokenless controller may change
+        // this setting only through its loopback address, not over the LAN.
+        if(token.isBlank()&&!localSafetySettingRequest(x)){
+            json(x,403,Map.of("error","Open the controller at http://localhost:"+server.getAddress().getPort()+" to change this setting, or use the existing controller API authentication."));return;
+        }
+        // Reject simple cross-site form/fetch submissions to tokenless localhost.
+        String contentType=x.getRequestHeaders().getFirst("Content-Type");
+        if(contentType==null||!"application/json".equalsIgnoreCase(contentType.split(";",2)[0].trim())){
+            json(x,415,Map.of("error","application/json required"));return;
+        }
+        Map<String,Object>body=bodyObject(x);
+        if(!(body.get("enabled") instanceof Boolean enabled)){json(x,400,Map.of("error","enabled boolean required"));return;}
+        try{
+            String actor=token.isBlank()?"local controller operator":"authenticated controller operator";
+            json(x,200,store.setAutomaticSafetyScanningEnabled(enabled,actor));
+        }
+        catch(UncheckedIOException e){json(x,500,Map.of("error","Unable to save content safety setting"));}
+    }
+    private static boolean localSafetySettingRequest(HttpExchange x){
+        if(x.getRemoteAddress().getAddress()==null||!x.getRemoteAddress().getAddress().isLoopbackAddress())return false;
+        // Reject arbitrary Host names, including DNS-rebinding requests.
+        String hostHeader=x.getRequestHeaders().getFirst("Host");
+        if(hostHeader==null)return false;
+        try{
+            URI address=URI.create("http://"+hostHeader);
+            String name=address.getHost();
+            return name!=null&&address.getUserInfo()==null&&address.getRawPath().isEmpty()
+                    &&address.getRawQuery()==null&&address.getRawFragment()==null
+                    &&("localhost".equalsIgnoreCase(name)||"127.0.0.1".equals(name)
+                    ||"[::1]".equals(name)||"::1".equals(name));
+        }catch(IllegalArgumentException invalid){return false;}
+    }
     private void autoVideoSetting(HttpExchange x)throws IOException{
         if(!api(x))return;
         if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
@@ -223,10 +348,26 @@ public final class CommandCenterServer {
             if(p.length>=2&&"upload-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>body=bodyObject(x);
                 boolean uploaded=Boolean.TRUE.equals(body.get("uploaded"));
+                if(uploaded&&!Boolean.TRUE.equals(body.get("aigcLabelConfirmed"))){
+                    json(x,409,Map.of("error","AIGC label confirmation required; verify the label on the actual platform post"));
+                    return;
+                }
                 String platform=String.valueOf(body.getOrDefault("platform",""));
                 String note=String.valueOf(body.getOrDefault("note",""));
                 String versionId=String.valueOf(body.getOrDefault("versionId",""));
                 json(x,200,store.setUploadStatus(id,versionId,uploaded,platform,note,String.valueOf(body.getOrDefault("operationId",""))));return;
+            }
+            if(p.length==2&&"external-upload-record".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
+                if(token.isBlank()&&!localSafetySettingRequest(x)){
+                    json(x,403,Map.of("error","External upload records require local access or controller authentication"));return;
+                }
+                Map<String,Object>body=bodyObject(x);
+                if(!Boolean.TRUE.equals(body.get("alreadyUploaded"))||!Boolean.TRUE.equals(body.get("aigcLabelConfirmed"))){
+                    json(x,409,Map.of("error","Confirm the external upload already occurred and verify its AIGC label"));return;
+                }
+                json(x,200,store.recordExternalUpload(id,String.valueOf(body.getOrDefault("versionId","")),
+                        String.valueOf(body.getOrDefault("platform","")),String.valueOf(body.getOrDefault("note","")),
+                        String.valueOf(body.getOrDefault("operationId",""))));return;
             }
             if(p.length>=2&&"scrap-status".equalsIgnoreCase(p[1])&&"POST".equalsIgnoreCase(x.getRequestMethod())){
                 Map<String,Object>body=bodyObject(x);
@@ -258,7 +399,7 @@ public final class CommandCenterServer {
         if(!api(x))return;if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         Map<String,Object>body=bodyObject(x);String id=String.valueOf(body.getOrDefault("id","")).trim();
         if(id.isBlank()){json(x,400,Map.of("error","worker id required"));return;}
-        store.heartbeat(id,body);json(x,200,Map.of("ok",true));
+        store.heartbeat(id,body);json(x,200,Map.of("ok",true,"contentSafetyScanningEnabled",store.contentSafetyScanningEnabled(),"imageSafetyScanningEnabled",store.imageSafetyScanningEnabled(),"automaticSafetyScanningEnabled",store.automaticSafetyScanningEnabled()));
     }
 
     private void claim(HttpExchange x)throws IOException{
@@ -287,37 +428,126 @@ public final class CommandCenterServer {
                 case "progress"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
                     Map<String,Object>b=bodyObject(x);
+                    store.requireActiveClaim(id,String.valueOf(b.getOrDefault("workerId","")),
+                            String.valueOf(b.getOrDefault("claimId","")));
                     autonewsroller.orchestration.PipelineStage stage;
                     try{stage=autonewsroller.orchestration.PipelineStage.valueOf(String.valueOf(b.getOrDefault("stage","VERIFY")));}catch(Exception e){stage=autonewsroller.orchestration.PipelineStage.VERIFY;}
                     store.progress(id,new autonewsroller.orchestration.WorkerState(1,1,stage,String.valueOf(b.getOrDefault("detail","")),Instant.now()),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")));
                     json(x,200,Map.of("ok",true));
                 }
-                case "video"->{
+                case "video","local-draft-video"->{
+                    boolean draft="local-draft-video".equals(op);
+                    synchronized(completionLocks[Math.floorMod(id.hashCode(),completionLocks.length)]){
                     if(!"PUT".equalsIgnoreCase(x.getRequestMethod())&&!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    String filename=sanitizeFilename(x.getRequestHeaders().getFirst("X-Filename"));
-                    if(filename.isBlank())filename=id+".mp4";
-                    Path dir=root.resolve("output/command_center/videos");Files.createDirectories(dir);
-                    Path out=unique(dir,id+"_"+filename);
-                    try(InputStream in=x.getRequestBody();OutputStream os=Files.newOutputStream(out,StandardOpenOption.CREATE_NEW)){in.transferTo(os);}
-                    long bytes=Files.size(out);
-                    try{store.videoUploaded(id,out,out.getFileName().toString(),bytes,
-                            String.valueOf(x.getRequestHeaders().getFirst("X-Worker-Id")==null?"":x.getRequestHeaders().getFirst("X-Worker-Id")),
-                            String.valueOf(x.getRequestHeaders().getFirst("X-Claim-Id")==null?"":x.getRequestHeaders().getFirst("X-Claim-Id")));}
-                    catch(RuntimeException e){Files.deleteIfExists(out);throw e;}
-                    json(x,200,Map.of("ok",true,"filename",out.getFileName().toString(),"bytes",bytes));
+                    String workerId=String.valueOf(x.getRequestHeaders().getFirst("X-Worker-Id"));
+                    String claimId=String.valueOf(x.getRequestHeaders().getFirst("X-Claim-Id"));
+                    String epoch=String.valueOf(x.getRequestHeaders().getFirst("X-Production-Epoch"));
+                    String sha=String.valueOf(x.getRequestHeaders().getFirst("X-Media-Sha256")).toLowerCase(Locale.ROOT);
+                    Map<String,Object>initial=draft?store.authorizeHostedDraft(id,workerId,claimId,epoch,sha):
+                            store.authorizeVideoTransfer(id,workerId,claimId,epoch,sha);
+                    Path dir=root.resolve(draft?"output/command_center/unscanned_drafts":"output/command_center/videos");
+                    if(draft)dir=dir.toAbsolutePath().normalize();
+                    Files.createDirectories(dir);
+                    if(draft&&(Files.isSymbolicLink(dir)||!dir.toRealPath().equals(dir)))throw new IllegalStateException("Draft storage path is linked");
+                    String legacy="job-"+autonewsroller.util.Hashing.sha256(id).substring(0,20)+"_"+
+                            epoch.replaceAll("[^A-Za-z0-9_-]","")+"_"+sha+".mp4";
+                    String name=draft?String.valueOf(initial.get("filename")):
+                            Boolean.TRUE.equals(initial.get("completed"))?String.valueOf(initial.get("filename")):
+                            Files.exists(dir.resolve(legacy))?legacy:store.titledVideoName(id,epoch,sha);
+                    Path out=dir.resolve(name);
+                    if(!dir.normalize().equals(out.normalize().getParent()))throw new IllegalStateException("Invalid media destination");
+                    Path staging=Files.createTempFile(dir,".incoming-",".part");
+                    try{
+                        long bytes=0;
+                        try(InputStream in=x.getRequestBody();OutputStream os=Files.newOutputStream(staging)){
+                            byte[] buffer=new byte[65536];int count;
+                            while((count=in.read(buffer))!=-1){
+                                bytes+=count;
+                                if(bytes>2147483647L)throw new IllegalArgumentException("Video exceeds the signed 2 GiB upload limit");
+                                os.write(buffer,0,count);
+                            }
+                        }
+                        if(bytes<=0||!sha.equals(ContentSafetyService.hash(staging)))
+                            throw new IllegalStateException("Uploaded bytes do not match approved media SHA-256");
+                        Map<String,Object>authorized=draft?store.authorizeHostedDraft(id,workerId,claimId,epoch,sha):
+                                store.authorizeVideoTransfer(id,workerId,claimId,epoch,sha);
+                        if(Boolean.TRUE.equals(authorized.get("completed"))){
+                            if(draft&&(!Files.isRegularFile(out)||Files.isSymbolicLink(out)
+                                    ||!out.toString().equals(authorized.get("hostPath"))||!sha.equals(ContentSafetyService.hash(out))))
+                                throw new IllegalStateException("Previously received draft missing or changed");
+                            Map<String,Object>result=new LinkedHashMap<>(authorized);
+                            result.put("ok",true);json(x,200,result);break;
+                        }
+                        if(Files.exists(out)){
+                            if(!Files.isRegularFile(out)||Files.isSymbolicLink(out)
+                                    ||!sha.equals(ContentSafetyService.hash(out)))
+                                throw new IllegalStateException("Existing upload identity has different bytes");
+                        }else{
+                            try{Files.move(staging,out);}
+                            catch(FileAlreadyExistsException collision){
+                                if(!Files.isRegularFile(out)||!sha.equals(ContentSafetyService.hash(out)))
+                                    throw new IllegalStateException("Concurrent upload bytes differ",collision);
+                            }
+                        }
+                        try(java.nio.channels.FileChannel durable=java.nio.channels.FileChannel.open(
+                                out,StandardOpenOption.WRITE)){durable.force(true);}
+                        Map<String,Object>result=new LinkedHashMap<>(
+                                draft?store.recordHostedDraft(id,workerId,claimId,epoch,sha,out):
+                                store.recordVideoTransfer(id,out,workerId,claimId,epoch,sha,bytes));
+                        result.put("ok",true);json(x,200,result);
+                    }finally{Files.deleteIfExists(staging);}
+                    }
+                }
+                case "local-draft-complete"->{
+                    if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+                    boolean committed=store.completeLocalDraft(id,bodyObject(x));
+                    json(x,200,Map.of("ok",true,"alreadyCompleted",!committed,"safetyStatus","NOT_SCANNED"));
                 }
                 case "complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    Map<String,Object>b=bodyObject(x);store.complete(id,b);
-                    Object sidecar=b.get("sidecar");if(sidecar!=null){
-                        Map<String,Object>d=store.storyDetail(id);String file=String.valueOf(d.getOrDefault("videoFilename",id+".mp4"));
-                        Json.write(root.resolve("output/command_center/videos").resolve(file+".json"),sidecar);
+                    synchronized(completionLocks[Math.floorMod(id.hashCode(),completionLocks.length)]){
+                    Map<String,Object>b=new LinkedHashMap<>(bodyObject(x));
+                    if(!Boolean.TRUE.equals(b.get("dryRun"))){
+                        Path uploaded=store.pendingMediaForControllerApproval(id,b);
+                        if(uploaded!=null){
+                            Map<String,Object>sidecar=new LinkedHashMap<>(Json.object(b.get("sidecar")));
+                            Map<String,Object>workerManifest=Json.object(sidecar.get("contentSafety"));
+                            String expectedSha=String.valueOf(workerManifest.get("videoSha256"));
+                            Map<String,Object>controllerManifest;
+                            if(!store.claimAutomaticSafetyScanningEnabled(id)){
+                                if(!expectedSha.equals(ContentSafetyService.hash(uploaded)))throw new IllegalStateException("Uploaded media hash mismatch");
+                                Map<String,Object>encoded=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),cfg.get("ffmpegCommand","ffmpeg")).auditUploaded(uploaded,cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),cfg.getInt("videoFps",30));
+                                controllerManifest=ContentSafetyService.unscanned(uploaded,"CONTROLLER_UNSCANNED_ARCHIVE");
+                                if(!expectedSha.equals(controllerManifest.get("videoSha256")))throw new IllegalStateException("Uploaded media changed during integrity audit");
+                                controllerManifest.put("controllerEncodedAudit",encoded);
+                                sidecar.put("contentSafetyScanningEnabled",false);sidecar.put("imageSafetyScanningEnabled",false);sidecar.put("safetyStatus","NOT_SCANNED");sidecar.put("publicationAllowed",false);
+                            }else try(SafetyScanProgress.Scope scope=SafetyScanProgress.open(id)){
+                                try{
+                                    controllerManifest=approveOnController(uploaded,expectedSha);
+                                }catch(Exception denied){
+                                    SafetyScanProgress.finished(id,false);
+                                    throw denied;
+                                }
+                            }
+                            sidecar.put("contentSafety",controllerManifest);
+                            b.put("sidecar",sidecar);
+                        }
                     }
-                    json(x,200,Map.of("ok",true));
+                    boolean committed=store.completeAuthorized(id,b);
+                    if(!Boolean.TRUE.equals(b.get("dryRun"))){
+                        // Use the controller's committed provenance, never replay-supplied data.
+                        Map<String,Object>output=store.committedOutput(id,b);
+                        Json.write(Path.of(String.valueOf(output.get("path"))+".json"),output.get("sidecar"));
+                    }
+                    json(x,200,Map.of("ok",true,"alreadyCompleted",!committed));
+                    }
                 }
                 case "fail"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
-                    Map<String,Object>b=bodyObject(x);store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")));json(x,200,Map.of("ok",true));
+                    Map<String,Object>b=bodyObject(x);
+                    store.requireActiveClaim(id,String.valueOf(b.getOrDefault("workerId","")),
+                            String.valueOf(b.getOrDefault("claimId","")));
+                    store.fail(id,String.valueOf(b.getOrDefault("error","worker failure")),String.valueOf(b.getOrDefault("workerId","")),String.valueOf(b.getOrDefault("claimId","")),String.valueOf(b.getOrDefault("failureCode","")));json(x,200,Map.of("ok",true));
                 }
                 case "meme-complete"->{
                     if(!"POST".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
@@ -364,6 +594,85 @@ public final class CommandCenterServer {
         catch(Exception e){json(x,500,Map.of("error",safe(e.getMessage())));}
     }
 
+    /**
+     * Mandatory, independent controller trust boundary. An upload and a worker
+     * manifest remain non-publishable until both actual local detectors and
+     * the encoded-stream audit succeed against the exact received bytes.
+     */
+    private Map<String,Object> approveOnController(Path media,String expectedSha)throws Exception{
+        if(!expectedSha.equals(ContentSafetyService.hash(media)))
+            throw new IllegalStateException("CONTENT_SAFETY: controller received different bytes");
+        // Reject malformed, silent or nonconforming media before spending time
+        // on two potentially slow detector scans.
+        SafetyScanProgress.stage("CONTROLLER_AUDIT");
+        Map<String,Object>encoded=new VideoAudit(cfg.get("ffprobeCommand","ffprobe"),
+                cfg.get("ffmpegCommand","ffmpeg")).auditUploaded(media,
+                cfg.getInt("videoWidth",1080),cfg.getInt("videoHeight",1920),
+                cfg.getInt("videoFps",30));
+        Map<String,Object>scan=new ContentSafetyService(root,cfg).inspectVideo(media);
+        if(!"SAFE".equals(scan.get("status")))
+            throw new IllegalStateException("CONTENT_SAFETY: controller scan blocked approval: "+
+                    safe(String.valueOf(scan.getOrDefault("reason",scan.get("status")))));
+        if(!expectedSha.equals(ContentSafetyService.hash(media)))
+            throw new IllegalStateException("CONTENT_SAFETY: media changed during controller approval");
+        Map<String,Object>approved=new LinkedHashMap<>();
+        approved.put("status","APPROVED_FOR_EXPORT");
+        approved.put("policyVersion",ContentSafetyService.POLICY);
+        approved.put("videoSha256",expectedSha);
+        approved.put("finalVideoAudit",scan);
+        approved.put("inputs",List.of());
+        approved.put("createdAt",Instant.now().toString());
+        approved.put("approvalOrigin","CONTROLLER_INDEPENDENT_RESCAN");
+        approved.put("controllerEncodedAudit",encoded);
+        ContentSafetyService.verify(media,approved,false);
+        SafetyScanProgress.finished(SafetyScanProgress.current(),true);
+        return approved;
+    }
+
+    /** Private review of a completed, unscanned, controller-audited archive.
+     * Never changes approval state and never shares the publishable route.
+     */
+    private void reviewVideo(HttpExchange x)throws IOException{
+        if(!api(x))return;
+        if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
+        if(!"/api/review-video".equals(x.getRequestURI().getPath())){
+            json(x,404,Map.of("error","review video not found"));return;
+        }
+        if(token.isBlank()&&!localSafetySettingRequest(x)){
+            json(x,403,Map.of("error","Private review requires local access or controller authentication"));return;
+        }
+        Map<String,Object>record=store.currentReviewRecord(query(x.getRequestURI()).getOrDefault("versionId",""));
+        if(record==null||!"NOT_SCANNED".equals(record.get("safetyStatus"))){
+            json(x,404,Map.of("error","current unscanned archive not found"));return;
+        }
+        Path file;
+        try{
+            String name=String.valueOf(record.getOrDefault("filename",""));
+            if(name.isBlank()||!name.equals(sanitizeFilename(name))||!name.toLowerCase(Locale.ROOT).endsWith(".mp4"))
+                throw new IllegalStateException("Invalid archive filename");
+            Path dir=root.resolve("output/command_center/videos").toAbsolutePath().normalize();
+            file=dir.resolve(name);
+            if(!file.equals(Path.of(String.valueOf(record.get("path"))).toAbsolutePath().normalize())
+                    ||!Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)
+                    ||!dir.equals(dir.toRealPath())||!file.equals(file.toRealPath()))
+                throw new IllegalStateException("Invalid archive path");
+            Map<String,Object>manifest=Json.object(record.get("safetyManifest"));
+            if(!(manifest.get("controllerEncodedAudit") instanceof Map<?,?> encoded)
+                    ||!"approved".equals(encoded.get("status")))
+                throw new IllegalStateException("Missing controller media integrity audit");
+            ContentSafetyService.verifyUnscanned(file,manifest,"CONTROLLER_UNSCANNED_ARCHIVE");
+        }catch(Exception invalid){
+            json(x,409,Map.of("error","Review media missing, changed or not controller-audited"));return;
+        }
+        x.getResponseHeaders().set("Content-Type","video/mp4");
+        x.getResponseHeaders().set("Cache-Control","no-store");
+        x.getResponseHeaders().set("X-Content-Type-Options","nosniff");
+        x.getResponseHeaders().set("Referrer-Policy","no-referrer");
+        x.getResponseHeaders().set("X-AutoNews-Safety-Status","NOT_SCANNED");
+        x.sendResponseHeaders(200,Files.size(file));
+        try(OutputStream out=x.getResponseBody()){Files.copy(file,out);}
+    }
+
     private void videos(HttpExchange x)throws IOException{
         if(!api(x))return;if(!"GET".equalsIgnoreCase(x.getRequestMethod())){method(x);return;}
         String name=sanitizeFilename(decode(x.getRequestURI().getPath().substring("/videos/".length())));
@@ -371,6 +680,20 @@ public final class CommandCenterServer {
         Path file=root.resolve("output/command_center/videos").resolve(name).normalize();
         Path dir=root.resolve("output/command_center/videos").normalize();
         if(!file.startsWith(dir)||!Files.isRegularFile(file)){json(x,404,Map.of("error","video not found"));return;}
+        // Uploaded, historical, replaced, or tampered bytes are never served as publishable MP4.
+        if(!name.toLowerCase(Locale.ROOT).endsWith(".json")){
+            try{
+                Path sidecar=file.resolveSibling(file.getFileName()+".json");
+                Map<String,Object>provenance=Json.object(Json.read(sidecar));
+                Map<String,Object>manifest=Json.object(provenance.get("contentSafety"));
+                if(!"CONTROLLER_INDEPENDENT_RESCAN".equals(manifest.get("approvalOrigin")))
+                    throw new IllegalStateException("CONTENT_SAFETY: legacy worker evidence is not controller approval");
+                ContentSafetyService.verify(file,manifest,false);
+            }catch(Exception denied){
+                json(x,409,Map.of("error","CONTENT_SAFETY: video unverified or stale; do not repost"));
+                return;
+            }
+        }
         x.getResponseHeaders().set("Content-Type",name.toLowerCase(Locale.ROOT).endsWith(".json")?"application/json":"video/mp4");
         x.getResponseHeaders().set("Cache-Control","no-store");x.sendResponseHeaders(200,Files.size(file));
         try(OutputStream out=x.getResponseBody()){Files.copy(file,out);}

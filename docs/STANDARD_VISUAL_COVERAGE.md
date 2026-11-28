@@ -1,0 +1,5 @@
+# STANDARD visual coverage V3
+
+Every primary STANDARD scene still requires an accepted image produced by the existing ComfyUI backend. The previous abstract background fallback has been replaced by concrete generic contextual editorial illustrations selected from a fixed vocabulary using verified story evidence. No raw sensitive event narration is interpolated into fallback prompts. Valid ordinary scenes use the original standard SDXL editorial profile. Source attribution, factual overlays, scanners, publication gates, other production modes and the ComfyUI sampling/checkpoint pipeline remain unchanged.
+
+The new V3 checkpoint fingerprint invalidates cached V2 abstract imagery. Tests cover source-backed subject selection, unsupported subject fallback, full primary coverage, restricted prompt provenance, and unchanged MEME evidence routing. The prior commit f0341f1 compiled but failed SelfTest.testFailureRecoveryPolicy because its old STANDARD evidence-only expectation had not been updated. The dashboard browser test also failed. No physical Windows GPU or live generation is claimed; exact-head CI remains required.

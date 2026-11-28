@@ -149,7 +149,8 @@ Return one JSON object matching the repair schema and nothing else.
                         // If one appears, start a clean generation rather than corrupting a usable draft.
                         current=null;
                         previousFailure="structural validation failure requires clean regeneration";
-                        i--;
+                        // Do not retry this attempt indefinitely on an
+                        // invalid but duration-correct structured response.
                         continue;
                     }
 
@@ -171,7 +172,9 @@ Return one JSON object matching the repair schema and nothing else.
                             repairTokenBudget(plan)
                     );
                     try{
-                        current=applyReplacements(current,raw,fp,targetSeconds,plan);
+                        current=mode.equals("fact_repair")
+                                ?applyReplacements(current,raw,fp,targetSeconds,plan)
+                                :applyLengthRepairWithProgress(current,raw,fp,targetSeconds,plan,preferredWords);
                     }catch(IllegalArgumentException outOfRange){
                         // A nearly correct response (for example 21 rather than 26-30
                         // words) deserves one constrained correction IN THE SAME job.
@@ -192,7 +195,9 @@ Return one JSON object matching the repair schema and nothing else.
                                 0.08,
                                 repairTokenBudget(plan)
                         );
-                        current=applyReplacements(current,corrected,fp,targetSeconds,plan);
+                        current=mode.equals("fact_repair")
+                                ?applyReplacements(current,corrected,fp,targetSeconds,plan)
+                                :applyLengthRepairWithProgress(current,corrected,fp,targetSeconds,plan,preferredWords);
                         raw=corrected;
                     }
                 }
@@ -226,8 +231,10 @@ Return one JSON object matching the repair schema and nothing else.
 
     public static NewsScript assembleFromModelJson(String raw,FactPackage fp,int target){
         Map<String,Object>m=Json.object(Json.parse(raw));
-        String h=Text.clean(String.valueOf(m.getOrDefault("headline",fp.headline())));
-        if(h.isBlank())h=fp.headline();
+        // Use the sourced headline, not an LLM rewrite that might duplicate
+        // the locked hook and invalidate an otherwise factual script.
+        String h=Text.clean(fp.headline());
+        if(h.isBlank())h=Text.clean(String.valueOf(m.getOrDefault("headline","")));
 
         List<NewsScript.Segment>segs=new ArrayList<>();
         Object sv=m.get("segments");
@@ -325,6 +332,106 @@ Return one JSON object matching the repair schema and nothing else.
         if(applied!=targets.size())
             throw new IllegalArgumentException("Ollama repair returned "+applied+" usable replacements; required "+targets.size());
         return rebuild(fp,base.headline(),segs,target,base.hook());
+    }
+
+    /**
+     * Keep useful length-repair progress when a model narrowly misses a
+     * per-segment planning range. This NEVER approves the draft: the final
+     * ScriptValidator still enforces minimum/maximum duration and supported
+     * numbers, and the first hook remains immutable.
+     */
+    public static NewsScript applyLengthRepairWithProgress(
+            NewsScript base,String raw,FactPackage fp,int seconds,
+            List<RepairTarget> plan,int preferredWords){
+        if(base==null||plan==null||plan.isEmpty())
+            throw new IllegalArgumentException("Missing narration repair plan");
+        try{
+            NewsScript exact=applyReplacements(base,raw,fp,seconds,plan);
+            requireNoNewUnsupportedNumbers(base,exact,fp);
+            requireLockedHook(base,exact);
+            requireLengthProgress(base,exact,seconds,preferredWords);
+            return exact;
+        }catch(IllegalArgumentException strict){
+            if(!String.valueOf(strict.getMessage()).startsWith("Repair segment "))
+                throw strict;
+        }
+
+        Map<String,Object>body=Json.object(Json.parse(raw));
+        if(!(body.get("replacements") instanceof List<?> replacements)||
+                replacements.size()!=plan.size())
+            throw new IllegalArgumentException("Repair returned incomplete replacements");
+        Map<Integer,RepairTarget>targets=new HashMap<>();
+        for(RepairTarget t:plan){
+            if(t.segmentIndex()<=0||t.segmentIndex()>=base.segments().size()||
+                    targets.putIfAbsent(t.segmentIndex(),t)!=null)
+                throw new IllegalArgumentException("Invalid targeted segment");
+        }
+        List<NewsScript.Segment>segments=new ArrayList<>(base.segments());
+        Set<Integer>seen=new HashSet<>();
+        int retained=0;
+        String firstInvalid="";
+        for(Object value:replacements){
+            if(!(value instanceof Map<?,?>))
+                throw new IllegalArgumentException("Malformed repair segment");
+            Map<String,Object>item=Json.object(value);
+            int index=item.get("segmentIndex") instanceof Number n?n.intValue():-1;
+            RepairTarget t=targets.get(index);
+            String narration=Text.clean(String.valueOf(item.getOrDefault("narration","")));
+            if(t==null||!seen.add(index)||narration.isBlank())
+                throw new IllegalArgumentException("Missing, duplicate or empty repair");
+            int words=Text.words(narration);
+            if(words<Math.max(6,t.minWords()-8)||words>t.maxWords()+8){
+                if(firstInvalid.isBlank())
+                    firstInvalid="Repair segment "+index+" returned "+words+
+                            " words; required "+t.minWords()+"-"+t.maxWords();
+                continue; // Other valid replacements may still improve the draft.
+            }
+            NewsScript.Segment old=segments.get(index);
+            segments.set(index,new NewsScript.Segment(old.index(),narration,
+                    old.purpose(),old.visualType(),"",old.durationTarget()));
+            retained++;
+        }
+        if(seen.size()!=targets.size())
+            throw new IllegalArgumentException("Not all repair targets were answered");
+        if(retained==0)
+            throw new IllegalArgumentException(firstInvalid.isBlank()
+                    ?"No usable repair progress":firstInvalid);
+        NewsScript revised=rebuild(fp,base.headline(),segments,seconds,base.hook());
+        requireNoNewUnsupportedNumbers(base,revised,fp);
+        requireLockedHook(base,revised);
+        requireLengthProgress(base,revised,seconds,preferredWords);
+        System.out.println("Ollama intermediate length repair "+Text.words(base.narration())+
+                " -> "+Text.words(revised.narration())+" words; retained "+retained+
+                "/"+targets.size()+" replacements; full validation remains mandatory");
+        return revised;
+    }
+
+    private static void requireNoNewUnsupportedNumbers(NewsScript before,NewsScript after,FactPackage fp){
+        Set<String>introduced=new LinkedHashSet<>(new ScriptValidator().unsupportedNumbers(after,fp));
+        introduced.removeAll(new ScriptValidator().unsupportedNumbers(before,fp));
+        if(!introduced.isEmpty())
+            throw new IllegalArgumentException("Unsupported numbers introduced in repair: "+introduced);
+    }
+    private static void requireLockedHook(NewsScript before,NewsScript after){
+        if(before.segments().isEmpty()||after.segments().isEmpty()||
+                !before.segments().get(0).narration().equals(after.segments().get(0).narration()))
+            throw new IllegalArgumentException("Locked hook changed");
+    }
+
+    private static int bandGap(int words,int lo,int hi){
+        return words<lo?lo-words:words>hi?words-hi:0;
+    }
+    private static void requireLengthProgress(NewsScript before,NewsScript after,
+            int seconds,int preferredWords){
+        int oldWords=Text.words(before.narration());
+        int newWords=Text.words(after.narration());
+        int lo=ScriptValidator.minWords(seconds),hi=ScriptValidator.maxWords(seconds);
+        if(oldWords==newWords||(bandGap(oldWords,lo,hi)>0
+                &&bandGap(newWords,lo,hi)>=bandGap(oldWords,lo,hi))||
+                (bandGap(newWords,lo,hi)>0
+                &&Math.abs(newWords-preferredWords)>=Math.abs(oldWords-preferredWords)))
+            throw new IllegalArgumentException("Length repair made no progress: "+
+                    oldWords+" -> "+newWords+" words");
     }
 
     private static NewsScript rebuild(FactPackage fp,String headline,List<NewsScript.Segment>segs,int target){

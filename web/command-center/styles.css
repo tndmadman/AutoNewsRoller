@@ -228,11 +228,11 @@ main {position:relative;z-index:1;padding:22px clamp(10px,1.8vw,28px) 30px;max-w
 .feedCategory {font-size:11px;color:var(--muted)}
 .feedMeta {font-size:11px;color:var(--muted);margin-top:3px}
 .feedEndpoint {overflow-wrap:anywhere}
-.videoRow {display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;
+.videoRow,.safetyAuditRow {display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;
   padding:11px 5px;border-bottom:1px solid var(--line)}
 .videoInfo {min-width:0;flex:1 1 270px}
-.videoRow strong {font-size:12px;overflow-wrap:anywhere}
-.videoRow small {display:block;color:var(--muted);font-size:11px;margin:5px 0;overflow-wrap:anywhere}
+.videoRow strong,.safetyAuditRow strong {font-size:12px;overflow-wrap:anywhere}
+.videoRow small,.safetyAuditRow small {display:block;color:var(--muted);font-size:11px;margin:5px 0;overflow-wrap:anywhere}
 .videoActions {display:flex;justify-content:flex-end;gap:5px;flex-wrap:wrap;align-items:center}
 .videoActions a {display:inline-block;border:1px solid var(--phosphor-dim);padding:7px 9px;color:var(--phosphor);
   text-decoration:none;font-size:11px;font-weight:700}
